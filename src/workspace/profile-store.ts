@@ -20,7 +20,6 @@ export interface WorkspaceProfile {
   navigation: {
     expandedFileNodes: string[]
     expandedHeadingNodes: Record<string, string[]>
-    lastOpenedDocument: string | null
   }
 }
 
@@ -41,7 +40,6 @@ export function createDefaultProfile(profileId = 'default'): WorkspaceProfile {
     navigation: {
       expandedFileNodes: [],
       expandedHeadingNodes: {},
-      lastOpenedDocument: null,
     },
   }
 }

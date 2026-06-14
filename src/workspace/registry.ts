@@ -6,7 +6,9 @@ export type ProjectPermissionState = 'granted' | 'permission-required'
 export interface ProjectRegistryRecord {
   id: string
   name: string
-  rootHandleKey: string
+  rootHandleKey?: string
+  rootPath?: string
+  accessMode?: 'browser' | 'local-service'
   contentRoots: string[]
   permissionState: ProjectPermissionState
 }
@@ -24,18 +26,21 @@ const EMPTY_REGISTRY: ProjectRegistrySnapshot = {
 }
 
 export function createProjectRegistryStore(storage: KeyValueStore) {
-  async function getSnapshot(): Promise<ProjectRegistrySnapshot> {
-    return (await storage.getItem<ProjectRegistrySnapshot>(STORAGE_KEYS.projectRegistry)) ?? EMPTY_REGISTRY
+  async function getSnapshot(profileId: string): Promise<ProjectRegistrySnapshot> {
+    return (
+      (await storage.getItem<ProjectRegistrySnapshot>(STORAGE_KEYS.projectRegistry(profileId))) ??
+      EMPTY_REGISTRY
+    )
   }
 
-  async function saveSnapshot(snapshot: ProjectRegistrySnapshot): Promise<void> {
-    await storage.setItem(STORAGE_KEYS.projectRegistry, snapshot)
+  async function saveSnapshot(profileId: string, snapshot: ProjectRegistrySnapshot): Promise<void> {
+    await storage.setItem(STORAGE_KEYS.projectRegistry(profileId), snapshot)
   }
 
   return {
     getSnapshot,
-    async upsertProject(project: ProjectRegistryRecord): Promise<void> {
-      const snapshot = await getSnapshot()
+    async upsertProject(profileId: string, project: ProjectRegistryRecord): Promise<void> {
+      const snapshot = await getSnapshot(profileId)
       const index = snapshot.projects.findIndex((entry) => entry.id === project.id)
       const projects = [...snapshot.projects]
 
@@ -45,23 +50,23 @@ export function createProjectRegistryStore(storage: KeyValueStore) {
         projects.push(project)
       }
 
-      await saveSnapshot({
+      await saveSnapshot(profileId, {
         ...snapshot,
         projects,
       })
     },
-    async setActiveProjectId(projectId: string | null): Promise<void> {
-      const snapshot = await getSnapshot()
+    async setActiveProjectId(profileId: string, projectId: string | null): Promise<void> {
+      const snapshot = await getSnapshot(profileId)
 
-      await saveSnapshot({
+      await saveSnapshot(profileId, {
         ...snapshot,
         activeProjectId: projectId,
       })
     },
-    async markPermissionRequired(projectId: string): Promise<void> {
-      const snapshot = await getSnapshot()
+    async markPermissionRequired(profileId: string, projectId: string): Promise<void> {
+      const snapshot = await getSnapshot(profileId)
 
-      await saveSnapshot({
+      await saveSnapshot(profileId, {
         ...snapshot,
         projects: snapshot.projects.map((project) =>
           project.id === projectId

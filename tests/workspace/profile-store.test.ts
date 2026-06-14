@@ -26,7 +26,6 @@ describe('profile store', () => {
       navigation: {
         expandedFileNodes: ['docs', 'docs/guides'],
         expandedHeadingNodes: {},
-        lastOpenedDocument: 'docs/README.md',
       },
     }
 

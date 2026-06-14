@@ -3,14 +3,16 @@ import { STORAGE_KEYS } from '../shared/storage-keys'
 
 export interface WorkspaceLocalState {
   activeDocumentPath: string | null
-  activeMode: 'read' | 'edit' | 'split'
+  activeMode: 'regular' | 'split' | 'read' | 'edit'
   lastKnownScrollTop: number
+  readingProgressByDocument: Record<string, number>
 }
 
 const DEFAULT_LOCAL_STATE: WorkspaceLocalState = {
   activeDocumentPath: null,
-  activeMode: 'read',
+  activeMode: 'regular',
   lastKnownScrollTop: 0,
+  readingProgressByDocument: {},
 }
 
 export function createLocalStateStore(storage: KeyValueStore) {

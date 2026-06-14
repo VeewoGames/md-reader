@@ -3,7 +3,14 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "engines": {
+    "node": ">=22.13.0"
+  },
   "scripts": {
+    "open": "node open.mjs",
+    "stop": "node stop.mjs",
+    "health": "node health.mjs",
+    "service:dev": "node server/bridge-server.mjs --port 8797",
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
@@ -12,9 +19,18 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@milkdown/crepe": "^7.21.2",
+    "@milkdown/react": "^7.21.2",
+    "@types/mdast": "^4.0.4",
     "idb-keyval": "^6.2.5",
+    "mdast-util-to-string": "^4.0.0",
     "react": "^19.2.6",
-    "react-dom": "^19.2.6"
+    "react-dom": "^19.2.6",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "remark-parse": "^11.0.0",
+    "unified": "^11.0.5",
+    "unist-util-visit": "^5.1.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
