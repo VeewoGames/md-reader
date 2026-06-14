@@ -7,6 +7,12 @@ import { buildFileTree } from './workspace/file-tree'
 import { createContentHash } from './shared/content-hash'
 import type { FileTreeNode } from './workspace/file-tree-types'
 import {
+  getActiveTab,
+  type TabSaveState,
+  type WorkspaceSession,
+  type WorkspaceTab,
+} from './workspace/workspace-session'
+import {
   BridgeDocumentConflictError,
   getDocumentContentFromBridge,
   getFileTreePathsFromBridge,
@@ -36,16 +42,83 @@ const workspaceProvider = createWorkspaceProvider({
   },
 })
 
-type SaveState =
-  | 'clean'
-  | 'typing'
-  | 'save_queued'
-  | 'saving_background'
-  | 'save_failed_retryable'
-  | 'conflict_hard'
-  | 'leaving_with_pending_flush'
-
 const AUTOSAVE_DEBOUNCE_MS = 1200
+
+function createTabId(documentPath: string): string {
+  return documentPath
+}
+
+function createEmptySession(): WorkspaceSession {
+  return {
+    tabs: [],
+    activeTabId: null,
+    mode: 'regular',
+    regularViewState: 'locked',
+  }
+}
+
+function createWorkspaceTab(documentPath: string, lastKnownScrollTop = 0): WorkspaceTab {
+  return {
+    id: createTabId(documentPath),
+    documentPath,
+    persistedContent: null,
+    draftContent: null,
+    mtimeMs: null,
+    saveState: 'clean',
+    saveErrorMessage: null,
+    lastKnownScrollTop,
+  }
+}
+
+function getTabByDocumentPath(session: WorkspaceSession, documentPath: string): WorkspaceTab | null {
+  return session.tabs.find((tab) => tab.documentPath === documentPath) ?? null
+}
+
+function replaceTab(session: WorkspaceSession, nextTab: WorkspaceTab): WorkspaceSession {
+  return {
+    ...session,
+    tabs: session.tabs.map((tab) => (tab.id === nextTab.id ? nextTab : tab)),
+  }
+}
+
+function normalizeLocalStateSnapshot(state: {
+  openDocumentPaths?: string[]
+  activeDocumentPath: string | null
+  activeMode: 'regular' | 'split' | 'read' | 'edit'
+  regularViewState?: RegularViewState
+  tabStateByDocument?: Record<string, { lastKnownScrollTop: number }>
+  lastKnownScrollTop?: number
+  readingProgressByDocument?: Record<string, number>
+}) {
+  const openDocumentPaths =
+    state.openDocumentPaths ??
+    (state.activeDocumentPath ? [state.activeDocumentPath] : [])
+  const tabStateByDocument =
+    state.tabStateByDocument ??
+    (state.activeDocumentPath
+      ? {
+          [state.activeDocumentPath]: {
+            lastKnownScrollTop: state.lastKnownScrollTop ?? 0,
+          },
+        }
+      : {})
+
+  return {
+    openDocumentPaths,
+    activeDocumentPath: state.activeDocumentPath,
+    activeMode: state.activeMode,
+    regularViewState: state.regularViewState ?? inferRegularViewStateFromMode(state.activeMode),
+    tabStateByDocument,
+    readingProgressByDocument: state.readingProgressByDocument ?? {},
+  }
+}
+
+function removeTab(session: WorkspaceSession, tabId: string): WorkspaceSession {
+  return {
+    ...session,
+    tabs: session.tabs.filter((tab) => tab.id !== tabId),
+  }
+}
 
 function normalizeWorkspaceMode(
   activeMode: 'regular' | 'split' | 'read' | 'edit',
@@ -71,16 +144,25 @@ function formatSaveErrorMessage(message: string): string {
   return message
 }
 
+type PendingWorkspaceAction =
+  | { kind: 'switch-project'; projectId: string }
+  | { kind: 'switch-profile'; profileId: string }
+  | { kind: 'restart-service' }
+  | { kind: 'stop-service' }
+
+type PendingCloseTabAction = {
+  kind: 'close-tab'
+  tabId: string
+}
+
 function getSaveIndicator(
-  currentDocumentPath: string | null,
-  saveState: SaveState,
-  saveErrorMessage: string | null,
+  activeTab: WorkspaceTab | null,
 ): string | null {
-  if (currentDocumentPath == null) {
+  if (activeTab == null) {
     return null
   }
 
-  switch (saveState) {
+  switch (activeTab.saveState) {
     case 'typing':
       return '输入中…'
     case 'save_queued':
@@ -90,9 +172,9 @@ function getSaveIndicator(
     case 'leaving_with_pending_flush':
       return '正在保存后切换…'
     case 'save_failed_retryable':
-      return `保存失败${saveErrorMessage ? `：${saveErrorMessage}` : ''}`
+      return `保存失败${activeTab.saveErrorMessage ? `：${activeTab.saveErrorMessage}` : ''}`
     case 'conflict_hard':
-      return `正文冲突${saveErrorMessage ? `：${saveErrorMessage}` : ''}`
+      return `正文冲突${activeTab.saveErrorMessage ? `：${activeTab.saveErrorMessage}` : ''}`
     case 'clean':
     default:
       return '已保存'
@@ -104,30 +186,34 @@ function App() {
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null)
   const [profileIds] = useState(['default'])
   const [activeProfileId, setActiveProfileId] = useState('default')
-  const [mode, setMode] = useState<WorkspaceMode>('regular')
-  const [regularViewState, setRegularViewState] = useState<RegularViewState>('locked')
+  const [session, setSession] = useState<WorkspaceSession>(createEmptySession)
   const [fileTree, setFileTree] = useState<FileTreeNode[]>([])
-  const [currentDocumentPath, setCurrentDocumentPath] = useState<string | null>(null)
-  const [currentDocumentContent, setCurrentDocumentContent] = useState<string | null>(null)
-  const [editingDocumentContent, setEditingDocumentContent] = useState<string | null>(null)
-  const [currentDocumentMtimeMs, setCurrentDocumentMtimeMs] = useState<number | null>(null)
-  const [saveState, setSaveState] = useState<SaveState>('clean')
-  const [saveErrorMessage, setSaveErrorMessage] = useState<string | null>(null)
   const [isDocumentLoading, setIsDocumentLoading] = useState(false)
   const [workspaceSource, setWorkspaceSource] = useState<WorkspaceSource>('offline')
   const [isServiceActionPending, setIsServiceActionPending] = useState(false)
+  const [pendingWorkspaceAction, setPendingWorkspaceAction] = useState<PendingWorkspaceAction | null>(null)
+  const [pendingCloseTabAction, setPendingCloseTabAction] = useState<PendingCloseTabAction | null>(null)
   const [statusMessage, setStatusMessage] = useState<string | null>('还没有接入任何 Markdown 项目')
   const [sidebarWidth, setSidebarWidth] = useState(280)
   const [outlineWidth, setOutlineWidth] = useState(320)
+  const activeTab = getActiveTab(session)
+  const mode = session.mode
+  const regularViewState = session.regularViewState
+  const currentDocumentPath = activeTab?.documentPath ?? null
+  const currentDocumentContent = activeTab?.persistedContent ?? null
+  const editingDocumentContent = activeTab?.draftContent ?? null
+  const currentDocumentMtimeMs = activeTab?.mtimeMs ?? null
+  const saveState = activeTab?.saveState ?? 'clean'
   const autosaveTimerRef = useRef<number | null>(null)
   const flushPromiseRef = useRef<Promise<boolean> | null>(null)
   const activeProjectIdRef = useRef<string | null>(null)
   const activeProfileIdRef = useRef(activeProfileId)
+  const sessionRef = useRef(session)
   const currentDocumentPathRef = useRef<string | null>(null)
   const currentDocumentContentRef = useRef<string | null>(null)
   const editingDocumentContentRef = useRef<string | null>(null)
   const currentDocumentMtimeRef = useRef<number | null>(null)
-  const saveStateRef = useRef<SaveState>('clean')
+  const saveStateRef = useRef<TabSaveState>('clean')
   const draftRevisionRef = useRef(0)
   const saveRequestRevisionRef = useRef(0)
   const lastAckedSaveRevisionRef = useRef(0)
@@ -146,6 +232,52 @@ function App() {
     })
   }
 
+  function getDirtyTabs(nextSession = sessionRef.current): WorkspaceTab[] {
+    return nextSession.tabs.filter(
+      (tab) => tab.persistedContent != null && tab.draftContent != null && tab.draftContent !== tab.persistedContent,
+    )
+  }
+
+  function clearAutosaveTimer() {
+    if (autosaveTimerRef.current != null) {
+      window.clearTimeout(autosaveTimerRef.current)
+      autosaveTimerRef.current = null
+    }
+  }
+
+  function discardTabDraft(tabId: string) {
+    setSession((current) => {
+      const tab = current.tabs.find((entry) => entry.id === tabId)
+
+      if (tab == null || tab.persistedContent == null) {
+        return current
+      }
+
+      return replaceTab(current, {
+        ...tab,
+        draftContent: tab.persistedContent,
+        saveState: 'clean',
+        saveErrorMessage: null,
+      })
+    })
+  }
+
+  function discardDirtyTabs(tabIds: string[]) {
+    setSession((current) => ({
+      ...current,
+      tabs: current.tabs.map((tab) =>
+        tabIds.includes(tab.id) && tab.persistedContent != null
+          ? {
+              ...tab,
+              draftContent: tab.persistedContent,
+              saveState: 'clean',
+              saveErrorMessage: null,
+            }
+          : tab,
+      ),
+    }))
+  }
+
   useEffect(() => {
     activeProjectIdRef.current = activeProjectId
   }, [activeProjectId])
@@ -153,6 +285,10 @@ function App() {
   useEffect(() => {
     activeProfileIdRef.current = activeProfileId
   }, [activeProfileId])
+
+  useEffect(() => {
+    sessionRef.current = session
+  }, [session])
 
   useEffect(() => {
     currentDocumentPathRef.current = currentDocumentPath
@@ -201,7 +337,7 @@ function App() {
       setProjects([])
       setActiveProjectId(null)
       setFileTree([])
-      resetDocumentState()
+      resetSessionState()
       setStatusMessage('本地服务不可用')
     })()
   }, [])
@@ -234,10 +370,10 @@ function App() {
   useEffect(() => {
     const hasDirtyDraft =
       activeProjectId != null &&
-      currentDocumentPath != null &&
-      currentDocumentContent != null &&
-      editingDocumentContent != null &&
-      editingDocumentContent !== currentDocumentContent
+      activeTab != null &&
+      activeTab.persistedContent != null &&
+      activeTab.draftContent != null &&
+      activeTab.draftContent !== activeTab.persistedContent
 
     if (!hasDirtyDraft) {
       if (autosaveTimerRef.current != null) {
@@ -247,11 +383,15 @@ function App() {
 
       if (
         saveStateRef.current !== 'saving_background' &&
-        saveStateRef.current !== 'save_failed_retryable' &&
-        saveStateRef.current !== 'conflict_hard'
+        saveStateRef.current !== 'leaving_with_pending_flush'
       ) {
-        setSaveState('clean')
+        setActiveTabState({
+          saveErrorMessage: null,
+          saveState: 'clean',
+        })
       }
+
+      clearSaveFailureStatus(activeProjectId)
 
       return
     }
@@ -261,7 +401,7 @@ function App() {
     }
 
     if (isComposingRef.current) {
-      setSaveState('save_queued')
+      setActiveTabState({ saveState: 'save_queued' })
       autosaveTimerRef.current = null
       return
     }
@@ -274,19 +414,51 @@ function App() {
         autosaveTimerRef.current = null
       }
     }
-  }, [activeProjectId, currentDocumentPath, currentDocumentContent, editingDocumentContent])
+  }, [activeProjectId, activeTab])
 
-  function resetDocumentState() {
-    setCurrentDocumentPath(null)
-    setCurrentDocumentContent(null)
-    setEditingDocumentContent(null)
-    setCurrentDocumentMtimeMs(null)
+  function resetSessionState() {
     draftRevisionRef.current = 0
     saveRequestRevisionRef.current = 0
     lastAckedSaveRevisionRef.current = 0
     isComposingRef.current = false
-    setSaveState('clean')
-    setSaveErrorMessage(null)
+    setSession((current) => ({
+      ...current,
+      tabs: [],
+      activeTabId: null,
+    }))
+  }
+
+  function setActiveTabState(nextState: Partial<WorkspaceTab>) {
+    setSession((current) => {
+      const tab = getActiveTab(current)
+
+      if (tab == null) {
+        return current
+      }
+
+      const hasActualChange = Object.entries(nextState).some(
+        ([key, value]) => tab[key as keyof WorkspaceTab] !== value,
+      )
+
+      if (!hasActualChange) {
+        return current
+      }
+
+      return replaceTab(current, { ...tab, ...nextState })
+    })
+  }
+
+  function ensureTabExists(documentPath: string, lastKnownScrollTop = 0) {
+    setSession((current) => {
+      if (getTabByDocumentPath(current, documentPath) != null) {
+        return current
+      }
+
+      return {
+        ...current,
+        tabs: [...current.tabs, createWorkspaceTab(documentPath, lastKnownScrollTop)],
+      }
+    })
   }
 
   function applyLoadedDocument(
@@ -295,16 +467,35 @@ function App() {
     mtimeMs: number,
     nextStatusMessage: string,
   ) {
-    setCurrentDocumentPath(documentPath)
-    setCurrentDocumentContent(content)
-    setEditingDocumentContent(content)
-    setCurrentDocumentMtimeMs(mtimeMs)
     draftRevisionRef.current = 0
     saveRequestRevisionRef.current = 0
     lastAckedSaveRevisionRef.current = 0
     isComposingRef.current = false
-    setSaveState('clean')
-    setSaveErrorMessage(null)
+    setSession((current) => {
+      const existingTab = getTabByDocumentPath(current, documentPath)
+      const nextTab: WorkspaceTab = {
+        ...(existingTab ?? createWorkspaceTab(documentPath)),
+        documentPath,
+        persistedContent: content,
+        draftContent: content,
+        mtimeMs,
+        saveState: 'clean',
+        saveErrorMessage: null,
+      }
+
+      if (existingTab == null) {
+        return {
+          ...current,
+          tabs: [...current.tabs, nextTab],
+          activeTabId: nextTab.id,
+        }
+      }
+
+      return {
+        ...replaceTab(current, nextTab),
+        activeTabId: nextTab.id,
+      }
+    })
     setStatusMessage(nextStatusMessage)
   }
 
@@ -316,9 +507,11 @@ function App() {
       draftRevisionRef.current += 1
     }
 
-    setEditingDocumentContent(nextContent)
-    setSaveErrorMessage(null)
-    setSaveState(hasDirtyDraft ? 'typing' : 'clean')
+    setActiveTabState({
+      draftContent: nextContent,
+      saveErrorMessage: null,
+      saveState: hasDirtyDraft ? 'typing' : 'clean',
+    })
   }
 
   function scheduleAutosave() {
@@ -328,7 +521,7 @@ function App() {
 
     autosaveTimerRef.current = window.setTimeout(() => {
       if (isComposingRef.current) {
-        setSaveState('save_queued')
+        setActiveTabState({ saveState: 'save_queued' })
         autosaveTimerRef.current = null
         return
       }
@@ -349,9 +542,121 @@ function App() {
     const hasDirtyDraft = savedContent != null && draftContent != null && draftContent !== savedContent
 
     if (hasDirtyDraft) {
-      setSaveState('typing')
+      setActiveTabState({ saveState: 'typing' })
       scheduleAutosave()
     }
+  }
+
+  async function saveTabById(
+    tabId: string,
+    reason: 'background' | 'leave' = 'leave',
+  ): Promise<boolean> {
+    const projectId = activeProjectIdRef.current
+    const profileId = activeProfileIdRef.current
+    const tab = sessionRef.current.tabs.find((entry) => entry.id === tabId)
+
+    if (
+      !projectId ||
+      !profileId ||
+      tab == null ||
+      tab.draftContent == null ||
+      tab.persistedContent == null ||
+      tab.draftContent === tab.persistedContent
+    ) {
+      setSession((current) => {
+        const currentTab = current.tabs.find((entry) => entry.id === tabId)
+        return currentTab == null
+          ? current
+          : replaceTab(current, {
+              ...currentTab,
+              saveState: 'clean',
+              saveErrorMessage: null,
+            })
+      })
+      clearSaveFailureStatus(projectId)
+      return true
+    }
+
+    if (sessionRef.current.activeTabId === tabId) {
+      clearAutosaveTimer()
+    }
+
+    setSession((current) => {
+      const currentTab = current.tabs.find((entry) => entry.id === tabId)
+      return currentTab == null
+        ? current
+        : replaceTab(current, {
+            ...currentTab,
+            saveState: reason === 'leave' ? 'leaving_with_pending_flush' : 'saving_background',
+            saveErrorMessage: null,
+          })
+    })
+
+    try {
+      const document = await saveDocumentContentToBridge(
+        projectId,
+        profileId,
+        tab.documentPath,
+        tab.draftContent,
+        tab.mtimeMs,
+        tab.persistedContent ? createContentHash(tab.persistedContent) : null,
+      )
+
+      setSession((current) => {
+        const currentTab = current.tabs.find((entry) => entry.id === tabId)
+
+        if (currentTab == null) {
+          return current
+        }
+
+        const nextDraftContent =
+          currentTab.draftContent === tab.draftContent ? document.content : currentTab.draftContent
+
+        return replaceTab(current, {
+          ...currentTab,
+          persistedContent: document.content,
+          draftContent: nextDraftContent,
+          mtimeMs: document.mtimeMs,
+          saveState: nextDraftContent === document.content ? 'clean' : 'typing',
+          saveErrorMessage: null,
+        })
+      })
+      clearSaveFailureStatus(projectId)
+      return true
+    } catch (error) {
+      const message = formatSaveErrorMessage(error instanceof Error ? error.message : '保存失败')
+
+      setSession((current) => {
+        const currentTab = current.tabs.find((entry) => entry.id === tabId)
+        return currentTab == null
+          ? current
+          : replaceTab(current, {
+              ...currentTab,
+              saveState:
+                error instanceof BridgeDocumentConflictError
+                  ? 'conflict_hard'
+                  : 'save_failed_retryable',
+              saveErrorMessage: message,
+            })
+      })
+      setStatusMessage(`保存失败：${message}`)
+      return false
+    }
+  }
+
+  async function flushDirtyTabs(tabIds: string[]): Promise<boolean> {
+    for (const tabId of tabIds) {
+      const isSaved = await saveTabById(tabId, 'leave')
+      if (!isSaved) {
+        return false
+      }
+    }
+
+    return true
+  }
+
+  async function flushAllDirtyTabs(): Promise<boolean> {
+    return flushDirtyTabs(getDirtyTabs().map((tab) => tab.id))
   }
 
   async function flushActiveDraft(reason: 'background' | 'leave' = 'leave'): Promise<boolean> {
@@ -367,8 +672,10 @@ function App() {
     const expectedMtimeMs = currentDocumentMtimeRef.current
 
     if (!projectId || !documentPath || draftContent == null || draftContent === savedContent) {
-      setSaveErrorMessage(null)
-      setSaveState('clean')
+      setActiveTabState({
+        saveErrorMessage: null,
+        saveState: 'clean',
+      })
       clearSaveFailureStatus(projectId)
       return true
     }
@@ -378,8 +685,10 @@ function App() {
       autosaveTimerRef.current = null
     }
 
-    setSaveState(reason === 'leave' ? 'leaving_with_pending_flush' : 'saving_background')
-    setSaveErrorMessage(null)
+    setActiveTabState({
+      saveState: reason === 'leave' ? 'leaving_with_pending_flush' : 'saving_background',
+      saveErrorMessage: null,
+    })
 
     const flushPromise = (async () => {
       const requestRevision = saveRequestRevisionRef.current + 1
@@ -399,10 +708,12 @@ function App() {
           activeProjectIdRef.current === projectId && currentDocumentPathRef.current === documentPath
 
         if (isSameDocument) {
-          setCurrentDocumentContent(document.content)
-          setCurrentDocumentMtimeMs(document.mtimeMs)
-          setSaveErrorMessage(null)
-          setSaveState(editingDocumentContentRef.current === document.content ? 'clean' : 'typing')
+          setActiveTabState({
+            persistedContent: document.content,
+            mtimeMs: document.mtimeMs,
+            saveErrorMessage: null,
+            saveState: editingDocumentContentRef.current === document.content ? 'clean' : 'typing',
+          })
           clearSaveFailureStatus(projectId)
         }
       }
@@ -437,8 +748,11 @@ function App() {
         }
 
         const message = formatSaveErrorMessage(error instanceof Error ? error.message : '保存失败')
-        setSaveErrorMessage(message)
-        setSaveState(error instanceof BridgeDocumentConflictError ? 'conflict_hard' : 'save_failed_retryable')
+        setActiveTabState({
+          saveErrorMessage: message,
+          saveState:
+            error instanceof BridgeDocumentConflictError ? 'conflict_hard' : 'save_failed_retryable',
+        })
         setStatusMessage(`保存失败：${message}`)
         return false
       } finally {
@@ -460,26 +774,49 @@ function App() {
     if (!project) {
       setActiveProjectId(null)
       setFileTree([])
-      resetDocumentState()
+      resetSessionState()
       setStatusMessage('当前 profile 还没有接入任何项目')
       return
     }
 
     const markdownPaths = await workspaceProvider.getFileTreePaths(project.id, nextProfileId)
-    const localState = await localStateStore.getState(project.id)
+    const localState = normalizeLocalStateSnapshot(
+      (await localStateStore.getState(project.id)) as Awaited<
+        ReturnType<typeof localStateStore.getState>
+      > & { activeMode: 'regular' | 'split' | 'read' | 'edit'; lastKnownScrollTop?: number },
+    )
+    const openDocumentPaths = localState.openDocumentPaths
+    const tabStateByDocument = localState.tabStateByDocument
+    const tabs = openDocumentPaths.map(
+      (documentPath) =>
+        createWorkspaceTab(
+          documentPath,
+          tabStateByDocument[documentPath]?.lastKnownScrollTop ?? 0,
+        ),
+    )
+    const nextActiveDocumentPath =
+      localState.activeDocumentPath &&
+      openDocumentPaths.includes(localState.activeDocumentPath)
+        ? localState.activeDocumentPath
+        : openDocumentPaths[0] ?? null
 
     setActiveProjectId(project.id)
-    setMode(normalizeWorkspaceMode(localState.activeMode))
-    setRegularViewState(inferRegularViewStateFromMode(localState.activeMode))
     setFileTree(buildFileTree(markdownPaths))
+    setSession({
+      tabs,
+      activeTabId: nextActiveDocumentPath ? createTabId(nextActiveDocumentPath) : null,
+      mode: normalizeWorkspaceMode(localState.activeMode),
+      regularViewState:
+        localState.regularViewState ?? inferRegularViewStateFromMode(localState.activeMode),
+    })
     setStatusMessage(
       markdownPaths.length > 0 ? `当前项目：${project.name}` : `当前项目：${project.name}，但还没有发现 Markdown 文件`,
     )
 
-    if (localState.activeDocumentPath) {
-      await loadDocumentContent(project, localState.activeDocumentPath, nextProfileId)
+    if (nextActiveDocumentPath) {
+      await loadDocumentContent(project, nextActiveDocumentPath, nextProfileId)
     } else {
-      resetDocumentState()
+      resetSessionState()
     }
   }
 
@@ -523,62 +860,164 @@ function App() {
     await loadLocalServiceProject(project.id, snapshot.projects, activeProfileId)
   }
 
+  async function closeTabInternal(tabId: string) {
+    if (!activeProjectIdRef.current) {
+      return
+    }
+
+    const currentSession = sessionRef.current
+    const closingIndex = currentSession.tabs.findIndex((tab) => tab.id === tabId)
+    const closingTab = closingIndex >= 0 ? currentSession.tabs[closingIndex] : null
+
+    if (closingTab == null) {
+      return
+    }
+
+    const remainingTabs = currentSession.tabs.filter((tab) => tab.id !== tabId)
+    const fallbackTab =
+      closingTab.id !== currentSession.activeTabId
+        ? getActiveTab(currentSession)
+        : remainingTabs[Math.max(0, closingIndex - 1)] ?? remainingTabs[0] ?? null
+
+    setSession((current) => {
+      const nextSession = removeTab(current, tabId)
+
+      return {
+        ...nextSession,
+        activeTabId:
+          current.activeTabId === tabId ? (fallbackTab?.id ?? null) : current.activeTabId,
+      }
+    })
+
+    if (fallbackTab && fallbackTab.persistedContent == null) {
+      const project = projects.find((entry) => entry.id === activeProjectIdRef.current)
+      if (project) {
+        await loadDocumentContent(project, fallbackTab.documentPath, activeProfileIdRef.current)
+      }
+    }
+
+    const localState = normalizeLocalStateSnapshot(
+      (await localStateStore.getState(activeProjectIdRef.current)) as Awaited<
+        ReturnType<typeof localStateStore.getState>
+      > & { activeMode: 'regular' | 'split' | 'read' | 'edit'; lastKnownScrollTop?: number },
+    )
+    await localStateStore.saveState(activeProjectIdRef.current, {
+      ...localState,
+      openDocumentPaths: remainingTabs.map((tab) => tab.documentPath),
+      activeDocumentPath: fallbackTab?.documentPath ?? null,
+      activeMode: sessionRef.current.mode,
+      regularViewState: sessionRef.current.regularViewState,
+    })
+  }
+
+  async function continueWorkspaceAction(action: PendingWorkspaceAction) {
+    if (action.kind === 'switch-project') {
+      await workspaceProvider.setActiveProject(activeProfileIdRef.current, action.projectId)
+      await loadLocalServiceProject(action.projectId)
+      return
+    }
+
+    if (action.kind === 'switch-profile') {
+      setActiveProfileId(action.profileId)
+
+      if (workspaceSource !== 'local-service') {
+        setProjects([])
+        setActiveProjectId(null)
+        setFileTree([])
+        resetSessionState()
+        setStatusMessage('本地服务不可用')
+        return
+      }
+
+      const snapshot = await workspaceProvider.listProjects(action.profileId)
+      setProjects(snapshot.projects)
+      setActiveProjectId(snapshot.activeProjectId)
+
+      if (!snapshot.activeProjectId) {
+        setFileTree([])
+        resetSessionState()
+        setStatusMessage('当前 profile 还没有接入任何项目')
+        return
+      }
+
+      await loadLocalServiceProject(snapshot.activeProjectId, snapshot.projects, action.profileId)
+      return
+    }
+
+    if (action.kind === 'restart-service') {
+      setIsServiceActionPending(true)
+      setStatusMessage('正在重启本地服务…')
+
+      try {
+        await restartLocalBridgeService()
+        await waitForLocalBridgeReady()
+        await restoreLocalServiceWorkspace(activeProfileIdRef.current)
+        setStatusMessage('本地服务已重启')
+      } catch (error) {
+        setWorkspaceSource('offline')
+        setStatusMessage(error instanceof Error ? error.message : '本地服务重启失败')
+      } finally {
+        setIsServiceActionPending(false)
+      }
+      return
+    }
+
+    if (action.kind === 'stop-service') {
+      setIsServiceActionPending(true)
+      setStatusMessage('正在关闭本地服务…')
+
+      try {
+        await stopLocalBridgeService()
+        setWorkspaceSource('offline')
+        setStatusMessage('本地服务已关闭')
+      } catch (error) {
+        setStatusMessage(error instanceof Error ? error.message : '本地服务关闭失败')
+      } finally {
+        setIsServiceActionPending(false)
+      }
+    }
+  }
+
   async function handleProjectChange(projectId: string) {
     if (workspaceSource !== 'local-service') {
       setStatusMessage('本地服务不可用')
       return
     }
 
-    if (!(await flushActiveDraft())) {
+    if (getDirtyTabs().length > 0) {
+      setPendingWorkspaceAction({ kind: 'switch-project', projectId })
       return
     }
 
-    await workspaceProvider.setActiveProject(activeProfileId, projectId)
-    await loadLocalServiceProject(projectId)
+    await continueWorkspaceAction({ kind: 'switch-project', projectId })
   }
 
   async function handleProfileChange(profileId: string) {
-    if (!(await flushActiveDraft())) {
+    if (getDirtyTabs().length > 0) {
+      setPendingWorkspaceAction({ kind: 'switch-profile', profileId })
       return
     }
 
-    setActiveProfileId(profileId)
-
-    if (workspaceSource !== 'local-service') {
-      setProjects([])
-      setActiveProjectId(null)
-      setFileTree([])
-      resetDocumentState()
-      setStatusMessage('本地服务不可用')
-      return
-    }
-
-    const snapshot = await workspaceProvider.listProjects(profileId)
-    setProjects(snapshot.projects)
-    setActiveProjectId(snapshot.activeProjectId)
-
-    if (!snapshot.activeProjectId) {
-      setFileTree([])
-      resetDocumentState()
-      setStatusMessage('当前 profile 还没有接入任何项目')
-      return
-    }
-
-    await loadLocalServiceProject(snapshot.activeProjectId, snapshot.projects, profileId)
+    await continueWorkspaceAction({ kind: 'switch-profile', profileId })
   }
 
   async function handleModeChange(nextMode: WorkspaceMode) {
-    setMode(nextMode)
+    setSession((current) => ({ ...current, mode: nextMode }))
 
     if (!activeProjectId) {
       return
     }
 
     await localStateStore.saveState(activeProjectId, {
+      ...normalizeLocalStateSnapshot(
+        (await localStateStore.getState(activeProjectId)) as Awaited<
+          ReturnType<typeof localStateStore.getState>
+        > & { activeMode: 'regular' | 'split' | 'read' | 'edit'; lastKnownScrollTop?: number },
+      ),
+      openDocumentPaths: session.tabs.map((tab) => tab.documentPath),
       activeDocumentPath: currentDocumentPath,
       activeMode: nextMode,
-      lastKnownScrollTop: 0,
-      readingProgressByDocument: (await localStateStore.getState(activeProjectId)).readingProgressByDocument,
+      regularViewState: session.regularViewState,
     })
   }
 
@@ -587,28 +1026,98 @@ function App() {
       return
     }
 
-    if (!(await flushActiveDraft())) {
-      return
-    }
-
     const project = projects.find((entry) => entry.id === activeProjectId)
     if (project) {
+      ensureTabExists(path)
       await loadDocumentContent(project, path, activeProfileId)
     }
 
-    setMode('regular')
+    setSession((current) => ({
+      ...current,
+      mode: 'regular',
+      activeTabId: createTabId(path),
+      tabs:
+        getTabByDocumentPath(current, path) == null
+          ? [...current.tabs, createWorkspaceTab(path)]
+          : current.tabs,
+    }))
 
-    const localState = await localStateStore.getState(activeProjectId)
+    const localState = normalizeLocalStateSnapshot(
+      (await localStateStore.getState(activeProjectId)) as Awaited<
+        ReturnType<typeof localStateStore.getState>
+      > & { activeMode: 'regular' | 'split' | 'read' | 'edit'; lastKnownScrollTop?: number },
+    )
 
     await localStateStore.saveState(activeProjectId, {
       ...localState,
+      openDocumentPaths: Array.from(new Set([...localState.openDocumentPaths, path])),
       activeMode: 'regular',
+      regularViewState: session.regularViewState,
       activeDocumentPath: path,
       readingProgressByDocument: {
         ...localState.readingProgressByDocument,
         [path]: localState.readingProgressByDocument[path] ?? 0,
       },
     })
+  }
+
+  async function handleTabSelect(tabId: string) {
+    if (!activeProjectId) {
+      return
+    }
+
+    const nextTab = session.tabs.find((tab) => tab.id === tabId)
+
+    if (!nextTab || nextTab.id === session.activeTabId) {
+      return
+    }
+
+    setSession((current) => ({
+      ...current,
+      activeTabId: tabId,
+    }))
+
+    const project = projects.find((entry) => entry.id === activeProjectId)
+    if (project && nextTab.persistedContent == null) {
+      await loadDocumentContent(project, nextTab.documentPath, activeProfileId)
+    }
+
+    const localState = normalizeLocalStateSnapshot(
+      (await localStateStore.getState(activeProjectId)) as Awaited<
+        ReturnType<typeof localStateStore.getState>
+      > & { activeMode: 'regular' | 'split' | 'read' | 'edit'; lastKnownScrollTop?: number },
+    )
+    await localStateStore.saveState(activeProjectId, {
+      ...localState,
+      openDocumentPaths: session.tabs.map((tab) => tab.documentPath),
+      activeDocumentPath: nextTab.documentPath,
+      activeMode: session.mode,
+      regularViewState: session.regularViewState,
+    })
+  }
+
+  async function handleTabClose(tabId: string) {
+    if (!activeProjectId) {
+      return
+    }
+
+    const closingTab = session.tabs.find((tab) => tab.id === tabId) ?? null
+
+    if (closingTab == null) {
+      return
+    }
+
+    const isDirty =
+      closingTab.persistedContent != null &&
+      closingTab.draftContent != null &&
+      closingTab.draftContent !== closingTab.persistedContent
+
+    if (isDirty) {
+      setPendingCloseTabAction({ kind: 'close-tab', tabId })
+      return
+    }
+
+    await closeTabInternal(tabId)
   }
 
   async function loadDocumentContent(
@@ -622,9 +1131,25 @@ function App() {
       const document = await getDocumentContentFromBridge(project.id, profileId, documentPath)
       applyLoadedDocument(document.path, document.content, document.mtimeMs, `当前项目：${project.name}`)
     } catch (error) {
-      resetDocumentState()
-      setSaveState('save_failed_retryable')
-      setSaveErrorMessage(error instanceof Error ? error.message : '读取文档失败')
+      setSession((current) => {
+        const existingTab = getTabByDocumentPath(current, documentPath) ?? createWorkspaceTab(documentPath)
+        const nextTab: WorkspaceTab = {
+          ...existingTab,
+          saveState: 'save_failed_retryable',
+          saveErrorMessage: error instanceof Error ? error.message : '读取文档失败',
+        }
+
+        return getTabByDocumentPath(current, documentPath) == null
+          ? {
+              ...current,
+              tabs: [...current.tabs, nextTab],
+              activeTabId: nextTab.id,
+            }
+          : {
+              ...replaceTab(current, nextTab),
+              activeTabId: nextTab.id,
+            }
+      })
       setStatusMessage(error instanceof Error ? `读取文档失败：${error.message}` : '读取文档失败')
     } finally {
       setIsDocumentLoading(false)
@@ -637,8 +1162,8 @@ function App() {
     }
 
     if (regularViewState === 'locked') {
-      setRegularViewState('unlocking')
-      setRegularViewState('editable')
+      setSession((current) => ({ ...current, regularViewState: 'unlocking' }))
+      setSession((current) => ({ ...current, regularViewState: 'editable' }))
       return
     }
 
@@ -646,14 +1171,14 @@ function App() {
       return
     }
 
-    setRegularViewState('locking')
+    setSession((current) => ({ ...current, regularViewState: 'locking' }))
 
-    if (!(await flushActiveDraft())) {
-      setRegularViewState('editable')
+    if (!(await flushAllDirtyTabs())) {
+      setSession((current) => ({ ...current, regularViewState: 'editable' }))
       return
     }
 
-    setRegularViewState('locked')
+    setSession((current) => ({ ...current, regularViewState: 'locked' }))
   }
 
   async function saveActiveProfileLayout(nextLayout: { sidebarWidth?: number; outlineWidth?: number }) {
@@ -711,24 +1236,12 @@ function App() {
       return
     }
 
-    if (!(await flushActiveDraft())) {
+    if (getDirtyTabs().length > 0) {
+      setPendingWorkspaceAction({ kind: 'restart-service' })
       return
     }
 
-    setIsServiceActionPending(true)
-    setStatusMessage('正在重启本地服务…')
-
-    try {
-      await restartLocalBridgeService()
-      await waitForLocalBridgeReady()
-      await restoreLocalServiceWorkspace(activeProfileId)
-      setStatusMessage('本地服务已重启')
-    } catch (error) {
-      setWorkspaceSource('offline')
-      setStatusMessage(error instanceof Error ? error.message : '本地服务重启失败')
-    } finally {
-      setIsServiceActionPending(false)
-    }
+    await continueWorkspaceAction({ kind: 'restart-service' })
   }
 
   async function handleStopService() {
@@ -736,59 +1249,160 @@ function App() {
       return
     }
 
-    if (!(await flushActiveDraft())) {
+    if (getDirtyTabs().length > 0) {
+      setPendingWorkspaceAction({ kind: 'stop-service' })
       return
     }
 
-    setIsServiceActionPending(true)
-    setStatusMessage('正在关闭本地服务…')
+    await continueWorkspaceAction({ kind: 'stop-service' })
+  }
 
-    try {
-      await stopLocalBridgeService()
-      setWorkspaceSource('offline')
-      setStatusMessage('本地服务已关闭')
-    } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : '本地服务关闭失败')
-    } finally {
-      setIsServiceActionPending(false)
+  async function handleSaveAllAndContinue() {
+    const action = pendingWorkspaceAction
+
+    if (action == null) {
+      return
     }
+
+    const isSaved = await flushAllDirtyTabs()
+    setPendingWorkspaceAction(null)
+
+    if (!isSaved) {
+      return
+    }
+
+    await continueWorkspaceAction(action)
+  }
+
+  async function handleDiscardAllAndContinue() {
+    const action = pendingWorkspaceAction
+
+    if (action == null) {
+      return
+    }
+
+    discardDirtyTabs(getDirtyTabs().map((tab) => tab.id))
+    setPendingWorkspaceAction(null)
+    await continueWorkspaceAction(action)
+  }
+
+  function handleCancelWorkspaceAction() {
+    setPendingWorkspaceAction(null)
+  }
+
+  async function handleSaveTabAndClose() {
+    const action = pendingCloseTabAction
+
+    if (action == null) {
+      return
+    }
+
+    const isSaved = await saveTabById(action.tabId, 'leave')
+    setPendingCloseTabAction(null)
+
+    if (!isSaved) {
+      return
+    }
+
+    await closeTabInternal(action.tabId)
+  }
+
+  async function handleDiscardTabAndClose() {
+    const action = pendingCloseTabAction
+
+    if (action == null) {
+      return
+    }
+
+    discardTabDraft(action.tabId)
+    setPendingCloseTabAction(null)
+    await closeTabInternal(action.tabId)
+  }
+
+  function handleCancelTabClose() {
+    setPendingCloseTabAction(null)
   }
 
   return (
-    <AppShell
-      projects={projects}
-      activeProjectId={activeProjectId}
-      profileIds={profileIds}
-      activeProfileId={activeProfileId}
-      canManageService={workspaceSource === 'local-service'}
-      isServiceActionPending={isServiceActionPending}
-      mode={mode}
-      regularViewState={regularViewState}
-      fileTree={fileTree}
-      currentDocumentPath={currentDocumentPath}
-      currentDocumentContent={currentDocumentContent}
-      editingDocumentContent={editingDocumentContent}
-      saveIndicator={getSaveIndicator(currentDocumentPath, saveState, saveErrorMessage)}
-      isDocumentLoading={isDocumentLoading}
-      statusMessage={statusMessage}
-      sidebarWidth={sidebarWidth}
-      outlineWidth={outlineWidth}
-      onConnectProject={handleConnectProject}
-      onProjectChange={handleProjectChange}
-      onProfileChange={handleProfileChange}
-      onModeChange={handleModeChange}
-      onToggleRegularLock={handleToggleRegularLock}
-      onRestartService={handleRestartService}
-      onStopService={handleStopService}
-      onDocumentSelect={handleDocumentSelect}
-      onEditingDocumentContentChange={setDraftDocumentContent}
-      onEditingCompositionStart={handleEditingCompositionStart}
-      onEditingCompositionEnd={handleEditingCompositionEnd}
-      onSidebarWidthChange={handleSidebarWidthChange}
-      onSidebarWidthCommit={handleSidebarWidthCommit}
-      onOutlineWidthChange={handleOutlineWidthChange}
-      onOutlineWidthCommit={handleOutlineWidthCommit}
-    />
+    <>
+      <AppShell
+        projects={projects}
+        activeProjectId={activeProjectId}
+        profileIds={profileIds}
+        activeProfileId={activeProfileId}
+        tabs={session.tabs.map((tab) => ({
+          id: tab.id,
+          documentPath: tab.documentPath,
+          title: tab.documentPath.split('/').at(-1) ?? tab.documentPath,
+          saveState: tab.saveState,
+          saveErrorMessage: tab.saveErrorMessage,
+        }))}
+        activeTabId={session.activeTabId}
+        canManageService={workspaceSource === 'local-service'}
+        isServiceActionPending={isServiceActionPending}
+        mode={mode}
+        regularViewState={regularViewState}
+        fileTree={fileTree}
+        currentDocumentPath={currentDocumentPath}
+        currentDocumentContent={currentDocumentContent}
+        editingDocumentContent={editingDocumentContent}
+        saveIndicator={getSaveIndicator(activeTab)}
+        isDocumentLoading={isDocumentLoading}
+        statusMessage={statusMessage}
+        sidebarWidth={sidebarWidth}
+        outlineWidth={outlineWidth}
+        onConnectProject={handleConnectProject}
+        onProjectChange={handleProjectChange}
+        onProfileChange={handleProfileChange}
+        onModeChange={handleModeChange}
+        onToggleRegularLock={handleToggleRegularLock}
+        onTabSelect={handleTabSelect}
+        onTabClose={handleTabClose}
+        onRestartService={handleRestartService}
+        onStopService={handleStopService}
+        onDocumentSelect={handleDocumentSelect}
+        onEditingDocumentContentChange={setDraftDocumentContent}
+        onEditingCompositionStart={handleEditingCompositionStart}
+        onEditingCompositionEnd={handleEditingCompositionEnd}
+        onSidebarWidthChange={handleSidebarWidthChange}
+        onSidebarWidthCommit={handleSidebarWidthCommit}
+        onOutlineWidthChange={handleOutlineWidthChange}
+        onOutlineWidthCommit={handleOutlineWidthCommit}
+      />
+      {pendingWorkspaceAction ? (
+        <div role="dialog" aria-label="会话级保存闸门">
+          <p>当前会话存在未保存标签</p>
+          <ul>
+            {getDirtyTabs().map((tab) => (
+              <li key={tab.id}>{tab.documentPath.split('/').at(-1) ?? tab.documentPath}</li>
+            ))}
+          </ul>
+          <button type="button" onClick={handleSaveAllAndContinue}>
+            保存全部
+          </button>
+          <button type="button" onClick={handleDiscardAllAndContinue}>
+            放弃全部
+          </button>
+          <button type="button" onClick={handleCancelWorkspaceAction}>
+            取消
+          </button>
+        </div>
+      ) : null}
+      {pendingCloseTabAction ? (
+        <div role="dialog" aria-label="关闭未保存标签">
+          <p>当前标签存在未保存内容</p>
+          <button type="button" onClick={handleSaveTabAndClose}>
+            保存
+          </button>
+          <button type="button" onClick={handleDiscardTabAndClose}>
+            放弃
+          </button>
+          <button type="button" onClick={handleCancelTabClose}>
+            取消
+          </button>
+        </div>
+      ) : null}
+    </>
   )
 }
 

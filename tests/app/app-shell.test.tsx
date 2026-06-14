@@ -5,6 +5,16 @@ import { describe, expect, it, vi } from 'vitest'
 import App from '../../src/App'
 import { AppShell } from '../../src/app/AppShell'
 
+const defaultTabs = [
+  {
+    id: 'docs/README.md',
+    documentPath: 'docs/README.md',
+    title: 'README.md',
+    saveState: 'clean' as const,
+    saveErrorMessage: null,
+  },
+]
+
 describe('App', () => {
   it('renders an empty workspace state before any project is connected', () => {
     render(<App />)
@@ -32,6 +42,8 @@ describe('AppShell', () => {
         activeProjectId="notes"
         profileIds={['default', 'writer']}
         activeProfileId="writer"
+        tabs={defaultTabs}
+        activeTabId="docs/README.md"
         mode="regular"
         regularViewState="locked"
         fileTree={[
@@ -61,6 +73,8 @@ describe('AppShell', () => {
         onProfileChange={() => {}}
         onModeChange={() => {}}
         onToggleRegularLock={() => {}}
+        onTabSelect={() => {}}
+        onTabClose={() => {}}
         onRestartService={() => {}}
         onStopService={() => {}}
         onDocumentSelect={() => {}}
@@ -73,6 +87,7 @@ describe('AppShell', () => {
 
     expect(screen.getByRole('combobox', { name: '项目切换' })).toHaveValue('notes')
     expect(screen.getByRole('combobox', { name: 'Profile 切换' })).toHaveValue('writer')
+    expect(screen.getByRole('tab', { name: /README\.md/ })).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByRole('button', { name: '常规' })).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByRole('button', { name: '解锁' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'docs' })).toHaveAttribute('aria-expanded', 'true')
@@ -103,6 +118,8 @@ describe('AppShell', () => {
         activeProjectId="notes"
         profileIds={['default']}
         activeProfileId="default"
+        tabs={[]}
+        activeTabId={null}
         mode="regular"
         regularViewState="locked"
         fileTree={[
@@ -139,6 +156,8 @@ describe('AppShell', () => {
         onProfileChange={() => {}}
         onModeChange={() => {}}
         onToggleRegularLock={() => {}}
+        onTabSelect={() => {}}
+        onTabClose={() => {}}
         onRestartService={() => {}}
         onStopService={() => {}}
         onDocumentSelect={onDocumentSelect}
@@ -185,6 +204,16 @@ describe('AppShell', () => {
         activeProjectId="notes"
         profileIds={['default']}
         activeProfileId="default"
+        tabs={[
+          {
+            id: 'docs/guides/intro.md',
+            documentPath: 'docs/guides/intro.md',
+            title: 'intro.md',
+            saveState: 'clean',
+            saveErrorMessage: null,
+          },
+        ]}
+        activeTabId="docs/guides/intro.md"
         mode="regular"
         regularViewState="editable"
         fileTree={[
@@ -221,6 +250,8 @@ describe('AppShell', () => {
         onProfileChange={() => {}}
         onModeChange={() => {}}
         onToggleRegularLock={() => {}}
+        onTabSelect={() => {}}
+        onTabClose={() => {}}
         onRestartService={() => {}}
         onStopService={() => {}}
         onDocumentSelect={() => {}}
@@ -236,9 +267,8 @@ describe('AppShell', () => {
     expect(screen.getByRole('button', { name: 'intro.md' })).toHaveAttribute('aria-current', 'page')
   })
 
-  it('shows a lock button and forwards unlock actions in regular mode', async () => {
+  it('allows collapsing the current document branch manually', async () => {
     const user = userEvent.setup()
-    const onToggleRegularLock = vi.fn()
 
     render(
       <AppShell
@@ -254,6 +284,96 @@ describe('AppShell', () => {
         activeProjectId="notes"
         profileIds={['default']}
         activeProfileId="default"
+        tabs={[
+          {
+            id: 'docs/guides/intro.md',
+            documentPath: 'docs/guides/intro.md',
+            title: 'intro.md',
+            saveState: 'clean',
+            saveErrorMessage: null,
+          },
+        ]}
+        activeTabId="docs/guides/intro.md"
+        mode="regular"
+        regularViewState="editable"
+        fileTree={[
+          {
+            id: 'docs',
+            kind: 'directory',
+            name: 'docs',
+            path: 'docs',
+            children: [
+              {
+                id: 'docs/guides',
+                kind: 'directory',
+                name: 'guides',
+                path: 'docs/guides',
+                children: [
+                  {
+                    id: 'docs/guides/intro.md',
+                    kind: 'file',
+                    name: 'intro.md',
+                    path: 'docs/guides/intro.md',
+                  },
+                ],
+              },
+            ],
+          },
+        ]}
+        currentDocumentPath="docs/guides/intro.md"
+        currentDocumentContent={'# Intro'}
+        statusMessage="项目已接入"
+        sidebarWidth={280}
+        outlineWidth={320}
+        onConnectProject={() => {}}
+        onProjectChange={() => {}}
+        onProfileChange={() => {}}
+        onModeChange={() => {}}
+        onToggleRegularLock={() => {}}
+        onTabSelect={() => {}}
+        onTabClose={() => {}}
+        onRestartService={() => {}}
+        onStopService={() => {}}
+        onDocumentSelect={() => {}}
+        onSidebarWidthChange={() => {}}
+        onSidebarWidthCommit={() => {}}
+        onOutlineWidthChange={() => {}}
+        onOutlineWidthCommit={() => {}}
+      />,
+    )
+
+    const guidesDirectory = screen.getByRole('button', { name: 'guides' })
+
+    expect(guidesDirectory).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByRole('button', { name: 'intro.md' })).toBeInTheDocument()
+
+    await user.click(guidesDirectory)
+
+    expect(guidesDirectory).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByRole('button', { name: 'intro.md' })).not.toBeInTheDocument()
+  })
+
+  it('shows a lock button and forwards unlock actions in regular mode', async () => {
+    const user = userEvent.setup()
+    const onToggleRegularLock = vi.fn()
+    const onTabClose = vi.fn()
+
+    render(
+      <AppShell
+        projects={[
+          {
+            id: 'notes',
+            name: 'Notes',
+            rootHandleKey: 'handle:notes',
+            contentRoots: ['docs'],
+            permissionState: 'granted',
+          },
+        ]}
+        activeProjectId="notes"
+        profileIds={['default']}
+        activeProfileId="default"
+        tabs={defaultTabs}
+        activeTabId="docs/README.md"
         mode="regular"
         regularViewState="locked"
         fileTree={[]}
@@ -267,6 +387,8 @@ describe('AppShell', () => {
         onProfileChange={() => {}}
         onModeChange={() => {}}
         onToggleRegularLock={onToggleRegularLock}
+        onTabSelect={() => {}}
+        onTabClose={onTabClose}
         onRestartService={() => {}}
         onStopService={() => {}}
         onDocumentSelect={() => {}}
@@ -278,7 +400,9 @@ describe('AppShell', () => {
     )
 
     await user.click(screen.getByRole('button', { name: '解锁' }))
+    await user.click(screen.getByRole('button', { name: '关闭标签：README.md' }))
 
     expect(onToggleRegularLock).toHaveBeenCalledTimes(1)
+    expect(onTabClose).toHaveBeenCalledWith('docs/README.md')
   })
 })

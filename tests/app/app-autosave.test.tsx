@@ -227,7 +227,7 @@ describe('App autosave transitions', () => {
     })
   })
 
-  it('flushes the dirty draft before switching to another document', async () => {
+  it('switches documents without flushing the current dirty tab and restores the draft when切回', async () => {
     const user = userEvent.setup()
 
     render(<App />)
@@ -238,19 +238,16 @@ describe('App autosave transitions', () => {
     await user.type(editor, '# 当前文档已改动')
     await user.click(screen.getByRole('button', { name: 'next.md' }))
 
-    await waitFor(() => {
-      expect(bridgeMocks.saveDocumentContentToBridge).toHaveBeenCalledWith(
-        'notes',
-        'default',
-        'docs/guide.md',
-        '# 当前文档已改动',
-        100,
-        'fe1b7d93',
-      )
-    })
+    expect(bridgeMocks.saveDocumentContentToBridge).not.toHaveBeenCalled()
 
     expect(screen.getByRole('textbox', { name: '可视 Markdown 编辑器' })).toHaveValue(
       '# 第二篇\n\n第二篇内容',
+    )
+
+    await user.click(screen.getByRole('tab', { name: 'guide.md' }))
+
+    expect(screen.getByRole('textbox', { name: '可视 Markdown 编辑器' })).toHaveValue(
+      '# 当前文档已改动',
     )
   })
 
@@ -315,7 +312,7 @@ describe('App autosave transitions', () => {
     expect(screen.queryByText(/保存失败：/)).not.toBeInTheDocument()
   })
 
-  it('blocks document switching when saving fails', async () => {
+  it('switches documents even when the dirty tab would fail to save later', async () => {
     const user = userEvent.setup()
 
     bridgeMocks.saveDocumentContentToBridge.mockRejectedValue(new Error('write denied'))
@@ -328,13 +325,48 @@ describe('App autosave transitions', () => {
     await user.type(editor, '# 当前内容不能切走')
     await user.click(screen.getByRole('button', { name: 'next.md' }))
 
+    expect(bridgeMocks.saveDocumentContentToBridge).not.toHaveBeenCalled()
+    expect(screen.queryByText(/保存失败：write denied/)).not.toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: '可视 Markdown 编辑器' })).toHaveValue(
+      '# 第二篇\n\n第二篇内容',
+    )
+    expect(screen.getByRole('tab', { name: 'next.md' })).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('requires a session-level save gate before restarting service when any tab is dirty', async () => {
+    const user = userEvent.setup()
+
+    render(<App />)
+
+    const editor = await screen.findByRole('textbox', { name: '可视 Markdown 编辑器' })
+
+    await user.clear(editor)
+    await user.type(editor, '# 当前文档留脏')
+    await user.click(screen.getByRole('button', { name: 'next.md' }))
+    await user.click(screen.getByRole('button', { name: '重启服务' }))
+
+    expect(screen.getByRole('dialog', { name: '会话级保存闸门' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '保存全部' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '放弃全部' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '取消' })).toBeInTheDocument()
+    expect(bridgeMocks.restartLocalBridgeService).not.toHaveBeenCalled()
+
+    await user.click(screen.getByRole('button', { name: '保存全部' }))
+
     await waitFor(() => {
-      expect(screen.getAllByText(/保存失败：write denied/).length).toBeGreaterThan(0)
+      expect(bridgeMocks.saveDocumentContentToBridge).toHaveBeenCalledWith(
+        'notes',
+        'default',
+        'docs/guide.md',
+        '# 当前文档留脏',
+        100,
+        'fe1b7d93',
+      )
     })
 
-    expect(screen.getByRole('textbox', { name: '可视 Markdown 编辑器' })).toHaveValue('# 当前内容不能切走')
-    expect(screen.getByRole('button', { name: 'guide.md' })).toHaveAttribute('aria-current', 'page')
-    expect(screen.getByRole('button', { name: 'next.md' })).not.toHaveAttribute('aria-current', 'page')
+    await waitFor(() => {
+      expect(bridgeMocks.restartLocalBridgeService).toHaveBeenCalledTimes(1)
+    })
   })
 
   it('blocks service restart when saving fails', async () => {
@@ -349,6 +381,7 @@ describe('App autosave transitions', () => {
     await user.clear(editor)
     await user.type(editor, '# 先不要重启')
     await user.click(screen.getByRole('button', { name: '重启服务' }))
+    await user.click(screen.getByRole('button', { name: '保存全部' }))
 
     await waitFor(() => {
       expect(screen.getAllByText(/保存失败：bridge busy/).length).toBeGreaterThan(0)
@@ -356,6 +389,76 @@ describe('App autosave transitions', () => {
 
     expect(bridgeMocks.restartLocalBridgeService).not.toHaveBeenCalled()
     expect(screen.getByRole('textbox', { name: '可视 Markdown 编辑器' })).toHaveValue('# 先不要重启')
+  })
+
+  it('flushes all dirty tabs before locking regular mode', async () => {
+    const user = userEvent.setup()
+
+    render(<App />)
+
+    const editor = await screen.findByRole('textbox', { name: '可视 Markdown 编辑器' })
+
+    await user.clear(editor)
+    await user.type(editor, '# 第一篇已改')
+    await user.click(screen.getByRole('button', { name: 'next.md' }))
+    await user.clear(screen.getByRole('textbox', { name: '可视 Markdown 编辑器' }))
+    await user.type(screen.getByRole('textbox', { name: '可视 Markdown 编辑器' }), '# 第二篇也改了')
+    await user.click(screen.getByRole('button', { name: '锁定' }))
+
+    await waitFor(() => {
+      expect(bridgeMocks.saveDocumentContentToBridge).toHaveBeenCalledWith(
+        'notes',
+        'default',
+        'docs/guide.md',
+        '# 第一篇已改',
+        100,
+        'fe1b7d93',
+      )
+      expect(bridgeMocks.saveDocumentContentToBridge).toHaveBeenCalledWith(
+        'notes',
+        'default',
+        'docs/next.md',
+        '# 第二篇也改了',
+        200,
+        '200880b6',
+      )
+    })
+
+    expect(screen.getByRole('textbox', { name: '可视 Markdown 编辑器' })).toHaveAttribute('readonly')
+  })
+
+  it('prompts before closing a dirty tab and can save it before closing', async () => {
+    const user = userEvent.setup()
+
+    render(<App />)
+
+    const editor = await screen.findByRole('textbox', { name: '可视 Markdown 编辑器' })
+
+    await user.clear(editor)
+    await user.type(editor, '# 第一篇待保存')
+    await user.click(screen.getByRole('button', { name: 'next.md' }))
+    await user.click(screen.getByRole('button', { name: '关闭标签：guide.md' }))
+
+    expect(screen.getByRole('dialog', { name: '关闭未保存标签' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '保存' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '放弃' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '取消' })).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: '保存' }))
+
+    await waitFor(() => {
+      expect(bridgeMocks.saveDocumentContentToBridge).toHaveBeenCalledWith(
+        'notes',
+        'default',
+        'docs/guide.md',
+        '# 第一篇待保存',
+        100,
+        'fe1b7d93',
+      )
+    })
+
+    expect(screen.queryByRole('tab', { name: 'guide.md' })).not.toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'next.md' })).toHaveAttribute('aria-selected', 'true')
   })
 
   it('does not autosave during composition until composition ends', async () => {

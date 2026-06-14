@@ -38,6 +38,7 @@ function FileTreeBranch({
   currentDocumentPath,
   expandedDirectories,
   forcedExpandedDirectories,
+  collapsedForcedDirectories,
   onToggleDirectory,
   onDocumentSelect,
 }: {
@@ -46,6 +47,7 @@ function FileTreeBranch({
   currentDocumentPath: string | null
   expandedDirectories: Set<string>
   forcedExpandedDirectories: Set<string>
+  collapsedForcedDirectories: Set<string>
   onToggleDirectory: (path: string) => void
   onDocumentSelect: (path: string) => void
 }) {
@@ -56,7 +58,9 @@ function FileTreeBranch({
           {node.kind === 'directory' ? (
             (() => {
               const isForcedExpanded = forcedExpandedDirectories.has(node.path)
-              const isExpanded = isForcedExpanded || expandedDirectories.has(node.path)
+              const isExpanded =
+                expandedDirectories.has(node.path) ||
+                (isForcedExpanded && !collapsedForcedDirectories.has(node.path))
               const isCurrentBranch =
                 currentDocumentPath != null &&
                 (currentDocumentPath === node.path || currentDocumentPath.startsWith(`${node.path}/`))
@@ -82,6 +86,7 @@ function FileTreeBranch({
                         currentDocumentPath={currentDocumentPath}
                         expandedDirectories={expandedDirectories}
                         forcedExpandedDirectories={forcedExpandedDirectories}
+                        collapsedForcedDirectories={collapsedForcedDirectories}
                         onToggleDirectory={onToggleDirectory}
                         onDocumentSelect={onDocumentSelect}
                       />
@@ -139,6 +144,7 @@ export function WorkspaceLayout({
   const activeDocumentContent =
     mode === 'split' ? (editingDocumentContent ?? currentDocumentContent) : currentDocumentContent
   const [expandedDirectories, setExpandedDirectories] = useState<Set<string>>(new Set())
+  const [collapsedForcedDirectories, setCollapsedForcedDirectories] = useState<Set<string>>(new Set())
   const [documentHeadings, setDocumentHeadings] = useState<MarkdownHeading[]>([])
   const [activeHeadingId, setActiveHeadingId] = useState<string | null>(null)
   const documentRef = useRef<HTMLElement | null>(null)
@@ -171,6 +177,10 @@ export function WorkspaceLayout({
       return next
     })
   }, [fileTree])
+
+  useEffect(() => {
+    setCollapsedForcedDirectories(new Set())
+  }, [currentDocumentPath])
 
   useEffect(() => {
     if (!activeDocumentContent) {
@@ -330,6 +340,17 @@ export function WorkspaceLayout({
 
   function handleToggleDirectory(path: string) {
     if (forcedExpandedDirectories.has(path)) {
+      setCollapsedForcedDirectories((previous) => {
+        const next = new Set(previous)
+
+        if (next.has(path)) {
+          next.delete(path)
+        } else {
+          next.add(path)
+        }
+
+        return next
+      })
       return
     }
 
@@ -522,6 +543,7 @@ export function WorkspaceLayout({
                 currentDocumentPath={currentDocumentPath}
                 expandedDirectories={expandedDirectories}
                 forcedExpandedDirectories={forcedExpandedDirectories}
+                collapsedForcedDirectories={collapsedForcedDirectories}
                 onToggleDirectory={handleToggleDirectory}
                 onDocumentSelect={onDocumentSelect}
               />

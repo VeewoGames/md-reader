@@ -2,12 +2,23 @@ import { TopBar, type RegularViewState, type WorkspaceMode } from './TopBar'
 import { WorkspaceLayout } from './WorkspaceLayout'
 import type { FileTreeNode } from '../workspace/file-tree-types'
 import type { ProjectRegistryRecord } from '../workspace/registry'
+import type { TabSaveState } from '../workspace/workspace-session'
+
+interface AppShellTab {
+  id: string
+  documentPath: string
+  title: string
+  saveState: TabSaveState
+  saveErrorMessage: string | null
+}
 
 interface AppShellProps {
   projects: ProjectRegistryRecord[]
   activeProjectId: string | null
   profileIds: string[]
   activeProfileId: string
+  tabs: AppShellTab[]
+  activeTabId: string | null
   canManageService?: boolean
   isServiceActionPending?: boolean
   mode: WorkspaceMode
@@ -26,6 +37,8 @@ interface AppShellProps {
   onProfileChange: (profileId: string) => void
   onModeChange: (mode: WorkspaceMode) => void
   onToggleRegularLock: () => void
+  onTabSelect: (tabId: string) => void
+  onTabClose: (tabId: string) => void
   onRestartService?: () => void
   onStopService?: () => void
   onDocumentSelect: (path: string) => void
@@ -46,18 +59,21 @@ export function AppShell(props: AppShellProps) {
         activeProjectId={props.activeProjectId}
         profileIds={props.profileIds}
         activeProfileId={props.activeProfileId}
+        tabs={props.tabs}
+        activeTabId={props.activeTabId}
         canManageService={props.canManageService}
         isServiceActionPending={props.isServiceActionPending}
         mode={props.mode}
         regularViewState={props.regularViewState}
-        currentDocumentPath={props.currentDocumentPath}
-        saveIndicator={props.saveIndicator}
         statusMessage={props.statusMessage}
+        saveIndicator={props.saveIndicator}
         onConnectProject={props.onConnectProject}
         onProjectChange={props.onProjectChange}
         onProfileChange={props.onProfileChange}
         onModeChange={props.onModeChange}
         onToggleRegularLock={props.onToggleRegularLock}
+        onTabSelect={props.onTabSelect}
+        onTabClose={props.onTabClose}
         onRestartService={props.onRestartService}
         onStopService={props.onStopService}
       />
