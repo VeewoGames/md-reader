@@ -1,6 +1,10 @@
 import { render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+const slashMenuFeatureState = vi.hoisted(() => ({
+  install: vi.fn(),
+}))
+
 const hookState = vi.hoisted(() => {
   let latestFactory: ((root: HTMLElement) => unknown) | null = null
   let latestDeps: unknown[] = []
@@ -43,6 +47,7 @@ vi.mock('@milkdown/crepe', () => {
     static instances: MockCrepe[] = []
 
     config: Record<string, unknown>
+    editor = {}
     setReadonly = vi.fn()
     listenerFn: ((listener: { markdownUpdated: (fn: (ctx: unknown, markdown: string) => void) => void }) => void) | null =
       null
@@ -88,6 +93,10 @@ vi.mock('@milkdown/crepe', () => {
   }
 })
 
+vi.mock('../../src/editor/slash-menu-feature', () => ({
+  installSlashMenuFeature: slashMenuFeatureState.install,
+}))
+
 import { VisualMarkdownEditorImpl } from '../../src/editor/visual-markdown-editor-impl'
 
 describe('VisualMarkdownEditorImpl', () => {
@@ -105,7 +114,10 @@ describe('VisualMarkdownEditorImpl', () => {
 
     expect(factory).not.toBeNull()
 
-    const crepe = factory!(document.createElement('div')) as { config: Record<string, unknown> }
+    const crepe = factory!(document.createElement('div')) as {
+      config: Record<string, unknown>
+      editor: unknown
+    }
     const features = crepe.config.features as Record<string, boolean>
 
     expect(features.cursor).toBe(false)
@@ -119,6 +131,7 @@ describe('VisualMarkdownEditorImpl', () => {
     expect(features.latex).toBe(false)
     expect(features.ai).toBe(false)
     expect(features['top-bar']).toBe(false)
+    expect(slashMenuFeatureState.install).toHaveBeenCalledWith(crepe.editor)
     expect((crepe as { setReadonly: ReturnType<typeof vi.fn> }).setReadonly).toHaveBeenCalledWith(false)
   })
 

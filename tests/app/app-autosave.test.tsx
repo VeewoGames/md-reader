@@ -38,6 +38,9 @@ const documents = new Map([
 const bridgeMocks = vi.hoisted(() => ({
   saveDocumentContentToBridge: vi.fn(),
   getDocumentContentFromBridge: vi.fn(),
+  getProfileFromBridge: vi.fn(),
+  listProjectProfilesFromBridge: vi.fn(),
+  saveProfileToBridge: vi.fn(),
   saveState: vi.fn(),
   setActiveProjectWithBridge: vi.fn(),
   restartLocalBridgeService: vi.fn(),
@@ -90,6 +93,9 @@ vi.mock('../../src/workspace/local-bridge-access', () => ({
       },
     ],
   })),
+  listProjectProfilesFromBridge: bridgeMocks.listProjectProfilesFromBridge,
+  getProfileFromBridge: bridgeMocks.getProfileFromBridge,
+  saveProfileToBridge: bridgeMocks.saveProfileToBridge,
   getFileTreePathsFromBridge: vi.fn(async () => ['docs/guide.md', 'docs/next.md']),
   getDocumentContentFromBridge: bridgeMocks.getDocumentContentFromBridge,
   saveDocumentContentToBridge: bridgeMocks.saveDocumentContentToBridge,
@@ -131,10 +137,36 @@ describe('App autosave transitions', () => {
   beforeEach(() => {
     bridgeMocks.saveDocumentContentToBridge.mockReset()
     bridgeMocks.getDocumentContentFromBridge.mockReset()
+    bridgeMocks.getProfileFromBridge.mockReset()
+    bridgeMocks.listProjectProfilesFromBridge.mockReset()
+    bridgeMocks.saveProfileToBridge.mockReset()
     bridgeMocks.saveState.mockReset()
     bridgeMocks.setActiveProjectWithBridge.mockReset()
     bridgeMocks.restartLocalBridgeService.mockReset()
     bridgeMocks.stopLocalBridgeService.mockReset()
+
+    bridgeMocks.listProjectProfilesFromBridge.mockResolvedValue({
+      profileIds: ['default', 'Lans'],
+    })
+    bridgeMocks.getProfileFromBridge.mockResolvedValue({
+      id: 'default',
+      appearance: {
+        theme: 'system',
+        fontSize: 16,
+        pageWidth: 'narrow',
+      },
+      layout: {
+        sidebarWidth: 280,
+        outlineWidth: 320,
+        sidebarCollapsed: false,
+        outlineCollapsed: false,
+      },
+      navigation: {
+        expandedFileNodes: [],
+        expandedHeadingNodes: {},
+      },
+    })
+    bridgeMocks.saveProfileToBridge.mockImplementation(async (_projectId, profile) => profile)
 
     documents.set('docs/guide.md', {
       path: 'docs/guide.md',

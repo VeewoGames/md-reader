@@ -44,4 +44,41 @@ describe('ReadonlyMarkdownRendererImpl', () => {
       }),
     ).toBeInTheDocument()
   })
+
+  it('does not show synced_block wrapper text when adjacent wrappers share a line', () => {
+    render(
+      <ReadonlyMarkdownRendererImpl
+        value={
+          '# 标题\n</synced_block> <synced_block url="https://example.com/block">\n正文段落'
+        }
+      />,
+    )
+
+    expect(screen.getByRole('heading', { level: 1, name: '标题' })).toBeInTheDocument()
+    expect(screen.getByText('正文段落')).toBeInTheDocument()
+    expect(screen.queryByText(/synced_block/i)).toBeNull()
+  })
+
+  it('does not show escaped synced_block export artifacts from malformed markdown', () => {
+    render(
+      <ReadonlyMarkdownRendererImpl
+        value={[
+          '# 代理系统',
+          '',
+          '\\<synced\\_block url="[https://www.notion.so/90ab2848635246b0828a0dd1055582a5#65e61e90cf0749709caa73df726c8ba6">](https://www.notion.so/90ab2848635246b0828a0dd1055582a5#65e61e90cf0749709caa73df726c8ba6">)',
+          '',
+          '## 真实召唤物',
+          '',
+          '正文',
+          '',
+          '\\</synced\\_block>',
+        ].join('\n')}
+      />,
+    )
+
+    expect(screen.getByRole('heading', { level: 1, name: '代理系统' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 2, name: '真实召唤物' })).toBeInTheDocument()
+    expect(screen.getByText('正文')).toBeInTheDocument()
+    expect(screen.queryByText(/synced_block/i)).toBeNull()
+  })
 })

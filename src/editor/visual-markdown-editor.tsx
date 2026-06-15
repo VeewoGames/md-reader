@@ -37,7 +37,7 @@ export function VisualMarkdownEditor(props: VisualMarkdownEditorProps) {
   const [loadError, setLoadError] = useState<Error | null>(null)
   const generationRef = useRef(0)
   const { preservedPrefix, editorValue } = splitLeadingHtmlComments(props.value)
-  const renderedEditorValue = props.readonly ? applyMarkdownTransforms(editorValue) : editorValue
+  const renderedEditorValue = applyMarkdownTransforms(editorValue)
 
   useEffect(() => {
     if (cachedEditorComponent) {

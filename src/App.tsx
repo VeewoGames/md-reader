@@ -15,17 +15,20 @@ import {
 import {
   BridgeDocumentConflictError,
   getDocumentContentFromBridge,
+  getProfileFromBridge,
   getFileTreePathsFromBridge,
   getLocalBridgeHealth,
   listProjectsFromBridge,
+  listProjectProfilesFromBridge,
   registerProjectWithBridge,
   restartLocalBridgeService,
+  saveProfileToBridge,
   saveDocumentContentToBridge,
   setActiveProjectWithBridge,
   stopLocalBridgeService,
 } from './workspace/local-bridge-access'
 import { createLocalStateStore } from './workspace/local-state'
-import { createProfileStore } from './workspace/profile-store'
+import { createProfileStore, type PageWidthMode } from './workspace/profile-store'
 import type { ProjectRegistryRecord } from './workspace/registry'
 import { createWorkspaceProvider, type WorkspaceSource } from './workspace/workspace-provider'
 
@@ -184,7 +187,7 @@ function getSaveIndicator(
 function App() {
   const [projects, setProjects] = useState<ProjectRegistryRecord[]>([])
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null)
-  const [profileIds] = useState(['default'])
+  const [profileIds, setProfileIds] = useState(['default'])
   const [activeProfileId, setActiveProfileId] = useState('default')
   const [session, setSession] = useState<WorkspaceSession>(createEmptySession)
   const [fileTree, setFileTree] = useState<FileTreeNode[]>([])
@@ -196,6 +199,8 @@ function App() {
   const [statusMessage, setStatusMessage] = useState<string | null>('还没有接入任何 Markdown 项目')
   const [sidebarWidth, setSidebarWidth] = useState(280)
   const [outlineWidth, setOutlineWidth] = useState(320)
+  const [documentFontSize, setDocumentFontSize] = useState(16)
+  const [documentPageWidth, setDocumentPageWidth] = useState<PageWidthMode>('narrow')
   const activeTab = getActiveTab(session)
   const mode = session.mode
   const regularViewState = session.regularViewState
@@ -344,28 +349,41 @@ function App() {
 
   useEffect(() => {
     if (!activeProjectId) {
+      setProfileIds(['default'])
       setSidebarWidth(280)
       setOutlineWidth(320)
+      setDocumentFontSize(16)
+      setDocumentPageWidth('narrow')
       return
     }
 
     let cancelled = false
 
     void (async () => {
-      const profile = await profileStore.getProfile(activeProjectId, activeProfileId)
+      const profile =
+        workspaceSource === 'local-service'
+          ? await getProfileFromBridge(activeProjectId, activeProfileId, activeProfileId)
+          : await profileStore.getProfile(activeProjectId, activeProfileId)
+      const nextProfileIds =
+        workspaceSource === 'local-service'
+          ? (await listProjectProfilesFromBridge(activeProjectId, activeProfileId)).profileIds
+          : ['default']
 
       if (cancelled) {
         return
       }
 
+      setProfileIds(nextProfileIds)
       setSidebarWidth(profile.layout.sidebarWidth)
       setOutlineWidth(profile.layout.outlineWidth)
+      setDocumentFontSize(profile.appearance?.fontSize ?? 16)
+      setDocumentPageWidth(profile.appearance?.pageWidth ?? 'narrow')
     })()
 
     return () => {
       cancelled = true
     }
-  }, [activeProjectId, activeProfileId])
+  }, [activeProjectId, activeProfileId, workspaceSource])
 
   useEffect(() => {
     const hasDirtyDraft =
@@ -930,17 +948,39 @@ function App() {
       }
 
       const snapshot = await workspaceProvider.listProjects(action.profileId)
-      setProjects(snapshot.projects)
-      setActiveProjectId(snapshot.activeProjectId)
+      let nextSnapshot = snapshot
 
-      if (!snapshot.activeProjectId) {
+      if (!nextSnapshot.activeProjectId) {
+        const currentProject =
+          activeProjectIdRef.current == null
+            ? null
+            : projects.find((entry) => entry.id === activeProjectIdRef.current) ?? null
+
+        if (currentProject?.rootPath) {
+          const registeredProject = await workspaceProvider.registerProject(
+            action.profileId,
+            currentProject.rootPath,
+          )
+          await workspaceProvider.setActiveProject(action.profileId, registeredProject.id)
+          nextSnapshot = await workspaceProvider.listProjects(action.profileId)
+        }
+      }
+
+      setProjects(nextSnapshot.projects)
+      setActiveProjectId(nextSnapshot.activeProjectId)
+
+      if (!nextSnapshot.activeProjectId) {
         setFileTree([])
         resetSessionState()
         setStatusMessage('当前 profile 还没有接入任何项目')
         return
       }
 
-      await loadLocalServiceProject(snapshot.activeProjectId, snapshot.projects, action.profileId)
+      await loadLocalServiceProject(
+        nextSnapshot.activeProjectId,
+        nextSnapshot.projects,
+        action.profileId,
+      )
       return
     }
 
@@ -1186,15 +1226,59 @@ function App() {
       return
     }
 
-    const profile = await profileStore.getProfile(activeProjectId, activeProfileId)
+    const profile =
+      workspaceSource === 'local-service'
+        ? await getProfileFromBridge(activeProjectId, activeProfileId, activeProfileIdRef.current)
+        : await profileStore.getProfile(activeProjectId, activeProfileId)
 
-    await profileStore.saveProfile(activeProjectId, {
+    const nextProfile = {
       ...profile,
       layout: {
         ...profile.layout,
         ...nextLayout,
       },
-    })
+    }
+
+    if (workspaceSource === 'local-service') {
+      await saveProfileToBridge(activeProjectId, nextProfile, activeProfileIdRef.current)
+      return
+    }
+
+    await profileStore.saveProfile(activeProjectId, nextProfile)
+  }
+
+  async function saveActiveProfileAppearance(nextAppearance: {
+    fontSize?: number
+    pageWidth?: PageWidthMode
+  }) {
+    if (!activeProjectId) {
+      return
+    }
+
+    const profile =
+      workspaceSource === 'local-service'
+        ? await getProfileFromBridge(activeProjectId, activeProfileId, activeProfileIdRef.current)
+        : await profileStore.getProfile(activeProjectId, activeProfileId)
+    const currentAppearance = profile.appearance ?? {
+      theme: 'system',
+      fontSize: 16,
+      pageWidth: 'narrow' as PageWidthMode,
+    }
+
+    const nextProfile = {
+      ...profile,
+      appearance: {
+        ...currentAppearance,
+        ...nextAppearance,
+      },
+    }
+
+    if (workspaceSource === 'local-service') {
+      await saveProfileToBridge(activeProjectId, nextProfile, activeProfileIdRef.current)
+      return
+    }
+
+    await profileStore.saveProfile(activeProjectId, nextProfile)
   }
 
   function handleSidebarWidthChange(nextWidth: number) {
@@ -1213,6 +1297,16 @@ function App() {
   async function handleOutlineWidthCommit(nextWidth: number) {
     setOutlineWidth(nextWidth)
     await saveActiveProfileLayout({ outlineWidth: nextWidth })
+  }
+
+  async function handleDocumentFontSizeChange(nextFontSize: number) {
+    setDocumentFontSize(nextFontSize)
+    await saveActiveProfileAppearance({ fontSize: nextFontSize })
+  }
+
+  async function handleDocumentPageWidthChange(nextPageWidth: PageWidthMode) {
+    setDocumentPageWidth(nextPageWidth)
+    await saveActiveProfileAppearance({ pageWidth: nextPageWidth })
   }
 
   async function waitForLocalBridgeReady(timeoutMs = 6000) {
@@ -1351,6 +1445,8 @@ function App() {
         statusMessage={statusMessage}
         sidebarWidth={sidebarWidth}
         outlineWidth={outlineWidth}
+        documentFontSize={documentFontSize}
+        documentPageWidth={documentPageWidth}
         onConnectProject={handleConnectProject}
         onProjectChange={handleProjectChange}
         onProfileChange={handleProfileChange}
@@ -1361,6 +1457,8 @@ function App() {
         onRestartService={handleRestartService}
         onStopService={handleStopService}
         onDocumentSelect={handleDocumentSelect}
+        onDocumentFontSizeChange={handleDocumentFontSizeChange}
+        onDocumentPageWidthChange={handleDocumentPageWidthChange}
         onEditingDocumentContentChange={setDraftDocumentContent}
         onEditingCompositionStart={handleEditingCompositionStart}
         onEditingCompositionEnd={handleEditingCompositionEnd}

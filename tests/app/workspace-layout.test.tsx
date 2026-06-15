@@ -457,8 +457,8 @@ describe('WorkspaceLayout outline navigation', () => {
         regularViewState="editable"
         fileTree={[]}
         currentDocumentPath="docs/guide.md"
-        currentDocumentContent={'# 总览\n\n内容'}
-        editingDocumentContent={'# 总览\n\n内容'}
+        currentDocumentContent={'# 总览\n\n普通段落\n\n---\n\n## 下一节'}
+        editingDocumentContent={'# 总览\n\n普通段落\n\n---\n\n## 下一节'}
         statusMessage="当前项目：Notes"
         sidebarWidth={280}
         outlineWidth={320}
@@ -476,6 +476,9 @@ describe('WorkspaceLayout outline navigation', () => {
       'false',
     )
     expect(screen.getByRole('heading', { name: '总览' })).toBeInTheDocument()
+    expect(screen.getByText('普通段落').tagName).toBe('P')
+    expect(document.querySelector('[data-testid="visual-markdown-editor"] hr')).not.toBeNull()
+    expect(screen.getByRole('heading', { name: '下一节' })).toBeInTheDocument()
   })
 
   it('does not attach a mutation observer to the editor pane in regular mode', async () => {

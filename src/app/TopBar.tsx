@@ -1,8 +1,21 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react'
+import {
+  ChevronDown,
+  Lock,
+  LockOpen,
+  PanelTop,
+  Plus,
+  Power,
+  RotateCw,
+  SlidersHorizontal,
+  Square,
+  X,
+} from 'lucide-react'
 
 import type { ProjectRegistryRecord } from '../workspace/registry'
 import { preloadVisualMarkdownEditor } from '../editor/visual-markdown-editor'
 import type { TabSaveState } from '../workspace/workspace-session'
+import type { PageWidthMode } from '../workspace/profile-store'
 
 export type WorkspaceMode = 'regular' | 'split'
 export type RegularViewState = 'locked' | 'unlocking' | 'editable' | 'locking'
@@ -37,11 +50,112 @@ interface TopBarProps {
   onTabClose: (tabId: string) => void
   onRestartService?: () => void
   onStopService?: () => void
+  documentFontSize?: number
+  documentPageWidth?: PageWidthMode
+  onDocumentFontSizeChange?: (fontSize: number) => void
+  onDocumentPageWidthChange?: (pageWidth: PageWidthMode) => void
 }
 
 const MODE_LABELS: Record<WorkspaceMode, string> = {
   regular: '常规',
   split: '分栏',
+}
+
+const FONT_SIZE_OPTIONS = [14, 15, 16, 17, 18] as const
+const PAGE_WIDTH_OPTIONS: Array<{ value: PageWidthMode; label: string }> = [
+  { value: 'narrow', label: '窄版' },
+  { value: 'wide', label: '宽版' },
+]
+
+function TopBarReadingPreferences({
+  fontSize,
+  pageWidth,
+  onFontSizeChange,
+  onPageWidthChange,
+}: {
+  fontSize: number
+  pageWidth: PageWidthMode
+  onFontSizeChange?: (fontSize: number) => void
+  onPageWidthChange?: (pageWidth: PageWidthMode) => void
+}) {
+  const rootRef = useRef<HTMLDivElement | null>(null)
+  const [isOpen, setIsOpen] = useState(false)
+
+  useEffect(() => {
+    function handlePointerDown(event: MouseEvent) {
+      if (!rootRef.current?.contains(event.target as Node)) {
+        setIsOpen(false)
+      }
+    }
+
+    function handleWindowBlur() {
+      setIsOpen(false)
+    }
+
+    window.addEventListener('mousedown', handlePointerDown)
+    window.addEventListener('blur', handleWindowBlur)
+
+    return () => {
+      window.removeEventListener('mousedown', handlePointerDown)
+      window.removeEventListener('blur', handleWindowBlur)
+    }
+  }, [])
+
+  return (
+    <div ref={rootRef} className="topbar__reading-preferences" data-open={isOpen ? 'true' : undefined}>
+      <button
+        type="button"
+        className="topbar__service-button"
+        aria-label="阅读选项"
+        title="阅读选项"
+        aria-expanded={isOpen}
+        aria-haspopup="dialog"
+        onClick={() => setIsOpen((current) => !current)}
+      >
+        <span className="topbar__icon" aria-hidden="true">
+          <SlidersHorizontal />
+        </span>
+      </button>
+
+      {isOpen ? (
+        <div className="topbar__reading-popover" role="group" aria-label="阅读偏好">
+          <section className="topbar__reading-section" aria-label="默认字体大小">
+            <p className="topbar__reading-label">默认字体大小</p>
+            <div className="topbar__reading-options" role="group" aria-label="字体大小选项">
+              {FONT_SIZE_OPTIONS.map((option) => (
+                <button
+                  key={option}
+                  type="button"
+                  className="topbar__reading-option"
+                  aria-pressed={fontSize === option}
+                  onClick={() => onFontSizeChange?.(option)}
+                >
+                  {option} px
+                </button>
+              ))}
+            </div>
+          </section>
+
+          <section className="topbar__reading-section" aria-label="页面宽度">
+            <p className="topbar__reading-label">页面宽度</p>
+            <div className="topbar__reading-options" role="group" aria-label="页面宽度选项">
+              {PAGE_WIDTH_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  className="topbar__reading-option"
+                  aria-pressed={pageWidth === option.value}
+                  onClick={() => onPageWidthChange?.(option.value)}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </section>
+        </div>
+      ) : null}
+    </div>
+  )
 }
 
 function TopBarSelect({
@@ -141,12 +255,7 @@ function TopBarSelect({
       >
         <span className="topbar__select-value">{visibleLabel}</span>
         <span className="topbar__select-chevron" aria-hidden="true">
-          <svg viewBox="0 0 16 16" focusable="false">
-            <path
-              d="M4.22 6.22a.75.75 0 0 1 1.06 0L8 8.94l2.72-2.72a.75.75 0 1 1 1.06 1.06l-3.25 3.25a.75.75 0 0 1-1.06 0L4.22 7.28a.75.75 0 0 1 0-1.06Z"
-              fill="currentColor"
-            />
-          </svg>
+          <ChevronDown />
         </span>
       </button>
 
@@ -204,6 +313,10 @@ export function TopBar({
   onTabClose,
   onRestartService,
   onStopService,
+  documentFontSize = 16,
+  documentPageWidth = 'narrow',
+  onDocumentFontSizeChange,
+  onDocumentPageWidthChange,
 }: TopBarProps) {
   const isRegularMode = mode === 'regular'
   const isLockActionPending =
@@ -239,12 +352,7 @@ export function TopBar({
           onClick={onConnectProject}
         >
           <span className="topbar__icon" aria-hidden="true">
-            <svg viewBox="0 0 16 16" focusable="false">
-              <path
-                d="M7.25 2.75a.75.75 0 0 1 1.5 0v4.5H13.25a.75.75 0 0 1 0 1.5H8.75v4.5a.75.75 0 0 1-1.5 0V8.75H2.75a.75.75 0 0 1 0-1.5h4.5Z"
-                fill="currentColor"
-              />
-            </svg>
+            <Plus />
           </span>
         </button>
       </div>
@@ -290,12 +398,7 @@ export function TopBar({
                   aria-label={`关闭标签：${tab.title}`}
                   onClick={() => onTabClose(tab.id)}
                 >
-                  <svg viewBox="0 0 16 16" focusable="false">
-                    <path
-                      d="M4.22 4.22a.75.75 0 0 1 1.06 0L8 6.94l2.72-2.72a.75.75 0 1 1 1.06 1.06L9.06 8l2.72 2.72a.75.75 0 1 1-1.06 1.06L8 9.06l-2.72 2.72a.75.75 0 1 1-1.06-1.06L6.94 8 4.22 5.28a.75.75 0 0 1 0-1.06Z"
-                      fill="currentColor"
-                    />
-                  </svg>
+                  <X />
                 </button>
               </div>
             )
@@ -327,21 +430,7 @@ export function TopBar({
                 onClick={onToggleRegularLock}
               >
                 <span className="topbar__lock-icon" aria-hidden="true">
-                  {isUnlocked ? (
-                    <svg viewBox="0 0 16 16" focusable="false">
-                      <path
-                        d="M11.5 6a1.5 1.5 0 0 1 1.5 1.5v4A2.5 2.5 0 0 1 10.5 14h-5A2.5 2.5 0 0 1 3 11.5v-4A1.5 1.5 0 0 1 4.5 6h4.75V4.75a1.75 1.75 0 0 0-3.192-.978.75.75 0 1 1-1.284-.776A3.25 3.25 0 0 1 10.75 4.75V6h.75Z"
-                        fill="currentColor"
-                      />
-                    </svg>
-                  ) : (
-                    <svg viewBox="0 0 16 16" focusable="false">
-                      <path
-                        d="M11.25 6H10.5V4.75a2.5 2.5 0 0 0-5 0V6h-.75A1.75 1.75 0 0 0 3 7.75v4.5A1.75 1.75 0 0 0 4.75 14h6.5A1.75 1.75 0 0 0 13 12.25v-4.5A1.75 1.75 0 0 0 11.25 6ZM7 4.75a1 1 0 1 1 2 0V6H7V4.75Z"
-                        fill="currentColor"
-                      />
-                    </svg>
-                  )}
+                  {isUnlocked ? <LockOpen /> : <Lock />}
                 </span>
               </button>
             ) : null}
@@ -360,21 +449,7 @@ export function TopBar({
                   onClick={() => onModeChange(nextMode)}
                 >
                   <span className="topbar__icon" aria-hidden="true">
-                    {nextMode === 'regular' ? (
-                      <svg viewBox="0 0 16 16" focusable="false">
-                        <path
-                          d="M3.75 3A1.75 1.75 0 0 0 2 4.75v6.5C2 12.216 2.784 13 3.75 13h8.5A1.75 1.75 0 0 0 14 11.25v-6.5A1.75 1.75 0 0 0 12.25 3h-8.5Zm0 1.5h8.5a.25.25 0 0 1 .25.25v6.5a.25.25 0 0 1-.25.25h-8.5a.25.25 0 0 1-.25-.25v-6.5a.25.25 0 0 1 .25-.25Z"
-                          fill="currentColor"
-                        />
-                      </svg>
-                    ) : (
-                      <svg viewBox="0 0 16 16" focusable="false">
-                        <path
-                          d="M2 4.75C2 3.784 2.784 3 3.75 3h8.5C13.216 3 14 3.784 14 4.75v6.5c0 .966-.784 1.75-1.75 1.75h-8.5A1.75 1.75 0 0 1 2 11.25v-6.5Zm1.5 0v6.5c0 .138.112.25.25.25h3.5v-7H3.75a.25.25 0 0 0-.25.25Zm5.25 6.75h3.5a.25.25 0 0 0 .25-.25v-6.5a.25.25 0 0 0-.25-.25h-3.5v7Z"
-                          fill="currentColor"
-                        />
-                      </svg>
-                    )}
+                    {nextMode === 'regular' ? <Square /> : <PanelTop />}
                   </span>
                 </button>
               ))}
@@ -383,6 +458,12 @@ export function TopBar({
 
           {canManageService ? (
           <div className="topbar__service-actions" role="group" aria-label="服务操作">
+            <TopBarReadingPreferences
+              fontSize={documentFontSize}
+              pageWidth={documentPageWidth}
+              onFontSizeChange={onDocumentFontSizeChange}
+              onPageWidthChange={onDocumentPageWidthChange}
+            />
             <button
               type="button"
               className="topbar__service-button"
@@ -392,12 +473,7 @@ export function TopBar({
               onClick={onRestartService}
             >
               <span className="topbar__icon" aria-hidden="true">
-                <svg viewBox="0 0 16 16" focusable="false">
-                  <path
-                    d="M8 2.5a5.5 5.5 0 0 1 4.694 2.63V3.75a.75.75 0 0 1 1.5 0v3.5a.75.75 0 0 1-.75.75h-3.5a.75.75 0 0 1 0-1.5h1.875A4 4 0 1 0 12 10a.75.75 0 0 1 1.5.14A5.5 5.5 0 1 1 8 2.5Z"
-                    fill="currentColor"
-                  />
-                </svg>
+                <RotateCw />
               </span>
             </button>
             <button
@@ -409,12 +485,7 @@ export function TopBar({
               onClick={onStopService}
             >
               <span className="topbar__icon" aria-hidden="true">
-                <svg viewBox="0 0 16 16" focusable="false">
-                  <path
-                    d="M8 1.75a.75.75 0 0 1 .75.75v5a.75.75 0 0 1-1.5 0v-5A.75.75 0 0 1 8 1.75Zm3.736 1.288a.75.75 0 0 1 1.03.274A6 6 0 1 1 3.234 3.31a.75.75 0 0 1 1.304.742 4.5 4.5 0 1 0 6.924-.014.75.75 0 0 1 .274-1.03Z"
-                    fill="currentColor"
-                  />
-                </svg>
+                <Power />
               </span>
             </button>
           </div>

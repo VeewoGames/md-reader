@@ -40,6 +40,9 @@ const documents = new Map([
 
 const bridgeMocks = vi.hoisted(() => ({
   getDocumentContentFromBridge: vi.fn(),
+  getProfileFromBridge: vi.fn(),
+  listProjectProfilesFromBridge: vi.fn(),
+  saveProfileToBridge: vi.fn(),
   saveState: vi.fn(),
 }))
 
@@ -89,6 +92,9 @@ vi.mock('../../src/workspace/local-bridge-access', () => ({
       },
     ],
   })),
+  listProjectProfilesFromBridge: bridgeMocks.listProjectProfilesFromBridge,
+  getProfileFromBridge: bridgeMocks.getProfileFromBridge,
+  saveProfileToBridge: bridgeMocks.saveProfileToBridge,
   getFileTreePathsFromBridge: vi.fn(async () => ['docs/guide.md', 'docs/next.md']),
   getDocumentContentFromBridge: bridgeMocks.getDocumentContentFromBridge,
   saveDocumentContentToBridge: vi.fn(),
@@ -123,7 +129,33 @@ import App from '../../src/App'
 describe('App session restore', () => {
   beforeEach(() => {
     bridgeMocks.getDocumentContentFromBridge.mockReset()
+    bridgeMocks.getProfileFromBridge.mockReset()
+    bridgeMocks.listProjectProfilesFromBridge.mockReset()
+    bridgeMocks.saveProfileToBridge.mockReset()
     bridgeMocks.saveState.mockReset()
+
+    bridgeMocks.listProjectProfilesFromBridge.mockResolvedValue({
+      profileIds: ['default', 'Lans'],
+    })
+    bridgeMocks.getProfileFromBridge.mockResolvedValue({
+      id: 'default',
+      appearance: {
+        theme: 'system',
+        fontSize: 16,
+        pageWidth: 'narrow',
+      },
+      layout: {
+        sidebarWidth: 280,
+        outlineWidth: 320,
+        sidebarCollapsed: false,
+        outlineCollapsed: false,
+      },
+      navigation: {
+        expandedFileNodes: [],
+        expandedHeadingNodes: {},
+      },
+    })
+    bridgeMocks.saveProfileToBridge.mockImplementation(async (_projectId, profile) => profile)
 
     bridgeMocks.getDocumentContentFromBridge.mockImplementation(
       async (_projectId: string, _profileId: string, documentPath: string) => {

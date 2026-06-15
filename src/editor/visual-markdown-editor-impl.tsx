@@ -3,6 +3,7 @@ import { Milkdown, MilkdownProvider, useEditor } from '@milkdown/react'
 import { Crepe, CrepeFeature } from '@milkdown/crepe'
 
 import '@milkdown/crepe/theme/classic.css'
+import { installSlashMenuFeature } from './slash-menu-feature'
 
 interface VisualMarkdownEditorImplProps {
   value: string
@@ -46,6 +47,8 @@ function VisualMarkdownEditorContent({
           [CrepeFeature.TopBar]: false,
         },
       })
+
+      installSlashMenuFeature(crepe.editor)
 
       crepe.setReadonly(readonly)
 

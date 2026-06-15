@@ -1,8 +1,11 @@
+import type { CSSProperties } from 'react'
+
 import { TopBar, type RegularViewState, type WorkspaceMode } from './TopBar'
 import { WorkspaceLayout } from './WorkspaceLayout'
 import type { FileTreeNode } from '../workspace/file-tree-types'
 import type { ProjectRegistryRecord } from '../workspace/registry'
 import type { TabSaveState } from '../workspace/workspace-session'
+import type { PageWidthMode } from '../workspace/profile-store'
 
 interface AppShellTab {
   id: string
@@ -32,6 +35,8 @@ interface AppShellProps {
   statusMessage: string | null
   sidebarWidth: number
   outlineWidth: number
+  documentFontSize?: number
+  documentPageWidth?: PageWidthMode
   onConnectProject: () => void
   onProjectChange: (projectId: string) => void
   onProfileChange: (profileId: string) => void
@@ -42,6 +47,8 @@ interface AppShellProps {
   onRestartService?: () => void
   onStopService?: () => void
   onDocumentSelect: (path: string) => void
+  onDocumentFontSizeChange?: (fontSize: number) => void
+  onDocumentPageWidthChange?: (pageWidth: PageWidthMode) => void
   onEditingDocumentContentChange?: (content: string) => void
   onEditingCompositionStart?: () => void
   onEditingCompositionEnd?: () => void
@@ -52,8 +59,22 @@ interface AppShellProps {
 }
 
 export function AppShell(props: AppShellProps) {
+  const documentFontSize = props.documentFontSize ?? 16
+  const documentPageWidth = props.documentPageWidth ?? 'narrow'
+  const documentMaxWidth = documentPageWidth === 'wide' ? '960px' : '720px'
+  const documentLineHeight = `${Math.round(documentFontSize * 1.5)}px`
+
   return (
-    <div className="app-shell">
+    <div
+      className="app-shell"
+      style={
+        {
+          '--doc-body-font-size': `${documentFontSize}px`,
+          '--doc-max-width': documentMaxWidth,
+          '--doc-body-line-height': documentLineHeight,
+        } as CSSProperties
+      }
+    >
       <TopBar
         projects={props.projects}
         activeProjectId={props.activeProjectId}
@@ -76,6 +97,10 @@ export function AppShell(props: AppShellProps) {
         onTabClose={props.onTabClose}
         onRestartService={props.onRestartService}
         onStopService={props.onStopService}
+        documentFontSize={documentFontSize}
+        documentPageWidth={documentPageWidth}
+        onDocumentFontSizeChange={props.onDocumentFontSizeChange}
+        onDocumentPageWidthChange={props.onDocumentPageWidthChange}
       />
       <WorkspaceLayout
         mode={props.mode}

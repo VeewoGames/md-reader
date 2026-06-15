@@ -1,3 +1,5 @@
+@import './styles/synced-block.css';
+
 :root {
   --bg: #f6f1e8;
   --panel: rgba(255, 252, 247, 0.9);
@@ -12,8 +14,16 @@
   --shadow: 0 16px 40px rgba(87, 63, 39, 0.07);
   --radius: 18px;
   --sans: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
-  --doc-max-width: 920px;
-  --doc-line-height: 1.8;
+  --doc-font-family: 'Inter', 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --doc-max-width: 720px;
+  --doc-body-font-size: 16px;
+  --doc-body-line-height: 24px;
+  --doc-heading-line-height: 1.14;
+  --doc-block-spacing: 1.25rem;
+  --doc-surface-inline-padding: 32px;
+  --doc-text: rgba(55, 53, 47, 0.88);
+  --doc-heading-text: rgba(37, 36, 32, 0.96);
+  --doc-rule: rgba(55, 53, 47, 0.12);
   --doc-inline-code-bg: rgba(111, 93, 74, 0.1);
   --doc-blockquote-bg: rgba(255, 255, 255, 0.68);
   --doc-pre-bg: rgba(248, 244, 237, 0.95);
@@ -257,6 +267,71 @@ select {
   align-items: center;
 }
 
+.topbar__reading-preferences {
+  position: relative;
+}
+
+.topbar__reading-preferences[data-open='true'] .topbar__service-button {
+  border-color: rgba(31, 111, 235, 0.28);
+  background: #fffdfa;
+}
+
+.topbar__reading-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 120;
+  width: 220px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid rgba(127, 105, 82, 0.18);
+  border-radius: 16px;
+  background: rgba(255, 252, 247, 0.98);
+  box-shadow:
+    0 14px 28px rgba(87, 63, 39, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.75);
+  backdrop-filter: blur(18px);
+}
+
+.topbar__reading-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.topbar__reading-label {
+  margin: 0;
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.topbar__reading-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.topbar__reading-option {
+  min-width: 60px;
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-strong);
+  color: var(--text-strong);
+  cursor: pointer;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.65);
+}
+
+.topbar__reading-option[aria-pressed='true'] {
+  border-color: rgba(31, 111, 235, 0.28);
+  background: rgba(31, 111, 235, 0.12);
+  color: #1959bb;
+}
+
 .topbar__field,
 .topbar__select {
   display: flex;
@@ -337,6 +412,7 @@ select {
   width: 16px;
   height: 16px;
   display: block;
+  stroke-width: 2.2;
 }
 
 .topbar__select[data-open='true'] .topbar__select-trigger {
@@ -510,6 +586,7 @@ select {
   width: 15px;
   height: 15px;
   display: block;
+  stroke-width: 2.2;
 }
 
 .topbar__service-button {
@@ -547,6 +624,7 @@ select {
   width: 15px;
   height: 15px;
   display: block;
+  stroke-width: 2.1;
 }
 
 .workspace {
@@ -614,9 +692,7 @@ select {
 }
 
 .panel--canvas {
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.86), rgba(255, 251, 246, 0.92)),
-    linear-gradient(135deg, rgba(255, 255, 255, 0.4), transparent);
+  background: rgba(255, 255, 255, 0.96);
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -739,6 +815,8 @@ select {
   display: flex;
   flex: 1 1 auto;
   min-height: 0;
+  justify-content: center;
+  padding: 0 var(--doc-surface-inline-padding) 56px;
 }
 
 .workspace__editor-pane {
@@ -746,6 +824,7 @@ select {
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
+  width: 100%;
 }
 
 .workspace__split {
@@ -764,7 +843,7 @@ select {
 
 .workspace__split-preview {
   overflow: auto;
-  padding: 16px 18px;
+  padding: 24px 28px;
   border: 1px solid var(--line);
   border-radius: 16px;
   background: rgba(255, 255, 255, 0.72);
@@ -790,9 +869,13 @@ select {
 
 .markdown-document,
 .visual-markdown-editor .editor {
+  width: min(100%, var(--doc-max-width));
   max-width: var(--doc-max-width);
-  color: var(--text);
-  line-height: var(--doc-line-height);
+  margin: 0 auto;
+  font-family: var(--doc-font-family);
+  font-size: var(--doc-body-font-size);
+  color: var(--doc-text);
+  line-height: var(--doc-body-line-height);
 }
 
 .markdown-editor {
@@ -830,23 +913,41 @@ select {
 :where(.markdown-document, .visual-markdown-editor .editor) h4,
 :where(.markdown-document, .visual-markdown-editor .editor) h5,
 :where(.markdown-document, .visual-markdown-editor .editor) h6 {
-  color: var(--text-strong);
-  line-height: 1.2;
-  letter-spacing: -0.03em;
-  margin: 1.4em 0 0.6em;
+  font-family: var(--doc-font-family);
+  font-weight: 700;
+  color: var(--doc-heading-text);
+  line-height: var(--doc-heading-line-height);
+  letter-spacing: -0.02em;
   scroll-margin-top: 24px;
 }
 
 :where(.markdown-document, .visual-markdown-editor .editor) h1 {
-  font-size: clamp(2rem, 3vw, 2.8rem);
+  font-size: clamp(2rem, 2.5vw, 2.25rem);
+  letter-spacing: -0.04em;
+  margin-top: 0;
+  margin-bottom: 1.9rem;
 }
 
 :where(.markdown-document, .visual-markdown-editor .editor) h2 {
-  font-size: 1.6rem;
+  font-size: 1.625rem;
+  letter-spacing: -0.03em;
+  margin-top: 2.2rem;
+  margin-bottom: 0.75rem;
 }
 
 :where(.markdown-document, .visual-markdown-editor .editor) h3 {
-  font-size: 1.28rem;
+  font-size: 1.25rem;
+  letter-spacing: -0.022em;
+  margin-top: 1.85rem;
+  margin-bottom: 0.55rem;
+}
+
+:where(.markdown-document, .visual-markdown-editor .editor) h4 {
+  font-size: 1.125rem;
+  line-height: 1.36;
+  letter-spacing: -0.015em;
+  margin-top: 1.45rem;
+  margin-bottom: 0.7rem;
 }
 
 :where(.markdown-document, .visual-markdown-editor .editor) p,
@@ -855,33 +956,75 @@ select {
 :where(.markdown-document, .visual-markdown-editor .editor) blockquote,
 :where(.markdown-document, .visual-markdown-editor .editor) pre,
 :where(.markdown-document, .visual-markdown-editor .editor) table {
-  margin: 0 0 1rem;
+  margin: 0 0 var(--doc-block-spacing);
 }
 
 :where(.markdown-document, .visual-markdown-editor .editor) hr {
-  margin: 1.5rem 0;
+  margin: 2rem 0 3.5rem;
   border: 0;
-  border-top: 2px solid var(--line);
-  opacity: 0.65;
+  border-top: 1px solid var(--doc-rule);
+  opacity: 1;
 }
 
-:where(.markdown-document, .visual-markdown-editor .editor) ul,
 :where(.markdown-document, .visual-markdown-editor .editor) ol {
-  padding-left: 1.4rem;
+  padding-left: 1.75rem;
+}
+
+:where(.markdown-document, .visual-markdown-editor .editor) ul {
+  padding-left: 0;
+}
+
+:where(.markdown-document, .visual-markdown-editor .editor) ul > li {
+  position: relative;
+  list-style: none;
+  padding-left: 12.8px;
+}
+
+:where(.markdown-document, .visual-markdown-editor .editor) ul > li::before {
+  content: '';
+  position: absolute;
+  top: 0.7em;
+  left: -6.8px;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(79, 68, 56, 0.96);
+  transform: translateY(-50%);
+}
+
+:where(.markdown-document, .visual-markdown-editor .editor) li {
+  line-height: 1.55;
+}
+
+:where(.markdown-document, .visual-markdown-editor .editor) li + li {
+  margin-top: 0.55rem;
+}
+
+:where(.markdown-document, .visual-markdown-editor .editor) li > p {
+  margin-bottom: 0;
 }
 
 :where(.markdown-document, .visual-markdown-editor .editor) a {
-  color: #0074eb;
-  text-decoration-color: rgba(0, 116, 235, 0.45);
+  color: #2f3437;
+  text-decoration-color: rgba(47, 52, 55, 0.22);
+  text-underline-offset: 0.18em;
 }
 
 :where(.markdown-document, .visual-markdown-editor .editor) a:hover {
-  text-decoration-color: #0074eb;
+  text-decoration-color: rgba(47, 52, 55, 0.46);
+}
+
+:where(.markdown-document, .visual-markdown-editor .editor) p:has(> strong:only-child) {
+  margin-bottom: 0.8rem;
+}
+
+:where(.markdown-document, .visual-markdown-editor .editor) p:has(> strong:only-child) + p {
+  margin-top: 0;
 }
 
 :where(.markdown-document, .visual-markdown-editor .editor) blockquote {
   margin-left: 0;
-  padding: 0.8rem 1rem;
+  padding: 0.7rem 1rem;
   border-left: 3px solid rgba(31, 111, 235, 0.28);
   background: var(--doc-blockquote-bg);
   border-radius: 0 12px 12px 0;
@@ -937,7 +1080,7 @@ select {
   min-width: 0;
   min-height: 0;
   background: transparent !important;
-  color: var(--text) !important;
+  color: var(--doc-text) !important;
 }
 
 .readonly-markdown-renderer .milkdown {
@@ -949,7 +1092,9 @@ select {
 .readonly-markdown-renderer .editor,
 .readonly-markdown-renderer .ProseMirror {
   padding: 0 !important;
-  font-family: var(--sans) !important;
+  font-family: var(--doc-font-family) !important;
+  font-size: var(--doc-body-font-size) !important;
+  line-height: var(--doc-body-line-height) !important;
 }
 
 .readonly-markdown-renderer .ProseMirror h1,
@@ -958,25 +1103,41 @@ select {
 .readonly-markdown-renderer .ProseMirror h4,
 .readonly-markdown-renderer .ProseMirror h5,
 .readonly-markdown-renderer .ProseMirror h6 {
-  color: var(--text-strong) !important;
-  font-family: var(--sans) !important;
+  color: var(--doc-heading-text) !important;
+  font-family: var(--doc-font-family) !important;
   font-weight: 700 !important;
-  line-height: 1.2 !important;
-  letter-spacing: -0.03em !important;
-  margin: 1.4em 0 0.6em !important;
+  line-height: var(--doc-heading-line-height) !important;
+  letter-spacing: -0.02em !important;
   padding: 0 !important;
 }
 
 .readonly-markdown-renderer .ProseMirror h1 {
-  font-size: clamp(2rem, 3vw, 2.8rem) !important;
+  font-size: clamp(2rem, 2.5vw, 2.25rem) !important;
+  letter-spacing: -0.04em !important;
+  margin-top: 0 !important;
+  margin-bottom: 1.9rem !important;
 }
 
 .readonly-markdown-renderer .ProseMirror h2 {
-  font-size: 1.6rem !important;
+  font-size: 1.625rem !important;
+  letter-spacing: -0.03em !important;
+  margin-top: 2.2rem !important;
+  margin-bottom: 0.75rem !important;
 }
 
 .readonly-markdown-renderer .ProseMirror h3 {
-  font-size: 1.28rem !important;
+  font-size: 1.25rem !important;
+  letter-spacing: -0.022em !important;
+  margin-top: 1.85rem !important;
+  margin-bottom: 0.55rem !important;
+}
+
+.readonly-markdown-renderer .ProseMirror h4 {
+  font-size: 1.125rem !important;
+  line-height: 1.36 !important;
+  letter-spacing: -0.015em !important;
+  margin-top: 1.45rem !important;
+  margin-bottom: 0.7rem !important;
 }
 
 .readonly-markdown-renderer .ProseMirror p,
@@ -985,15 +1146,53 @@ select {
 .readonly-markdown-renderer .ProseMirror blockquote,
 .readonly-markdown-renderer .ProseMirror pre,
 .readonly-markdown-renderer .ProseMirror table {
-  margin: 0 0 1rem !important;
+  margin: 0 0 var(--doc-block-spacing) !important;
   padding: 0 !important;
-  font-size: 1rem !important;
+  font-size: var(--doc-body-font-size) !important;
   font-weight: 400 !important;
-  line-height: var(--doc-line-height) !important;
+  line-height: var(--doc-body-line-height) !important;
 }
 
 .readonly-markdown-renderer .ProseMirror strong {
   font-weight: 700 !important;
+}
+
+.readonly-markdown-renderer .ProseMirror ul {
+  padding-left: 0 !important;
+}
+
+.readonly-markdown-renderer .ProseMirror ol {
+  padding-left: 1.75rem !important;
+}
+
+.readonly-markdown-renderer .ProseMirror ul > li {
+  position: relative !important;
+  list-style: none !important;
+  padding-left: 12.8px !important;
+}
+
+.readonly-markdown-renderer .ProseMirror ul > li::before {
+  content: '' !important;
+  position: absolute !important;
+  top: 0.7em !important;
+  left: -6.8px !important;
+  width: 6px !important;
+  height: 6px !important;
+  border-radius: 999px !important;
+  background: rgba(79, 68, 56, 0.96) !important;
+  transform: translateY(-50%) !important;
+}
+
+.readonly-markdown-renderer .ProseMirror li {
+  line-height: 1.55 !important;
+}
+
+.readonly-markdown-renderer .ProseMirror li + li {
+  margin-top: 0.55rem !important;
+}
+
+.readonly-markdown-renderer .ProseMirror li > p {
+  margin-bottom: 0 !important;
 }
 
 .visual-markdown-editor {
@@ -1050,9 +1249,129 @@ select {
 .visual-markdown-editor .milkdown-link-preview,
 .visual-markdown-editor .milkdown-link-edit,
 .visual-markdown-editor .milkdown-toolbar,
-.visual-markdown-editor .milkdown-block-handle,
-.visual-markdown-editor .milkdown-slash-menu {
+.visual-markdown-editor .milkdown-block-handle {
   display: none !important;
+}
+
+.visual-markdown-editor .milkdown-slash-menu[data-show='false'] {
+  display: none;
+}
+
+.visual-markdown-editor .milkdown-slash-menu {
+  position: absolute;
+  z-index: 40;
+  min-width: 280px;
+  max-width: min(360px, calc(100vw - 32px));
+  overflow: hidden;
+  color: var(--text-strong);
+  background: rgba(255, 252, 247, 0.98);
+  border: 1px solid rgba(127, 105, 82, 0.18);
+  border-radius: 18px;
+  box-shadow:
+    0 20px 40px rgba(87, 63, 39, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.75);
+  backdrop-filter: blur(18px);
+}
+
+.visual-markdown-editor .milkdown-slash-menu ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.visual-markdown-editor .milkdown-slash-menu .tab-group {
+  border-bottom: 1px solid rgba(127, 105, 82, 0.12);
+  padding: 10px 12px 0;
+}
+
+.visual-markdown-editor .milkdown-slash-menu .tab-group ul {
+  display: flex;
+  gap: 8px;
+  padding: 0 0 10px;
+}
+
+.visual-markdown-editor .milkdown-slash-menu .tab-group ul li {
+  padding: 6px 10px;
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.visual-markdown-editor .milkdown-slash-menu .tab-group ul li:hover,
+.visual-markdown-editor .milkdown-slash-menu .tab-group ul li.selected {
+  color: #1959bb;
+  background: rgba(31, 111, 235, 0.1);
+}
+
+.visual-markdown-editor .milkdown-slash-menu .menu-groups {
+  max-height: min(420px, 56vh);
+  padding: 8px;
+  overflow: auto;
+}
+
+.visual-markdown-editor .milkdown-slash-menu .menu-group h6 {
+  margin: 0;
+  padding: 8px 10px 6px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.visual-markdown-editor .milkdown-slash-menu .menu-group li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+}
+
+.visual-markdown-editor .milkdown-slash-menu .menu-group li.hover,
+.visual-markdown-editor .milkdown-slash-menu .menu-group li:hover {
+  background: rgba(31, 111, 235, 0.1);
+}
+
+.visual-markdown-editor .milkdown-slash-menu .menu-group li.active {
+  background: rgba(31, 111, 235, 0.16);
+}
+
+.visual-markdown-editor .milkdown-slash-menu .menu-group li svg {
+  width: 20px;
+  height: 20px;
+  color: rgba(79, 68, 56, 0.72);
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.visual-markdown-editor .milkdown-slash-menu .menu-group li > .slash-menu__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+}
+
+.visual-markdown-editor .milkdown-slash-menu .menu-group li > .slash-menu__label {
+  min-width: 0;
+  font-size: 0.88rem;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.visual-markdown-editor .milkdown-slash-menu .menu-group + .menu-group::before {
+  content: '';
+  display: block;
+  height: 1px;
+  margin: 4px 10px;
+  background: rgba(127, 105, 82, 0.12);
 }
 
 .visual-markdown-editor .milkdown-code-block {
@@ -1084,7 +1403,7 @@ select {
 }
 
 .visual-markdown-editor .milkdown-list-item-block + .milkdown-list-item-block {
-  margin-top: 1rem;
+  margin-top: 0.55rem;
 }
 
 .visual-markdown-editor .list-item {
@@ -1246,6 +1565,7 @@ select {
   display: block;
   width: 100%;
   height: 100%;
+  stroke-width: 2.1;
 }
 
 .file-tree__file-name {

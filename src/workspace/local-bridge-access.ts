@@ -1,4 +1,5 @@
 import type { ProjectRegistryRecord } from './registry'
+import type { WorkspaceProfile } from './profile-store'
 
 export interface LocalBridgeHealth {
   ok: boolean
@@ -17,6 +18,10 @@ export interface BridgeDocumentPayload {
   content: string
   mtimeMs: number
   size: number
+}
+
+export interface BridgeProjectProfilesPayload {
+  profileIds: string[]
 }
 
 interface BridgeErrorPayload {
@@ -190,6 +195,57 @@ export async function getDocumentContentFromBridge(
     `${baseUrl}/api/projects/${encodeURIComponent(projectId)}/document?profileId=${encodeURIComponent(profileId)}&path=${encodeURIComponent(documentPath)}`,
   )
   return readJsonResponse<BridgeDocumentPayload>(response)
+}
+
+export async function listProjectProfilesFromBridge(
+  projectId: string,
+  registryProfileId: string,
+  options: FetchOptions = {},
+): Promise<BridgeProjectProfilesPayload> {
+  const fetchImpl = getFetch(options.fetchImpl)
+  const baseUrl = getBaseUrl(options.baseUrl)
+  const response = await fetchImpl(
+    `${baseUrl}/api/projects/${encodeURIComponent(projectId)}/profiles?profileId=${encodeURIComponent(registryProfileId)}`,
+  )
+
+  return readJsonResponse<BridgeProjectProfilesPayload>(response)
+}
+
+export async function getProfileFromBridge(
+  projectId: string,
+  profileId: string,
+  registryProfileId: string,
+  options: FetchOptions = {},
+): Promise<WorkspaceProfile> {
+  const fetchImpl = getFetch(options.fetchImpl)
+  const baseUrl = getBaseUrl(options.baseUrl)
+  const response = await fetchImpl(
+    `${baseUrl}/api/projects/${encodeURIComponent(projectId)}/profile?profileId=${encodeURIComponent(profileId)}&registryProfileId=${encodeURIComponent(registryProfileId)}`,
+  )
+  const payload = await readJsonResponse<{ profile: WorkspaceProfile }>(response)
+  return payload.profile
+}
+
+export async function saveProfileToBridge(
+  projectId: string,
+  profile: WorkspaceProfile,
+  registryProfileId: string,
+  options: FetchOptions = {},
+): Promise<WorkspaceProfile> {
+  const fetchImpl = getFetch(options.fetchImpl)
+  const baseUrl = getBaseUrl(options.baseUrl)
+  const response = await fetchImpl(
+    `${baseUrl}/api/projects/${encodeURIComponent(projectId)}/profile?registryProfileId=${encodeURIComponent(registryProfileId)}`,
+    {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ profile }),
+    },
+  )
+  const payload = await readJsonResponse<{ profile: WorkspaceProfile }>(response)
+  return payload.profile
 }
 
 export async function saveDocumentContentToBridge(

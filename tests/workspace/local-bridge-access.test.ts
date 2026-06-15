@@ -2,11 +2,14 @@ import { describe, expect, it, vi } from 'vitest'
 
 import {
   getDocumentContentFromBridge,
+  getProfileFromBridge,
   getLocalBridgeHealth,
   listProjectsFromBridge,
+  listProjectProfilesFromBridge,
   restartLocalBridgeService,
   registerProjectWithBridge,
   saveDocumentContentToBridge,
+  saveProfileToBridge,
   stopLocalBridgeService,
 } from '../../src/workspace/local-bridge-access'
 
@@ -100,6 +103,117 @@ describe('local bridge access', () => {
 
     expect(snapshot.activeProjectId).toBe('nocturnel-1234abcd')
     expect(snapshot.projects).toHaveLength(1)
+  })
+
+  it('loads repo-tracked profile ids from the local bridge', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        profileIds: ['default', 'Lans'],
+      }),
+    })
+
+    const payload = await listProjectProfilesFromBridge('notes', 'default', { fetchImpl: fetchMock })
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://127.0.0.1:8797/api/projects/notes/profiles?profileId=default',
+    )
+    expect(payload.profileIds).toEqual(['default', 'Lans'])
+  })
+
+  it('loads a repo-tracked profile payload from the local bridge', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        profile: {
+          id: 'Lans',
+          appearance: {
+            theme: 'system',
+            fontSize: 17,
+            pageWidth: 'wide',
+          },
+          layout: {
+            sidebarWidth: 280,
+            outlineWidth: 320,
+            sidebarCollapsed: false,
+            outlineCollapsed: false,
+          },
+          navigation: {
+            expandedFileNodes: [],
+            expandedHeadingNodes: {},
+          },
+        },
+      }),
+    })
+
+    const payload = await getProfileFromBridge('notes', 'Lans', 'default', { fetchImpl: fetchMock })
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://127.0.0.1:8797/api/projects/notes/profile?profileId=Lans&registryProfileId=default',
+    )
+    expect(payload.id).toBe('Lans')
+    expect(payload.appearance.fontSize).toBe(17)
+  })
+
+  it('saves a repo-tracked profile through the local bridge', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        profile: {
+          id: 'Lans',
+          appearance: {
+            theme: 'system',
+            fontSize: 17,
+            pageWidth: 'wide',
+          },
+          layout: {
+            sidebarWidth: 280,
+            outlineWidth: 320,
+            sidebarCollapsed: false,
+            outlineCollapsed: false,
+          },
+          navigation: {
+            expandedFileNodes: [],
+            expandedHeadingNodes: {},
+          },
+        },
+      }),
+    })
+
+    const payload = await saveProfileToBridge(
+      'notes',
+      {
+        id: 'Lans',
+        appearance: {
+          theme: 'system',
+          fontSize: 17,
+          pageWidth: 'wide',
+        },
+        layout: {
+          sidebarWidth: 280,
+          outlineWidth: 320,
+          sidebarCollapsed: false,
+          outlineCollapsed: false,
+        },
+        navigation: {
+          expandedFileNodes: [],
+          expandedHeadingNodes: {},
+        },
+      },
+      'default',
+      { fetchImpl: fetchMock },
+    )
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://127.0.0.1:8797/api/projects/notes/profile?registryProfileId=default',
+      expect.objectContaining({
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+        },
+      }),
+    )
+    expect(payload.id).toBe('Lans')
   })
 
   it('loads markdown document payload from the local bridge', async () => {

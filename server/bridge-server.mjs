@@ -11,6 +11,7 @@ import {
   registerProject,
   setActiveProjectId,
 } from "./project-registry.mjs";
+import { getProjectProfile, listProjectProfiles, saveProjectProfile } from "./project-profiles.mjs";
 import { readMarkdownDocument } from "./project-reader.mjs";
 import { DocumentConflictError, writeMarkdownDocument } from "./project-writer.mjs";
 import { scanMarkdownTree } from "./project-scanner.mjs";
@@ -170,6 +171,55 @@ async function handleRequest(request, response, { runtimeHome, port, stateFile, 
     }
     const paths = await scanMarkdownTree(project.rootPath, project.contentRoots);
     sendJson(response, 200, { paths });
+    return;
+  }
+
+  const profilesMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/profiles$/);
+  if (request.method === "GET" && profilesMatch) {
+    const registryProfileId = url.searchParams.get("profileId") ?? "default";
+    const projectId = decodeURIComponent(profilesMatch[1]);
+    const project = await getProjectById(runtimeHome, registryProfileId, projectId);
+    if (!project) {
+      sendJson(response, 404, { error: `Unknown project: ${projectId}` });
+      return;
+    }
+
+    sendJson(response, 200, {
+      profileIds: await listProjectProfiles(project.rootPath),
+    });
+    return;
+  }
+
+  const profileMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/profile$/);
+  if (request.method === "GET" && profileMatch) {
+    const registryProfileId = url.searchParams.get("registryProfileId") ?? "default";
+    const targetProfileId = url.searchParams.get("profileId") ?? "default";
+    const projectId = decodeURIComponent(profileMatch[1]);
+    const project = await getProjectById(runtimeHome, registryProfileId, projectId);
+    if (!project) {
+      sendJson(response, 404, { error: `Unknown project: ${projectId}` });
+      return;
+    }
+
+    sendJson(response, 200, {
+      profile: await getProjectProfile(project.rootPath, targetProfileId),
+    });
+    return;
+  }
+
+  if (request.method === "POST" && profileMatch) {
+    const registryProfileId = url.searchParams.get("registryProfileId") ?? "default";
+    const projectId = decodeURIComponent(profileMatch[1]);
+    const project = await getProjectById(runtimeHome, registryProfileId, projectId);
+    if (!project) {
+      sendJson(response, 404, { error: `Unknown project: ${projectId}` });
+      return;
+    }
+
+    const body = await readJsonBody(request);
+    sendJson(response, 200, {
+      profile: await saveProjectProfile(project.rootPath, body.profile ?? body),
+    });
     return;
   }
 

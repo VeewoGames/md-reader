@@ -131,7 +131,7 @@ describe('VisualMarkdownEditor lazy wrapper', () => {
     expect(capturedProps?.readonly).toBe(true)
   })
 
-  it('applies markdown display transforms only in readonly mode', async () => {
+  it('applies markdown display transforms before handing content to the visual editor', async () => {
     const capturedValues: string[] = []
 
     vi.doMock('../../src/editor/visual-markdown-editor-impl', async () => ({
@@ -156,6 +156,6 @@ describe('VisualMarkdownEditor lazy wrapper', () => {
     rerender(<VisualMarkdownEditor value={sampleMarkdown} onChange={() => {}} />)
 
     expect(capturedValues[0]).toBe('普通段落\n\n---\n\n## 下一节')
-    expect(capturedValues.at(-1)).toBe(sampleMarkdown)
+    expect(capturedValues.at(-1)).toBe('普通段落\n\n---\n\n## 下一节')
   })
 })
