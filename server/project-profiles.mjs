@@ -11,6 +11,7 @@ function createDefaultProfile(profileId = "default") {
       theme: "system",
       fontSize: 16,
       pageWidth: "narrow",
+      lineHeight: 1.6,
     },
     layout: {
       sidebarWidth: 280,

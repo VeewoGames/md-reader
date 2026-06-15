@@ -15,7 +15,7 @@ import {
 import type { ProjectRegistryRecord } from '../workspace/registry'
 import { preloadVisualMarkdownEditor } from '../editor/visual-markdown-editor'
 import type { TabSaveState } from '../workspace/workspace-session'
-import type { PageWidthMode } from '../workspace/profile-store'
+import type { DocumentLineHeight, PageWidthMode } from '../workspace/profile-store'
 
 export type WorkspaceMode = 'regular' | 'split'
 export type RegularViewState = 'locked' | 'unlocking' | 'editable' | 'locking'
@@ -52,8 +52,10 @@ interface TopBarProps {
   onStopService?: () => void
   documentFontSize?: number
   documentPageWidth?: PageWidthMode
+  documentLineHeight?: DocumentLineHeight
   onDocumentFontSizeChange?: (fontSize: number) => void
   onDocumentPageWidthChange?: (pageWidth: PageWidthMode) => void
+  onDocumentLineHeightChange?: (lineHeight: DocumentLineHeight) => void
 }
 
 const MODE_LABELS: Record<WorkspaceMode, string> = {
@@ -66,17 +68,29 @@ const PAGE_WIDTH_OPTIONS: Array<{ value: PageWidthMode; label: string }> = [
   { value: 'narrow', label: '窄版' },
   { value: 'wide', label: '宽版' },
 ]
+const LINE_HEIGHT_OPTIONS: Array<{ value: DocumentLineHeight; label: string }> = [
+  { value: 1.5, label: '1.5' },
+  { value: 1.6, label: '1.6' },
+  { value: 1.7, label: '1.7' },
+  { value: 1.8, label: '1.8' },
+  { value: 1.9, label: '1.9' },
+  { value: 2.0, label: '2.0' },
+]
 
 function TopBarReadingPreferences({
   fontSize,
   pageWidth,
+  lineHeight,
   onFontSizeChange,
   onPageWidthChange,
+  onLineHeightChange,
 }: {
   fontSize: number
   pageWidth: PageWidthMode
+  lineHeight: DocumentLineHeight
   onFontSizeChange?: (fontSize: number) => void
   onPageWidthChange?: (pageWidth: PageWidthMode) => void
+  onLineHeightChange?: (lineHeight: DocumentLineHeight) => void
 }) {
   const rootRef = useRef<HTMLDivElement | null>(null)
   const [isOpen, setIsOpen] = useState(false)
@@ -146,6 +160,23 @@ function TopBarReadingPreferences({
                   className="topbar__reading-option"
                   aria-pressed={pageWidth === option.value}
                   onClick={() => onPageWidthChange?.(option.value)}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </section>
+
+          <section className="topbar__reading-section" aria-label="正文行间距">
+            <p className="topbar__reading-label">正文行间距</p>
+            <div className="topbar__reading-options" role="group" aria-label="正文行间距选项">
+              {LINE_HEIGHT_OPTIONS.map((option) => (
+                <button
+                  key={option.label}
+                  type="button"
+                  className="topbar__reading-option"
+                  aria-pressed={lineHeight === option.value}
+                  onClick={() => onLineHeightChange?.(option.value)}
                 >
                   {option.label}
                 </button>
@@ -315,8 +346,10 @@ export function TopBar({
   onStopService,
   documentFontSize = 16,
   documentPageWidth = 'narrow',
+  documentLineHeight = 1.6,
   onDocumentFontSizeChange,
   onDocumentPageWidthChange,
+  onDocumentLineHeightChange,
 }: TopBarProps) {
   const isRegularMode = mode === 'regular'
   const isLockActionPending =
@@ -461,8 +494,10 @@ export function TopBar({
             <TopBarReadingPreferences
               fontSize={documentFontSize}
               pageWidth={documentPageWidth}
+              lineHeight={documentLineHeight}
               onFontSizeChange={onDocumentFontSizeChange}
               onPageWidthChange={onDocumentPageWidthChange}
+              onLineHeightChange={onDocumentLineHeightChange}
             />
             <button
               type="button"

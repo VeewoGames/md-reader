@@ -1,4 +1,7 @@
 export const STORAGE_KEYS = {
+  activeProfile() {
+    return 'workspace:active-profile'
+  },
   projectRegistry(profileId: string) {
     return `workspace:project-registry:${profileId}`
   },

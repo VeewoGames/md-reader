@@ -16,6 +16,7 @@ describe('profile store', () => {
         theme: 'light',
         fontSize: 16,
         pageWidth: 'wide',
+        lineHeight: 1.7,
       },
       layout: {
         sidebarWidth: 280,
@@ -43,6 +44,7 @@ describe('profile store', () => {
     const restored = await store.getProfile('notes', 'default')
 
     expect(restored.id).toBe('default')
+    expect(restored.appearance.lineHeight).toBe(1.6)
     expect(restored.layout.sidebarCollapsed).toBe(false)
     expect(restored.navigation.expandedFileNodes).toEqual([])
   })

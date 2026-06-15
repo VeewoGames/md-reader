@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { AppShell } from './app/AppShell'
 import type { RegularViewState, WorkspaceMode } from './app/TopBar'
 import { createBrowserKeyValueStore } from './shared/key-value-store'
+import { STORAGE_KEYS } from './shared/storage-keys'
 import { buildFileTree } from './workspace/file-tree'
 import { createContentHash } from './shared/content-hash'
 import type { FileTreeNode } from './workspace/file-tree-types'
@@ -28,7 +29,11 @@ import {
   stopLocalBridgeService,
 } from './workspace/local-bridge-access'
 import { createLocalStateStore } from './workspace/local-state'
-import { createProfileStore, type PageWidthMode } from './workspace/profile-store'
+import {
+  createProfileStore,
+  type DocumentLineHeight,
+  type PageWidthMode,
+} from './workspace/profile-store'
 import type { ProjectRegistryRecord } from './workspace/registry'
 import { createWorkspaceProvider, type WorkspaceSource } from './workspace/workspace-provider'
 
@@ -201,6 +206,7 @@ function App() {
   const [outlineWidth, setOutlineWidth] = useState(320)
   const [documentFontSize, setDocumentFontSize] = useState(16)
   const [documentPageWidth, setDocumentPageWidth] = useState<PageWidthMode>('narrow')
+  const [documentLineHeight, setDocumentLineHeight] = useState<DocumentLineHeight>(1.6)
   const activeTab = getActiveTab(session)
   const mode = session.mode
   const regularViewState = session.regularViewState
@@ -223,6 +229,7 @@ function App() {
   const saveRequestRevisionRef = useRef(0)
   const lastAckedSaveRevisionRef = useRef(0)
   const isComposingRef = useRef(false)
+  const hasHydratedActiveProfileRef = useRef(false)
 
   function clearSaveFailureStatus(projectId: string | null) {
     setStatusMessage((current) => {
@@ -317,14 +324,24 @@ function App() {
 
   useEffect(() => {
     void (async () => {
+      const restoredActiveProfileId =
+        (await storage.getItem<string>(STORAGE_KEYS.activeProfile())) ?? 'default'
+      hasHydratedActiveProfileRef.current = true
+      setActiveProfileId(restoredActiveProfileId)
+
       const source = await workspaceProvider.getSource()
       setWorkspaceSource(source)
 
       if (source === 'local-service') {
         const health = await getLocalBridgeHealth()
-        const snapshot = await workspaceProvider.listProjects(activeProfileId)
+        const snapshot = await workspaceProvider.listProjects(restoredActiveProfileId)
         setProjects(snapshot.projects)
         setActiveProjectId(snapshot.activeProjectId)
+        setProfileIds(
+          restoredActiveProfileId === 'default'
+            ? ['default']
+            : Array.from(new Set(['default', restoredActiveProfileId])),
+        )
 
         if (!snapshot.activeProjectId) {
           setStatusMessage(
@@ -335,7 +352,11 @@ function App() {
           return
         }
 
-        await loadLocalServiceProject(snapshot.activeProjectId, snapshot.projects, activeProfileId)
+        await loadLocalServiceProject(
+          snapshot.activeProjectId,
+          snapshot.projects,
+          restoredActiveProfileId,
+        )
         return
       }
 
@@ -348,12 +369,25 @@ function App() {
   }, [])
 
   useEffect(() => {
+    if (!hasHydratedActiveProfileRef.current) {
+      return
+    }
+
+    void storage.setItem(STORAGE_KEYS.activeProfile(), activeProfileId)
+  }, [activeProfileId])
+
+  useEffect(() => {
     if (!activeProjectId) {
-      setProfileIds(['default'])
+      setProfileIds(
+        activeProfileId === 'default'
+          ? ['default']
+          : Array.from(new Set(['default', activeProfileId])),
+      )
       setSidebarWidth(280)
       setOutlineWidth(320)
       setDocumentFontSize(16)
       setDocumentPageWidth('narrow')
+      setDocumentLineHeight(1.6)
       return
     }
 
@@ -378,6 +412,7 @@ function App() {
       setOutlineWidth(profile.layout.outlineWidth)
       setDocumentFontSize(profile.appearance?.fontSize ?? 16)
       setDocumentPageWidth(profile.appearance?.pageWidth ?? 'narrow')
+      setDocumentLineHeight(profile.appearance?.lineHeight ?? 1.6)
     })()
 
     return () => {
@@ -1250,6 +1285,7 @@ function App() {
   async function saveActiveProfileAppearance(nextAppearance: {
     fontSize?: number
     pageWidth?: PageWidthMode
+    lineHeight?: DocumentLineHeight
   }) {
     if (!activeProjectId) {
       return
@@ -1263,6 +1299,7 @@ function App() {
       theme: 'system',
       fontSize: 16,
       pageWidth: 'narrow' as PageWidthMode,
+      lineHeight: 1.6 as DocumentLineHeight,
     }
 
     const nextProfile = {
@@ -1307,6 +1344,11 @@ function App() {
   async function handleDocumentPageWidthChange(nextPageWidth: PageWidthMode) {
     setDocumentPageWidth(nextPageWidth)
     await saveActiveProfileAppearance({ pageWidth: nextPageWidth })
+  }
+
+  async function handleDocumentLineHeightChange(nextLineHeight: DocumentLineHeight) {
+    setDocumentLineHeight(nextLineHeight)
+    await saveActiveProfileAppearance({ lineHeight: nextLineHeight })
   }
 
   async function waitForLocalBridgeReady(timeoutMs = 6000) {
@@ -1447,6 +1489,7 @@ function App() {
         outlineWidth={outlineWidth}
         documentFontSize={documentFontSize}
         documentPageWidth={documentPageWidth}
+        documentLineHeight={documentLineHeight}
         onConnectProject={handleConnectProject}
         onProjectChange={handleProjectChange}
         onProfileChange={handleProfileChange}
@@ -1459,6 +1502,7 @@ function App() {
         onDocumentSelect={handleDocumentSelect}
         onDocumentFontSizeChange={handleDocumentFontSizeChange}
         onDocumentPageWidthChange={handleDocumentPageWidthChange}
+        onDocumentLineHeightChange={handleDocumentLineHeightChange}
         onEditingDocumentContentChange={setDraftDocumentContent}
         onEditingCompositionStart={handleEditingCompositionStart}
         onEditingCompositionEnd={handleEditingCompositionEnd}

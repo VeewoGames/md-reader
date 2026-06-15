@@ -42,6 +42,7 @@ describe('project profiles', () => {
         theme: 'system',
         fontSize: 17,
         pageWidth: 'wide',
+        lineHeight: 1.8,
       },
       layout: {
         sidebarWidth: 300,
@@ -59,6 +60,7 @@ describe('project profiles', () => {
 
     expect(profile.appearance.fontSize).toBe(17)
     expect(profile.appearance.pageWidth).toBe('wide')
+    expect(profile.appearance.lineHeight).toBe(1.8)
     expect(profile.layout.sidebarWidth).toBe(300)
     expect(profile.navigation.expandedFileNodes).toEqual(['docs'])
   })

@@ -3,6 +3,7 @@ import { STORAGE_KEYS } from '../shared/storage-keys'
 
 export type PageWidthMode = 'narrow' | 'wide'
 export type ThemeMode = 'light' | 'dark' | 'system'
+export type DocumentLineHeight = number
 
 export interface WorkspaceProfile {
   id: string
@@ -10,6 +11,7 @@ export interface WorkspaceProfile {
     theme: ThemeMode
     fontSize: number
     pageWidth: PageWidthMode
+    lineHeight?: DocumentLineHeight
   }
   layout: {
     sidebarWidth: number
@@ -30,6 +32,7 @@ export function createDefaultProfile(profileId = 'default'): WorkspaceProfile {
       theme: 'system',
       fontSize: 16,
       pageWidth: 'narrow',
+      lineHeight: 1.6,
     },
     layout: {
       sidebarWidth: 280,

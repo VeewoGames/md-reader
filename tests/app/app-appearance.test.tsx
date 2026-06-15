@@ -94,6 +94,7 @@ describe('App appearance preferences', () => {
         theme: 'system',
         fontSize: 18,
         pageWidth: 'wide',
+        lineHeight: 1.6,
       },
       layout: {
         sidebarWidth: 280,
@@ -124,14 +125,16 @@ describe('App appearance preferences', () => {
       expect(shell).not.toBeNull()
       expect(shell?.style.getPropertyValue('--doc-body-font-size')).toBe('18px')
       expect(shell?.style.getPropertyValue('--doc-max-width')).toBe('960px')
+      expect(shell?.style.getPropertyValue('--doc-body-line-height')).toBe('1.6')
     })
 
     await user.click(screen.getByRole('button', { name: '阅读选项' }))
     await user.click(screen.getByRole('button', { name: '17 px' }))
     await user.click(screen.getByRole('button', { name: '窄版' }))
+    await user.click(screen.getByRole('button', { name: '1.8' }))
 
     await waitFor(() => {
-      expect(bridgeMocks.saveProfileToBridge).toHaveBeenCalledTimes(2)
+      expect(bridgeMocks.saveProfileToBridge).toHaveBeenCalledTimes(3)
     })
 
     expect(bridgeMocks.saveProfileToBridge).toHaveBeenNthCalledWith(
@@ -141,6 +144,7 @@ describe('App appearance preferences', () => {
         appearance: expect.objectContaining({
           fontSize: 17,
           pageWidth: 'wide',
+          lineHeight: 1.6,
         }),
       }),
       'default',
@@ -152,6 +156,19 @@ describe('App appearance preferences', () => {
         appearance: expect.objectContaining({
           fontSize: 18,
           pageWidth: 'narrow',
+          lineHeight: 1.6,
+        }),
+      }),
+      'default',
+    )
+    expect(bridgeMocks.saveProfileToBridge).toHaveBeenNthCalledWith(
+      3,
+      'notes',
+      expect.objectContaining({
+        appearance: expect.objectContaining({
+          fontSize: 18,
+          pageWidth: 'wide',
+          lineHeight: 1.8,
         }),
       }),
       'default',
@@ -161,6 +178,7 @@ describe('App appearance preferences', () => {
       const shell = container.querySelector('.app-shell') as HTMLElement | null
       expect(shell?.style.getPropertyValue('--doc-body-font-size')).toBe('17px')
       expect(shell?.style.getPropertyValue('--doc-max-width')).toBe('720px')
+      expect(shell?.style.getPropertyValue('--doc-body-line-height')).toBe('1.8')
     })
   })
 })

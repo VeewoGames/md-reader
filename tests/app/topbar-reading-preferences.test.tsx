@@ -19,6 +19,7 @@ describe('TopBar reading preferences', () => {
     const user = userEvent.setup()
     const onFontSizeChange = vi.fn()
     const onPageWidthChange = vi.fn()
+    const onLineHeightChange = vi.fn()
 
     render(
       <AppShell
@@ -46,6 +47,7 @@ describe('TopBar reading preferences', () => {
         outlineWidth={320}
         documentFontSize={16}
         documentPageWidth="narrow"
+        documentLineHeight={1.6}
         canManageService
         onConnectProject={() => {}}
         onProjectChange={() => {}}
@@ -59,6 +61,7 @@ describe('TopBar reading preferences', () => {
         onDocumentSelect={() => {}}
         onDocumentFontSizeChange={onFontSizeChange}
         onDocumentPageWidthChange={onPageWidthChange}
+        onDocumentLineHeightChange={onLineHeightChange}
         onSidebarWidthChange={() => {}}
         onSidebarWidthCommit={() => {}}
         onOutlineWidthChange={() => {}}
@@ -72,11 +75,15 @@ describe('TopBar reading preferences', () => {
     expect(screen.getByRole('button', { name: '重启服务' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '15 px' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '17 px' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '1.5' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '2.0' })).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: '17 px' }))
     await user.click(screen.getByRole('button', { name: '宽版' }))
+    await user.click(screen.getByRole('button', { name: '1.8' }))
 
     expect(onFontSizeChange).toHaveBeenCalledWith(17)
     expect(onPageWidthChange).toHaveBeenCalledWith('wide')
+    expect(onLineHeightChange).toHaveBeenCalledWith(1.8)
   })
 })

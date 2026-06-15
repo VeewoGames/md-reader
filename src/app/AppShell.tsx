@@ -5,7 +5,7 @@ import { WorkspaceLayout } from './WorkspaceLayout'
 import type { FileTreeNode } from '../workspace/file-tree-types'
 import type { ProjectRegistryRecord } from '../workspace/registry'
 import type { TabSaveState } from '../workspace/workspace-session'
-import type { PageWidthMode } from '../workspace/profile-store'
+import type { DocumentLineHeight, PageWidthMode } from '../workspace/profile-store'
 
 interface AppShellTab {
   id: string
@@ -37,6 +37,7 @@ interface AppShellProps {
   outlineWidth: number
   documentFontSize?: number
   documentPageWidth?: PageWidthMode
+  documentLineHeight?: DocumentLineHeight
   onConnectProject: () => void
   onProjectChange: (projectId: string) => void
   onProfileChange: (profileId: string) => void
@@ -49,6 +50,7 @@ interface AppShellProps {
   onDocumentSelect: (path: string) => void
   onDocumentFontSizeChange?: (fontSize: number) => void
   onDocumentPageWidthChange?: (pageWidth: PageWidthMode) => void
+  onDocumentLineHeightChange?: (lineHeight: DocumentLineHeight) => void
   onEditingDocumentContentChange?: (content: string) => void
   onEditingCompositionStart?: () => void
   onEditingCompositionEnd?: () => void
@@ -61,8 +63,8 @@ interface AppShellProps {
 export function AppShell(props: AppShellProps) {
   const documentFontSize = props.documentFontSize ?? 16
   const documentPageWidth = props.documentPageWidth ?? 'narrow'
+  const documentLineHeight = props.documentLineHeight ?? 1.6
   const documentMaxWidth = documentPageWidth === 'wide' ? '960px' : '720px'
-  const documentLineHeight = `${Math.round(documentFontSize * 1.5)}px`
 
   return (
     <div
@@ -71,7 +73,7 @@ export function AppShell(props: AppShellProps) {
         {
           '--doc-body-font-size': `${documentFontSize}px`,
           '--doc-max-width': documentMaxWidth,
-          '--doc-body-line-height': documentLineHeight,
+          '--doc-body-line-height': String(documentLineHeight),
         } as CSSProperties
       }
     >
@@ -99,8 +101,10 @@ export function AppShell(props: AppShellProps) {
         onStopService={props.onStopService}
         documentFontSize={documentFontSize}
         documentPageWidth={documentPageWidth}
+        documentLineHeight={documentLineHeight}
         onDocumentFontSizeChange={props.onDocumentFontSizeChange}
         onDocumentPageWidthChange={props.onDocumentPageWidthChange}
+        onDocumentLineHeightChange={props.onDocumentLineHeightChange}
       />
       <WorkspaceLayout
         mode={props.mode}

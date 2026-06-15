@@ -2,6 +2,11 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+const storageMocks = vi.hoisted(() => ({
+  getItem: vi.fn(),
+  setItem: vi.fn(),
+}))
+
 const bridgeMocks = vi.hoisted(() => ({
   listProjectsFromBridge: vi.fn(),
   listProjectProfilesFromBridge: vi.fn(),
@@ -12,8 +17,8 @@ const bridgeMocks = vi.hoisted(() => ({
 
 vi.mock('../../src/shared/key-value-store', () => ({
   createBrowserKeyValueStore: () => ({
-    getItem: vi.fn(async () => null),
-    setItem: vi.fn(async () => undefined),
+    getItem: storageMocks.getItem,
+    setItem: storageMocks.setItem,
   }),
 }))
 
@@ -70,11 +75,15 @@ import App from '../../src/App'
 
 describe('App repo-tracked profiles', () => {
   beforeEach(() => {
+    storageMocks.getItem.mockReset()
+    storageMocks.setItem.mockReset()
     bridgeMocks.listProjectsFromBridge.mockReset()
     bridgeMocks.listProjectProfilesFromBridge.mockReset()
     bridgeMocks.getProfileFromBridge.mockReset()
     bridgeMocks.registerProjectWithBridge.mockReset()
     bridgeMocks.getDocumentContentFromBridge.mockReset()
+    storageMocks.getItem.mockResolvedValue(null)
+    storageMocks.setItem.mockResolvedValue(undefined)
 
     let lansHasProject = false
 
@@ -156,5 +165,25 @@ describe('App repo-tracked profiles', () => {
     await waitFor(() => {
       expect(screen.getByRole('combobox', { name: 'Profile 切换' })).toHaveTextContent('Lans')
     })
+    await waitFor(() => {
+      expect(storageMocks.setItem).toHaveBeenCalledWith('workspace:active-profile', 'Lans')
+    })
+  })
+
+  it('restores the previously selected profile after refresh and keeps it visible without an active project', async () => {
+    storageMocks.getItem.mockResolvedValue('Lans')
+
+    render(<App />)
+
+    await waitFor(() => {
+      expect(bridgeMocks.listProjectsFromBridge).toHaveBeenCalledWith('Lans')
+    })
+    await waitFor(() => {
+      expect(screen.getByRole('combobox', { name: 'Profile 切换' })).toHaveTextContent('Lans')
+    })
+
+    await userEvent.setup().click(screen.getByRole('combobox', { name: 'Profile 切换' }))
+    expect(screen.getByRole('option', { name: 'default' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'Lans' })).toBeInTheDocument()
   })
 })
