@@ -1,3 +1,5 @@
+import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react'
+
 import type { ProjectRegistryRecord } from '../workspace/registry'
 import { preloadVisualMarkdownEditor } from '../editor/visual-markdown-editor'
 import type { TabSaveState } from '../workspace/workspace-session'
@@ -42,6 +44,144 @@ const MODE_LABELS: Record<WorkspaceMode, string> = {
   split: '分栏',
 }
 
+function TopBarSelect({
+  ariaLabel,
+  className,
+  options,
+  placeholder,
+  value,
+  onChange,
+}: {
+  ariaLabel: string
+  className: string
+  options: Array<{ value: string; label: string; disabled?: boolean }>
+  placeholder?: string
+  value: string
+  onChange: (value: string) => void
+}) {
+  const listboxId = useId()
+  const rootRef = useRef<HTMLDivElement | null>(null)
+  const [isOpen, setIsOpen] = useState(false)
+  const selectedOption = options.find((option) => option.value === value) ?? null
+  const visibleLabel = selectedOption?.label ?? placeholder ?? ''
+
+  useEffect(() => {
+    function handlePointerDown(event: MouseEvent) {
+      if (!rootRef.current?.contains(event.target as Node)) {
+        setIsOpen(false)
+      }
+    }
+
+    function handleWindowBlur() {
+      setIsOpen(false)
+    }
+
+    window.addEventListener('mousedown', handlePointerDown)
+    window.addEventListener('blur', handleWindowBlur)
+
+    return () => {
+      window.removeEventListener('mousedown', handlePointerDown)
+      window.removeEventListener('blur', handleWindowBlur)
+    }
+  }, [])
+
+  function commitSelection(nextValue: string) {
+    setIsOpen(false)
+
+    if (nextValue !== value) {
+      onChange(nextValue)
+    }
+  }
+
+  function handleTriggerKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
+    if (event.key === 'ArrowDown' || event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault()
+      setIsOpen(true)
+      return
+    }
+
+    if (event.key === 'Escape') {
+      setIsOpen(false)
+    }
+  }
+
+  function handleOptionKeyDown(
+    event: KeyboardEvent<HTMLButtonElement>,
+    nextValue: string,
+    disabled = false,
+  ) {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      setIsOpen(false)
+      return
+    }
+
+    if (disabled) {
+      return
+    }
+
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault()
+      commitSelection(nextValue)
+    }
+  }
+
+  return (
+    <div ref={rootRef} className={`topbar__select ${className}`} data-open={isOpen ? 'true' : undefined}>
+      <button
+        type="button"
+        role="combobox"
+        className="topbar__select-trigger"
+        aria-label={ariaLabel}
+        aria-expanded={isOpen}
+        aria-controls={listboxId}
+        aria-haspopup="listbox"
+        onClick={() => setIsOpen((current) => !current)}
+        onKeyDown={handleTriggerKeyDown}
+      >
+        <span className="topbar__select-value">{visibleLabel}</span>
+        <span className="topbar__select-chevron" aria-hidden="true">
+          <svg viewBox="0 0 16 16" focusable="false">
+            <path
+              d="M4.22 6.22a.75.75 0 0 1 1.06 0L8 8.94l2.72-2.72a.75.75 0 1 1 1.06 1.06l-3.25 3.25a.75.75 0 0 1-1.06 0L4.22 7.28a.75.75 0 0 1 0-1.06Z"
+              fill="currentColor"
+            />
+          </svg>
+        </span>
+      </button>
+
+      {isOpen ? (
+        <div className="topbar__select-popover">
+          <div id={listboxId} role="listbox" aria-label={ariaLabel} className="topbar__select-listbox">
+            {options.map((option) => {
+              const isSelected = option.value === value
+
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  role="option"
+                  className="topbar__select-option"
+                  aria-selected={isSelected}
+                  disabled={option.disabled}
+                  onClick={() => {
+                    if (!option.disabled) {
+                      commitSelection(option.value)
+                    }
+                  }}
+                  onKeyDown={(event) => handleOptionKeyDown(event, option.value, option.disabled)}
+                >
+                  {option.label}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 export function TopBar({
   projects,
   activeProjectId,
@@ -70,6 +210,11 @@ export function TopBar({
     regularViewState === 'unlocking' || regularViewState === 'locking'
   const isUnlocked = regularViewState === 'editable' || regularViewState === 'locking'
   const lockButtonLabel = isUnlocked ? '锁定' : '解锁'
+  const projectOptions = [
+    { value: '', label: '选择项目', disabled: true },
+    ...projects.map((project) => ({ value: project.id, label: project.name })),
+  ]
+  const profileOptions = profileIds.map((profileId) => ({ value: profileId, label: profileId }))
 
   return (
     <header className="topbar" role="banner">
@@ -77,22 +222,14 @@ export function TopBar({
       <span className="topbar__sr-status">{`状态：${statusMessage ?? '等待载入项目'}`}</span>
       <span className="topbar__sr-status">{`保存：${saveIndicator ?? '未打开文档'}`}</span>
       <div className="topbar__group topbar__group--start">
-        <label className="topbar__field topbar__field--project">
-          <select
-            aria-label="项目切换"
-            value={activeProjectId ?? ''}
-            onChange={(event) => onProjectChange(event.target.value)}
-          >
-            <option value="" disabled>
-              选择项目
-            </option>
-            {projects.map((project) => (
-              <option key={project.id} value={project.id}>
-                {project.name}
-              </option>
-            ))}
-          </select>
-        </label>
+        <TopBarSelect
+          ariaLabel="项目切换"
+          className="topbar__field topbar__field--project"
+          options={projectOptions}
+          placeholder="选择项目"
+          value={activeProjectId ?? ''}
+          onChange={onProjectChange}
+        />
 
         <button
           type="button"
@@ -167,19 +304,13 @@ export function TopBar({
       </div>
 
       <div className="topbar__group topbar__group--end">
-        <label className="topbar__field topbar__field--profile">
-          <select
-            aria-label="Profile 切换"
-            value={activeProfileId}
-            onChange={(event) => onProfileChange(event.target.value)}
-          >
-            {profileIds.map((profileId) => (
-              <option key={profileId} value={profileId}>
-                {profileId}
-              </option>
-            ))}
-          </select>
-        </label>
+        <TopBarSelect
+          ariaLabel="Profile 切换"
+          className="topbar__field topbar__field--profile"
+          options={profileOptions}
+          value={activeProfileId}
+          onChange={onProfileChange}
+        />
 
         <div className="topbar__actions-fixed">
           <div className="topbar__mode-cluster">

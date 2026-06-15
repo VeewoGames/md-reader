@@ -19,7 +19,7 @@ describe('App', () => {
   it('renders an empty workspace state before any project is connected', () => {
     render(<App />)
 
-    expect(screen.getByRole('combobox', { name: '项目切换' })).toHaveValue('')
+    expect(screen.getByRole('combobox', { name: '项目切换' })).toHaveTextContent('选择项目')
     expect(screen.getByRole('button', { name: '接入项目' })).toBeInTheDocument()
     expect(screen.getByRole('group', { name: '模式切换' })).toBeInTheDocument()
     expect(screen.getAllByText('还没有接入任何 Markdown 项目').length).toBeGreaterThan(0)
@@ -85,8 +85,8 @@ describe('AppShell', () => {
       />,
     )
 
-    expect(screen.getByRole('combobox', { name: '项目切换' })).toHaveValue('notes')
-    expect(screen.getByRole('combobox', { name: 'Profile 切换' })).toHaveValue('writer')
+    expect(screen.getByRole('combobox', { name: '项目切换' })).toHaveTextContent('Notes')
+    expect(screen.getByRole('combobox', { name: 'Profile 切换' })).toHaveTextContent('writer')
     expect(screen.getByRole('tab', { name: /README\.md/ })).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByRole('button', { name: '常规' })).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByRole('button', { name: '解锁' })).toBeInTheDocument()
@@ -187,6 +187,68 @@ describe('AppShell', () => {
 
     expect(guidesDirectory).toHaveAttribute('aria-expanded', 'false')
     expect(screen.queryByRole('button', { name: 'intro.md' })).not.toBeInTheDocument()
+  })
+
+  it('opens custom dropdowns and forwards selection changes', async () => {
+    const user = userEvent.setup()
+    const onProjectChange = vi.fn()
+    const onProfileChange = vi.fn()
+
+    render(
+      <AppShell
+        projects={[
+          {
+            id: 'notes',
+            name: 'Notes',
+            rootHandleKey: 'handle:notes',
+            contentRoots: ['docs'],
+            permissionState: 'granted',
+          },
+          {
+            id: 'manual',
+            name: 'Manual',
+            rootHandleKey: 'handle:manual',
+            contentRoots: ['docs'],
+            permissionState: 'granted',
+          },
+        ]}
+        activeProjectId="notes"
+        profileIds={['default', 'writer']}
+        activeProfileId="default"
+        tabs={defaultTabs}
+        activeTabId="docs/README.md"
+        mode="regular"
+        regularViewState="locked"
+        fileTree={[]}
+        currentDocumentPath="docs/README.md"
+        currentDocumentContent={'# Readme'}
+        statusMessage="项目已接入"
+        sidebarWidth={280}
+        outlineWidth={320}
+        onConnectProject={() => {}}
+        onProjectChange={onProjectChange}
+        onProfileChange={onProfileChange}
+        onModeChange={() => {}}
+        onToggleRegularLock={() => {}}
+        onTabSelect={() => {}}
+        onTabClose={() => {}}
+        onRestartService={() => {}}
+        onStopService={() => {}}
+        onDocumentSelect={() => {}}
+        onSidebarWidthChange={() => {}}
+        onSidebarWidthCommit={() => {}}
+        onOutlineWidthChange={() => {}}
+        onOutlineWidthCommit={() => {}}
+      />,
+    )
+
+    await user.click(screen.getByRole('combobox', { name: '项目切换' }))
+    await user.click(screen.getByRole('option', { name: 'Manual' }))
+    await user.click(screen.getByRole('combobox', { name: 'Profile 切换' }))
+    await user.click(screen.getByRole('option', { name: 'writer' }))
+
+    expect(onProjectChange).toHaveBeenCalledWith('manual')
+    expect(onProfileChange).toHaveBeenCalledWith('writer')
   })
 
   it('keeps the current document ancestors expanded', () => {

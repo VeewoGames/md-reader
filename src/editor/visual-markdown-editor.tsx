@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState, type ComponentType } from 'react'
+
+import { applyMarkdownTransforms } from '../markdown/markdown-transform'
 import { splitLeadingHtmlComments } from '../markdown/split-leading-html-comments'
 
 interface VisualMarkdownEditorProps {
@@ -35,6 +37,7 @@ export function VisualMarkdownEditor(props: VisualMarkdownEditorProps) {
   const [loadError, setLoadError] = useState<Error | null>(null)
   const generationRef = useRef(0)
   const { preservedPrefix, editorValue } = splitLeadingHtmlComments(props.value)
+  const renderedEditorValue = props.readonly ? applyMarkdownTransforms(editorValue) : editorValue
 
   useEffect(() => {
     if (cachedEditorComponent) {
@@ -72,7 +75,7 @@ export function VisualMarkdownEditor(props: VisualMarkdownEditorProps) {
     return (
       <LoadedEditor
         {...props}
-        value={editorValue}
+        value={renderedEditorValue}
         onChange={(nextValue) => {
           props.onChange(`${preservedPrefix}${nextValue}`)
         }}

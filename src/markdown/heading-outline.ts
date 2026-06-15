@@ -5,6 +5,8 @@ import remarkParse from 'remark-parse'
 import { unified } from 'unified'
 import { visit } from 'unist-util-visit'
 
+import { applyMarkdownTransforms } from './markdown-transform'
+
 export interface MarkdownHeading {
   id: string
   text: string
@@ -12,7 +14,7 @@ export interface MarkdownHeading {
 }
 
 export function extractMarkdownHeadings(markdown: string): MarkdownHeading[] {
-  const tree = unified().use(remarkParse).use(remarkGfm).parse(markdown) as Root
+  const tree = unified().use(remarkParse).use(remarkGfm).parse(applyMarkdownTransforms(markdown)) as Root
   const slugCounts = new Map<string, number>()
   const headings: MarkdownHeading[] = []
 

@@ -534,7 +534,6 @@ export function WorkspaceLayout({
     >
       <aside className="workspace__sidebar workspace__sidebar--left">
         <div id="workspace-file-tree" className="panel panel--sidebar">
-          <div className="panel__header">文件列表</div>
           <div className="panel__content panel__content--tree">
             {fileTree.length > 0 ? (
               <FileTreeBranch
@@ -570,7 +569,6 @@ export function WorkspaceLayout({
 
       <section className="workspace__center">
         <div className="panel panel--canvas">
-          <div className="panel__header">文档工作区</div>
           <div ref={canvasRef} className="panel__content panel__content--canvas">
             {currentDocumentPath ? (
               <div className="workspace__document">
@@ -607,7 +605,6 @@ export function WorkspaceLayout({
 
       <aside className="workspace__sidebar workspace__sidebar--right">
         <div id="workspace-outline" ref={outlineRef} className="panel panel--outline">
-          <div className="panel__header">标题导航</div>
           <div className="panel__content panel__content--outline">
             {!currentDocumentPath ? (
               <p className="panel__empty">打开 Markdown 文档后，这里会基于标题节点生成快捷导航。</p>

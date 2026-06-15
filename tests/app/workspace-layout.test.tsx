@@ -28,20 +28,7 @@ vi.mock('../../src/editor/visual-markdown-editor', () => ({
         data-testid="visual-markdown-editor"
         data-readonly={readonly ? 'true' : 'false'}
       >
-        {lines.map((line, index) => {
-          const match = line.match(/^(#{1,6})\s+(.*)$/)
-
-          if (match) {
-            const HeadingTag = `h${match[1].length}` as keyof JSX.IntrinsicElements
-            return <HeadingTag key={`heading-${index}`}>{match[2]}</HeadingTag>
-          }
-
-          if (line.trim().length === 0) {
-            return null
-          }
-
-          return <p key={`paragraph-${index}`}>{line}</p>
-        })}
+        {renderMockMarkdown(lines)}
       </div>
     )
   },
@@ -53,30 +40,40 @@ vi.mock('../../src/document-renderer/readonly-markdown-renderer', () => ({
 
     return (
       <article aria-label="只读 Markdown 渲染器" className="readonly-markdown-renderer">
-        {lines.map((line, index) => {
-          const match = line.match(/^(#{1,6})\s+(.*)$/)
-
-          if (match) {
-            const HeadingTag = `h${match[1].length}` as keyof JSX.IntrinsicElements
-            return (
-              <HeadingTag key={`heading-${index}`} data-heading-id={match[2]}>
-                {match[2]}
-              </HeadingTag>
-            )
-          }
-
-          if (line.trim().length === 0) {
-            return null
-          }
-
-          return <p key={`paragraph-${index}`}>{line}</p>
-        })}
+        {renderMockMarkdown(lines, true)}
       </article>
     )
   },
 }))
 
 import { WorkspaceLayout } from '../../src/app/WorkspaceLayout'
+
+function renderMockMarkdown(lines: string[], attachHeadingIds = false) {
+  return lines.map((line, index) => {
+    const match = line.match(/^(#{1,6})\s+(.*)$/)
+
+    if (match) {
+      const HeadingTag = `h${match[1].length}` as keyof JSX.IntrinsicElements
+      const headingProps = attachHeadingIds ? { 'data-heading-id': match[2] } : {}
+
+      return (
+        <HeadingTag key={`heading-${index}`} {...headingProps}>
+          {match[2]}
+        </HeadingTag>
+      )
+    }
+
+    if (/^[ \t]{0,3}-{3,}[ \t]*$/.test(line)) {
+      return <hr key={`hr-${index}`} />
+    }
+
+    if (line.trim().length === 0) {
+      return null
+    }
+
+    return <p key={`paragraph-${index}`}>{line}</p>
+  })
+}
 
 describe('WorkspaceLayout outline navigation', () => {
   afterEach(() => {
@@ -395,6 +392,62 @@ describe('WorkspaceLayout outline navigation', () => {
     expect(screen.getByLabelText('只读 Markdown 渲染器')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: '新标题' })).toBeInTheDocument()
     expect(container.querySelectorAll('.workspace__split-pane')).toHaveLength(2)
+  })
+
+  it('renders --- consistently in locked regular mode and split preview', async () => {
+    const markdown = '# 标题\n\n普通段落\n\n---\n\n## 下一节'
+    const { container, rerender } = render(
+      <WorkspaceLayout
+        mode="regular"
+        regularViewState="locked"
+        fileTree={[]}
+        currentDocumentPath="docs/guide.md"
+        currentDocumentContent={markdown}
+        editingDocumentContent={markdown}
+        statusMessage="当前项目：Notes"
+        sidebarWidth={280}
+        outlineWidth={320}
+        hasProjects
+        onDocumentSelect={() => {}}
+        onSidebarWidthChange={() => {}}
+        onSidebarWidthCommit={() => {}}
+        onOutlineWidthChange={() => {}}
+        onOutlineWidthCommit={() => {}}
+      />,
+    )
+
+    expect(await screen.findByLabelText('可视 Markdown 编辑器')).toHaveAttribute(
+      'data-readonly',
+      'true',
+    )
+    expect(screen.getByText('普通段落').tagName).toBe('P')
+    expect(container.querySelector('[data-testid="visual-markdown-editor"] hr')).not.toBeNull()
+    expect(screen.getByRole('heading', { name: '下一节' })).toBeInTheDocument()
+
+    rerender(
+      <WorkspaceLayout
+        mode="split"
+        regularViewState="locked"
+        fileTree={[]}
+        currentDocumentPath="docs/guide.md"
+        currentDocumentContent={markdown}
+        editingDocumentContent={markdown}
+        statusMessage="当前项目：Notes"
+        sidebarWidth={280}
+        outlineWidth={320}
+        hasProjects
+        onDocumentSelect={() => {}}
+        onSidebarWidthChange={() => {}}
+        onSidebarWidthCommit={() => {}}
+        onOutlineWidthChange={() => {}}
+        onOutlineWidthCommit={() => {}}
+      />,
+    )
+
+    expect(screen.getByLabelText('只读 Markdown 渲染器')).toBeInTheDocument()
+    expect(screen.getAllByText('普通段落')[0]?.tagName).toBe('P')
+    expect(container.querySelector('.readonly-markdown-renderer hr')).not.toBeNull()
+    expect(screen.getByRole('heading', { name: '下一节' })).toBeInTheDocument()
   })
 
   it('renders the same visual editor skeleton in regular editable mode', async () => {

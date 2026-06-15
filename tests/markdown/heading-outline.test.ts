@@ -28,4 +28,25 @@ describe('extractMarkdownHeadings', () => {
 `),
     ).toEqual([{ id: 'real-heading', text: 'Real Heading', depth: 2 }])
   })
+
+  it('does not promote a paragraph before --- into a setext heading', () => {
+    expect(
+      extractMarkdownHeadings(`# 词缀系统
+
+## 概述
+
+词缀系统是夜曲装备系统的核心数值层。
+---
+## 2026-04-28 修订：装备词缀池落地规则
+`),
+    ).toEqual([
+      { id: '词缀系统', text: '词缀系统', depth: 1 },
+      { id: '概述', text: '概述', depth: 2 },
+      {
+        id: '2026-04-28-修订-装备词缀池落地规则',
+        text: '2026-04-28 修订：装备词缀池落地规则',
+        depth: 2,
+      },
+    ])
+  })
 })
