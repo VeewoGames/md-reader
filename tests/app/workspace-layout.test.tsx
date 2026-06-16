@@ -47,6 +47,7 @@ vi.mock('../../src/document-renderer/readonly-markdown-renderer', () => ({
 }))
 
 import { WorkspaceLayout } from '../../src/app/WorkspaceLayout'
+import { buildFileTree } from '../../src/workspace/file-tree'
 
 function renderMockMarkdown(lines: string[], attachHeadingIds = false) {
   return lines.map((line, index) => {
@@ -521,6 +522,81 @@ describe('WorkspaceLayout outline navigation', () => {
     const observedEditorPane = observe.mock.calls.some(([target]) => target === editorPane)
 
     expect(observedEditorPane).toBe(false)
+  })
+
+  it('filters file tree entries from the sidebar search box and still opens matched files', async () => {
+    const user = userEvent.setup()
+    const onDocumentSelect = vi.fn()
+
+    render(
+      <WorkspaceLayout
+        mode="regular"
+        regularViewState="locked"
+        fileTree={buildFileTree(['docs/guide.md', 'docs/api/reference.md', 'notes/meeting.md'])}
+        currentDocumentPath="docs/guide.md"
+        currentDocumentContent={'# 标题\n\n正文'}
+        statusMessage="当前项目：Notes"
+        sidebarWidth={280}
+        outlineWidth={320}
+        hasProjects
+        onDocumentSelect={onDocumentSelect}
+        onSidebarWidthChange={() => {}}
+        onSidebarWidthCommit={() => {}}
+        onOutlineWidthChange={() => {}}
+        onOutlineWidthCommit={() => {}}
+      />,
+    )
+
+    const searchInput = screen.getByRole('searchbox', { name: '搜索文件' })
+
+    expect(screen.getByRole('button', { name: 'guide.md' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'reference.md' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'meeting.md' })).toBeInTheDocument()
+
+    await user.type(searchInput, 'ref')
+
+    expect(screen.queryByRole('button', { name: 'guide.md' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'reference.md' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'meeting.md' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'docs' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'api' })).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'reference.md' }))
+
+    expect(onDocumentSelect).toHaveBeenCalledWith('docs/api/reference.md')
+
+    await user.clear(searchInput)
+
+    expect(screen.getByRole('button', { name: 'guide.md' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'meeting.md' })).toBeInTheDocument()
+  })
+
+  it('shows an empty state when the sidebar search does not match any files', async () => {
+    const user = userEvent.setup()
+
+    render(
+      <WorkspaceLayout
+        mode="regular"
+        regularViewState="locked"
+        fileTree={buildFileTree(['docs/guide.md'])}
+        currentDocumentPath="docs/guide.md"
+        currentDocumentContent={'# 标题\n\n正文'}
+        statusMessage="当前项目：Notes"
+        sidebarWidth={280}
+        outlineWidth={320}
+        hasProjects
+        onDocumentSelect={() => {}}
+        onSidebarWidthChange={() => {}}
+        onSidebarWidthCommit={() => {}}
+        onOutlineWidthChange={() => {}}
+        onOutlineWidthCommit={() => {}}
+      />,
+    )
+
+    await user.type(screen.getByRole('searchbox', { name: '搜索文件' }), 'zzz')
+
+    expect(screen.getByText('没有匹配的文件')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'guide.md' })).not.toBeInTheDocument()
   })
 
 })

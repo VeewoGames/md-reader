@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { buildFileTree } from '../../src/workspace/file-tree'
+import { buildFileTree, filterFileTree } from '../../src/workspace/file-tree'
 
 describe('buildFileTree', () => {
   it('builds nested directory nodes from markdown-relative paths', () => {
@@ -62,5 +62,64 @@ describe('buildFileTree', () => {
         ],
       },
     ])
+  })
+})
+
+describe('filterFileTree', () => {
+  it('keeps matching files with their directory context when filtering by file name or path segment', () => {
+    const tree = buildFileTree([
+      'docs/guide.md',
+      'docs/api/reference.md',
+      'notes/meeting.md',
+    ])
+
+    expect(filterFileTree(tree, 'ref')).toEqual([
+      {
+        id: 'docs',
+        kind: 'directory',
+        name: 'docs',
+        path: 'docs',
+        children: [
+          {
+            id: 'docs/api',
+            kind: 'directory',
+            name: 'api',
+            path: 'docs/api',
+            children: [
+              {
+                id: 'docs/api/reference.md',
+                kind: 'file',
+                name: 'reference.md',
+                path: 'docs/api/reference.md',
+              },
+            ],
+          },
+        ],
+      },
+    ])
+
+    expect(filterFileTree(tree, 'notes/meet')).toEqual([
+      {
+        id: 'notes',
+        kind: 'directory',
+        name: 'notes',
+        path: 'notes',
+        children: [
+          {
+            id: 'notes/meeting.md',
+            kind: 'file',
+            name: 'meeting.md',
+            path: 'notes/meeting.md',
+          },
+        ],
+      },
+    ])
+  })
+
+  it('returns the original tree when the query is empty', () => {
+    const tree = buildFileTree(['docs/guide.md'])
+
+    expect(filterFileTree(tree, '')).toEqual(tree)
+    expect(filterFileTree(tree, '   ')).toEqual(tree)
   })
 })

@@ -1,4 +1,4 @@
-import { useEffect, useEffectEvent, useRef, useState, type CSSProperties } from 'react'
+import { useDeferredValue, useEffect, useEffectEvent, useRef, useState, type CSSProperties } from 'react'
 import { FileText } from 'lucide-react'
 
 import { findActiveHeadingId, type HeadingTarget } from './outline-active-heading'
@@ -9,6 +9,7 @@ import {
   type MarkdownHeading,
 } from '../markdown/heading-outline'
 import type { FileTreeNode } from '../workspace/file-tree-types'
+import { filterFileTree } from '../workspace/file-tree'
 import type { RegularViewState, WorkspaceMode } from './TopBar'
 
 interface WorkspaceLayoutProps {
@@ -36,6 +37,7 @@ interface WorkspaceLayoutProps {
 function FileTreeBranch({
   nodes,
   level,
+  searchActive,
   currentDocumentPath,
   expandedDirectories,
   forcedExpandedDirectories,
@@ -45,6 +47,7 @@ function FileTreeBranch({
 }: {
   nodes: FileTreeNode[]
   level: number
+  searchActive: boolean
   currentDocumentPath: string | null
   expandedDirectories: Set<string>
   forcedExpandedDirectories: Set<string>
@@ -60,6 +63,7 @@ function FileTreeBranch({
             (() => {
               const isForcedExpanded = forcedExpandedDirectories.has(node.path)
               const isExpanded =
+                searchActive ||
                 expandedDirectories.has(node.path) ||
                 (isForcedExpanded && !collapsedForcedDirectories.has(node.path))
               const isCurrentBranch =
@@ -84,6 +88,7 @@ function FileTreeBranch({
                       <FileTreeBranch
                         nodes={node.children}
                         level={level + 1}
+                        searchActive={searchActive}
                         currentDocumentPath={currentDocumentPath}
                         expandedDirectories={expandedDirectories}
                         forcedExpandedDirectories={forcedExpandedDirectories}
@@ -141,6 +146,7 @@ export function WorkspaceLayout({
     mode === 'split' ? (editingDocumentContent ?? currentDocumentContent) : currentDocumentContent
   const [expandedDirectories, setExpandedDirectories] = useState<Set<string>>(new Set())
   const [collapsedForcedDirectories, setCollapsedForcedDirectories] = useState<Set<string>>(new Set())
+  const [fileSearchQuery, setFileSearchQuery] = useState('')
   const [documentHeadings, setDocumentHeadings] = useState<MarkdownHeading[]>([])
   const [activeHeadingId, setActiveHeadingId] = useState<string | null>(null)
   const documentRef = useRef<HTMLElement | null>(null)
@@ -151,6 +157,9 @@ export function WorkspaceLayout({
   const maxSidebarWidth = 520
   const minOutlineWidth = 220
   const maxOutlineWidth = 420
+  const deferredFileSearchQuery = useDeferredValue(fileSearchQuery)
+  const isFilteringFiles = deferredFileSearchQuery.trim().length > 0
+  const visibleFileTree = filterFileTree(fileTree, deferredFileSearchQuery)
 
   if (currentDocumentPath) {
     const segments = currentDocumentPath.split('/').filter(Boolean)
@@ -530,11 +539,24 @@ export function WorkspaceLayout({
     >
       <aside className="workspace__sidebar workspace__sidebar--left">
         <div id="workspace-file-tree" className="panel panel--sidebar">
+          <div className="panel__search">
+            <input
+              type="search"
+              className="panel__search-input"
+              aria-label="搜索文件"
+              placeholder="搜索文件"
+              value={fileSearchQuery}
+              onChange={(event) => setFileSearchQuery(event.target.value)}
+              autoComplete="off"
+              spellCheck={false}
+            />
+          </div>
           <div className="panel__content panel__content--tree">
-            {fileTree.length > 0 ? (
+            {fileTree.length > 0 && visibleFileTree.length > 0 ? (
               <FileTreeBranch
-                nodes={fileTree}
+                nodes={visibleFileTree}
                 level={0}
+                searchActive={isFilteringFiles}
                 currentDocumentPath={currentDocumentPath}
                 expandedDirectories={expandedDirectories}
                 forcedExpandedDirectories={forcedExpandedDirectories}
@@ -542,6 +564,8 @@ export function WorkspaceLayout({
                 onToggleDirectory={handleToggleDirectory}
                 onDocumentSelect={onDocumentSelect}
               />
+            ) : isFilteringFiles ? (
+              <p className="panel__empty">没有匹配的文件</p>
             ) : (
               <p className="panel__empty">
                 {hasProjects ? '当前项目还没有可用的 Markdown 文件' : '还没有接入任何 Markdown 项目'}

@@ -52,3 +52,34 @@ export function buildFileTree(paths: string[]): FileTreeNode[] {
 
   return root.children
 }
+
+export function filterFileTree(nodes: FileTreeNode[], query: string): FileTreeNode[] {
+  const normalizedQuery = query.trim().toLocaleLowerCase()
+
+  if (normalizedQuery.length === 0) {
+    return nodes
+  }
+
+  return nodes.flatMap((node) => {
+    const matchesNode =
+      node.name.toLocaleLowerCase().includes(normalizedQuery) ||
+      node.path.toLocaleLowerCase().includes(normalizedQuery)
+
+    if (node.kind === 'file') {
+      return matchesNode ? [node] : []
+    }
+
+    const filteredChildren = matchesNode ? node.children : filterFileTree(node.children, normalizedQuery)
+
+    if (filteredChildren.length === 0) {
+      return []
+    }
+
+    return [
+      {
+        ...node,
+        children: filteredChildren,
+      } satisfies FileTreeDirectoryNode,
+    ]
+  })
+}
