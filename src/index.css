@@ -1034,7 +1034,7 @@ select {
 }
 
 :where(.markdown-document, .visual-markdown-editor .editor) a {
-  color: #2f3437;
+  color: #bd7623;
   text-decoration-color: rgba(47, 52, 55, 0.22);
   text-underline-offset: 0.18em;
 }
@@ -1052,11 +1052,29 @@ select {
 }
 
 :where(.markdown-document, .visual-markdown-editor .editor) blockquote {
+  position: relative;
+  margin-top: 0.6rem;
   margin-left: 0;
-  padding: 0.7rem 1rem;
-  border-left: 3px solid rgba(31, 111, 235, 0.28);
-  background: var(--doc-blockquote-bg);
-  border-radius: 0 12px 12px 0;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  background: var(--doc-pre-bg);
+  border-radius: 14px;
+}
+
+:where(.markdown-document, .visual-markdown-editor .editor) :is(h1, h2, h3, h4) + blockquote {
+  margin-top: 1.5rem;
+}
+
+:where(.markdown-document, .visual-markdown-editor .editor) blockquote > p {
+  margin: 0;
+}
+
+:where(.markdown-document, .visual-markdown-editor .editor) blockquote > p + p {
+  margin-top: 0.8rem;
+}
+
+:where(.markdown-document, .visual-markdown-editor .editor) blockquote > :last-child {
+  margin-bottom: 0;
 }
 
 :where(.markdown-document, .visual-markdown-editor .editor) code {
@@ -1227,6 +1245,27 @@ select {
   font-size: var(--doc-body-font-size) !important;
   font-weight: 400 !important;
   line-height: var(--doc-body-line-height) !important;
+}
+
+.readonly-markdown-renderer .ProseMirror blockquote {
+  margin-top: 0.6rem !important;
+  padding: 1rem !important;
+}
+
+.readonly-markdown-renderer .ProseMirror :is(h1, h2, h3, h4) + blockquote {
+  margin-top: 1.5rem !important;
+}
+
+.readonly-markdown-renderer .ProseMirror blockquote > p {
+  margin: 0 !important;
+}
+
+.readonly-markdown-renderer .ProseMirror blockquote > p + p {
+  margin-top: 0.8rem !important;
+}
+
+.readonly-markdown-renderer .ProseMirror blockquote > :last-child {
+  margin-bottom: 0 !important;
 }
 
 .readonly-markdown-renderer .ProseMirror strong {
