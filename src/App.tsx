@@ -51,9 +51,15 @@ const workspaceProvider = createWorkspaceProvider({
 })
 
 const AUTOSAVE_DEBOUNCE_MS = 1200
+const MARKDOWN_TITLE_EXTENSION_PATTERN = /\.(md|mdx)$/i
 
 function createTabId(documentPath: string): string {
   return documentPath
+}
+
+function formatTabTitle(documentPath: string): string {
+  const fileName = documentPath.split('/').at(-1) ?? documentPath
+  return fileName.replace(MARKDOWN_TITLE_EXTENSION_PATTERN, '')
 }
 
 function createEmptySession(): WorkspaceSession {
@@ -125,6 +131,30 @@ function removeTab(session: WorkspaceSession, tabId: string): WorkspaceSession {
   return {
     ...session,
     tabs: session.tabs.filter((tab) => tab.id !== tabId),
+  }
+}
+
+function reorderSessionTabs(
+  session: WorkspaceSession,
+  nextOrderedTabIds: string[],
+): WorkspaceSession {
+  const tabById = new Map(session.tabs.map((tab) => [tab.id, tab]))
+  const reorderedTabs = nextOrderedTabIds
+    .map((id) => tabById.get(id))
+    .filter((tab): tab is WorkspaceTab => tab != null)
+
+  if (reorderedTabs.length !== session.tabs.length) {
+    return session
+  }
+
+  const hasSameOrder = reorderedTabs.every((tab, index) => session.tabs[index]?.id === tab.id)
+  if (hasSameOrder) {
+    return session
+  }
+
+  return {
+    ...session,
+    tabs: reorderedTabs,
   }
 }
 
@@ -1171,6 +1201,34 @@ function App() {
     })
   }
 
+  async function handleTabReorder(nextOrderedTabIds: string[]) {
+    const projectId = activeProjectIdRef.current
+    if (!projectId) {
+      return
+    }
+
+    const nextSession = reorderSessionTabs(sessionRef.current, nextOrderedTabIds)
+    if (nextSession === sessionRef.current) {
+      return
+    }
+
+    setSession(nextSession)
+
+    const localState = normalizeLocalStateSnapshot(
+      (await localStateStore.getState(projectId)) as Awaited<
+        ReturnType<typeof localStateStore.getState>
+      > & { activeMode: 'regular' | 'split' | 'read' | 'edit'; lastKnownScrollTop?: number },
+    )
+
+    await localStateStore.saveState(projectId, {
+      ...localState,
+      openDocumentPaths: nextSession.tabs.map((tab) => tab.documentPath),
+      activeDocumentPath: getActiveTab(nextSession)?.documentPath ?? null,
+      activeMode: nextSession.mode,
+      regularViewState: nextSession.regularViewState,
+    })
+  }
+
   async function handleTabClose(tabId: string) {
     if (!activeProjectId) {
       return
@@ -1469,7 +1527,7 @@ function App() {
         tabs={session.tabs.map((tab) => ({
           id: tab.id,
           documentPath: tab.documentPath,
-          title: tab.documentPath.split('/').at(-1) ?? tab.documentPath,
+          title: formatTabTitle(tab.documentPath),
           saveState: tab.saveState,
           saveErrorMessage: tab.saveErrorMessage,
         }))}
@@ -1497,6 +1555,7 @@ function App() {
         onToggleRegularLock={handleToggleRegularLock}
         onTabSelect={handleTabSelect}
         onTabClose={handleTabClose}
+        onTabReorder={handleTabReorder}
         onRestartService={handleRestartService}
         onStopService={handleStopService}
         onDocumentSelect={handleDocumentSelect}

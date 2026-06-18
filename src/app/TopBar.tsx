@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react'
+import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
 import {
   ChevronDown,
   Lock,
@@ -16,6 +16,12 @@ import type { ProjectRegistryRecord } from '../workspace/registry'
 import { preloadVisualMarkdownEditor } from '../editor/visual-markdown-editor'
 import type { TabSaveState } from '../workspace/workspace-session'
 import type { DocumentLineHeight, PageWidthMode } from '../workspace/profile-store'
+import {
+  buildShiftMap,
+  findDropIndexByCenter,
+  moveTabId,
+  type TabRect,
+} from '../workspace/tab-order'
 
 export type WorkspaceMode = 'regular' | 'split'
 export type RegularViewState = 'locked' | 'unlocking' | 'editable' | 'locking'
@@ -48,6 +54,7 @@ interface TopBarProps {
   onToggleRegularLock: () => void
   onTabSelect: (tabId: string) => void
   onTabClose: (tabId: string) => void
+  onTabReorder?: (nextOrderedTabIds: string[]) => void
   onRestartService?: () => void
   onStopService?: () => void
   documentFontSize?: number
@@ -76,6 +83,8 @@ const LINE_HEIGHT_OPTIONS: Array<{ value: DocumentLineHeight; label: string }> =
   { value: 1.9, label: '1.9' },
   { value: 2.0, label: '2.0' },
 ]
+
+const DRAG_THRESHOLD_PX = 6
 
 function TopBarReadingPreferences({
   fontSize,
@@ -342,6 +351,7 @@ export function TopBar({
   onToggleRegularLock,
   onTabSelect,
   onTabClose,
+  onTabReorder,
   onRestartService,
   onStopService,
   documentFontSize = 16,
@@ -351,6 +361,27 @@ export function TopBar({
   onDocumentPageWidthChange,
   onDocumentLineHeightChange,
 }: TopBarProps) {
+  const [dragState, setDragState] = useState<'idle' | 'press_pending' | 'dragging' | 'settling'>('idle')
+  const [dragTabId, setDragTabId] = useState<string | null>(null)
+  const [previewOrder, setPreviewOrder] = useState<string[] | null>(null)
+  const [dragOffsetX, setDragOffsetX] = useState(0)
+  const [settlingTabId, setSettlingTabId] = useState<string | null>(null)
+  const tabButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({})
+  const tabLabelRefs = useRef<Record<string, HTMLSpanElement | null>>({})
+  const tabstripRef = useRef<HTMLDivElement | null>(null)
+  const settlingTimerRef = useRef<number | null>(null)
+  const dragStateRef = useRef(dragState)
+  const dragTabIdRef = useRef(dragTabId)
+  const previewOrderRef = useRef(previewOrder)
+  const dragMetaRef = useRef<{
+    pointerId: number
+    startX: number
+    tabId: string
+    order: string[]
+    rectsById: Record<string, TabRect>
+    triggerElement: HTMLButtonElement | null
+  } | null>(null)
+  const [tooltipTabId, setTooltipTabId] = useState<string | null>(null)
   const isRegularMode = mode === 'regular'
   const isLockActionPending =
     regularViewState === 'unlocking' || regularViewState === 'locking'
@@ -361,6 +392,299 @@ export function TopBar({
     ...projects.map((project) => ({ value: project.id, label: project.name })),
   ]
   const profileOptions = profileIds.map((profileId) => ({ value: profileId, label: profileId }))
+  const committedOrder = tabs.map((tab) => tab.id)
+  const effectiveOrder = dragState === 'dragging' ? committedOrder : previewOrder ?? committedOrder
+  const orderedTabs = effectiveOrder
+    .map((id) => tabs.find((tab) => tab.id === id) ?? null)
+    .filter((tab): tab is TopBarTab => tab != null)
+
+  function clearSettlingTimer() {
+    if (settlingTimerRef.current != null) {
+      window.clearTimeout(settlingTimerRef.current)
+      settlingTimerRef.current = null
+    }
+  }
+
+  function isTabTruncated(tabId: string) {
+    const labelElement = tabLabelRefs.current[tabId]
+    if (labelElement == null) {
+      return false
+    }
+
+    return labelElement.scrollWidth > labelElement.clientWidth + 1
+  }
+
+  function hideTabTooltip() {
+    setTooltipTabId(null)
+  }
+
+  function showTabTooltip(tabId: string) {
+    if (dragStateRef.current !== 'idle') {
+      setTooltipTabId(null)
+      return
+    }
+
+    if (!isTabTruncated(tabId)) {
+      setTooltipTabId(null)
+      return
+    }
+
+    setTooltipTabId(tabId)
+  }
+
+  function collectTabRects(): Record<string, TabRect> {
+    return Object.fromEntries(
+      tabs.flatMap((tab) => {
+        const element = tabButtonRefs.current[tab.id]
+        if (element == null) {
+          return []
+        }
+
+        const rect = element.getBoundingClientRect()
+        if (rect.width <= 0) {
+          return []
+        }
+
+        return [
+          [
+            tab.id,
+            {
+              left: rect.left,
+              width: rect.width,
+              center: rect.left + rect.width / 2,
+            } satisfies TabRect,
+          ],
+        ]
+      }),
+    )
+  }
+
+  function cleanupDragging(pointerId?: number) {
+    window.removeEventListener('pointermove', handleWindowPointerMove)
+    window.removeEventListener('pointerup', handleWindowPointerUp)
+    window.removeEventListener('pointercancel', handleWindowPointerCancel)
+
+    const target = dragMetaRef.current?.triggerElement
+    if (
+      pointerId != null &&
+      target != null &&
+      typeof target.hasPointerCapture === 'function' &&
+      target.hasPointerCapture(pointerId)
+    ) {
+      target.releasePointerCapture(pointerId)
+    }
+  }
+
+  function finishDrag() {
+    const meta = dragMetaRef.current
+    if (meta == null) {
+      return
+    }
+
+    const nextDragState = dragStateRef.current
+    const nextDragTabId = dragTabIdRef.current
+    const nextPreviewOrder = previewOrderRef.current
+
+    cleanupDragging(meta.pointerId)
+    dragMetaRef.current = null
+    setTooltipTabId(null)
+    setDragOffsetX(0)
+    setPreviewOrder(null)
+    setDragState('settling')
+    setSettlingTabId(nextDragState === 'dragging' ? nextDragTabId : null)
+    setDragTabId(null)
+    meta.triggerElement?.focus()
+    clearSettlingTimer()
+    settlingTimerRef.current = window.setTimeout(() => {
+      setDragState('idle')
+      setSettlingTabId(null)
+      settlingTimerRef.current = null
+    }, 160)
+
+    if (nextDragState === 'dragging' && nextDragTabId && nextPreviewOrder) {
+      onTabReorder?.(nextPreviewOrder)
+    } else if (nextDragState === 'press_pending') {
+      onTabSelect(meta.tabId)
+    }
+  }
+
+  function beginDragging(meta: NonNullable<typeof dragMetaRef.current>) {
+    if (meta.triggerElement && typeof meta.triggerElement.setPointerCapture === 'function') {
+      meta.triggerElement.setPointerCapture(meta.pointerId)
+    }
+    window.addEventListener('pointermove', handleWindowPointerMove)
+    window.addEventListener('pointerup', handleWindowPointerUp)
+    window.addEventListener('pointercancel', handleWindowPointerCancel)
+  }
+
+  function handleWindowPointerMove(event: PointerEvent) {
+    const meta = dragMetaRef.current
+    if (meta == null || event.pointerId !== meta.pointerId) {
+      return
+    }
+
+    const nextDragTabId = dragTabIdRef.current ?? meta.tabId
+    const nextOffsetX = event.clientX - meta.startX
+    if (dragStateRef.current === 'press_pending') {
+      if (Math.abs(nextOffsetX) < DRAG_THRESHOLD_PX) {
+        return
+      }
+      beginDragging(meta)
+    }
+
+    const rectsById = meta.rectsById
+    const dragRect = rectsById[nextDragTabId]
+    if (dragRect == null) {
+      return
+    }
+
+    const measurableOrder = meta.order.filter((id) => rectsById[id] != null)
+    const baseOrder = (previewOrderRef.current ?? measurableOrder).filter((id) => rectsById[id] != null)
+    const dragCenterX = dragRect.center + nextOffsetX
+    const nextIndex = findDropIndexByCenter(baseOrder, nextDragTabId, dragCenterX, rectsById)
+    const nextOrder = moveTabId(baseOrder, nextDragTabId, nextIndex)
+    const remainingIds = meta.order.filter((id) => !nextOrder.includes(id))
+
+    setDragState('dragging')
+    setDragTabId(nextDragTabId)
+    setDragOffsetX(nextOffsetX)
+    setPreviewOrder([...nextOrder, ...remainingIds])
+  }
+
+  function handleWindowPointerUp(event: PointerEvent) {
+    if (event.pointerId === dragMetaRef.current?.pointerId) {
+      finishDrag()
+    }
+  }
+
+  function handleWindowPointerCancel(event: PointerEvent) {
+    if (event.pointerId === dragMetaRef.current?.pointerId) {
+      finishDrag()
+    }
+  }
+
+  function handleTabPointerDown(event: React.PointerEvent<HTMLButtonElement>, tabId: string) {
+    if (event.button !== 0) {
+      return
+    }
+
+    window.addEventListener('pointermove', handleWindowPointerMove)
+    window.addEventListener('pointerup', handleWindowPointerUp)
+    window.addEventListener('pointercancel', handleWindowPointerCancel)
+    clearSettlingTimer()
+    setTooltipTabId(null)
+    setSettlingTabId(null)
+    setDragState('press_pending')
+    setDragTabId(tabId)
+    setDragOffsetX(0)
+    setPreviewOrder(committedOrder)
+    dragMetaRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      tabId,
+      order: committedOrder,
+      rectsById: collectTabRects(),
+      triggerElement: event.currentTarget,
+    }
+  }
+
+  useEffect(() => {
+    return () => {
+      clearSettlingTimer()
+      cleanupDragging(dragMetaRef.current?.pointerId)
+    }
+  }, [])
+
+  const shiftMap =
+    dragState === 'dragging' && dragTabId != null && previewOrder != null && dragMetaRef.current != null
+      ? buildShiftMap({
+          committedOrder: dragMetaRef.current.order,
+          previewOrder,
+          dragTabId,
+          rectsById: dragMetaRef.current.rectsById,
+        })
+      : {}
+
+  useEffect(() => {
+    dragStateRef.current = dragState
+  }, [dragState])
+
+  useEffect(() => {
+    dragTabIdRef.current = dragTabId
+  }, [dragTabId])
+
+  useEffect(() => {
+    previewOrderRef.current = previewOrder
+  }, [previewOrder])
+
+  useLayoutEffect(() => {
+    if (typeof ResizeObserver === 'undefined') {
+      return
+    }
+
+    const observer = new ResizeObserver(() => {
+      if (tooltipTabId != null && !isTabTruncated(tooltipTabId)) {
+        setTooltipTabId(null)
+      }
+    })
+
+    const elements: Element[] = []
+    if (tabstripRef.current != null) {
+      elements.push(tabstripRef.current)
+    }
+    tabs.forEach((tab) => {
+      const labelElement = tabLabelRefs.current[tab.id]
+      if (labelElement != null) {
+        elements.push(labelElement)
+      }
+
+      const buttonElement = tabButtonRefs.current[tab.id]
+      if (buttonElement != null) {
+        elements.push(buttonElement)
+      }
+    })
+
+    elements.forEach((element) => observer.observe(element))
+
+    return () => observer.disconnect()
+  }, [tabs, tooltipTabId])
+
+  useEffect(() => {
+    if (dragState !== 'idle') {
+      setTooltipTabId(null)
+    }
+  }, [dragState])
+
+  useEffect(() => {
+    if (tooltipTabId == null) {
+      return
+    }
+
+    const stillExists = tabs.some((tab) => tab.id === tooltipTabId)
+    if (!stillExists || !isTabTruncated(tooltipTabId)) {
+      setTooltipTabId(null)
+    }
+  }, [tabs, tooltipTabId])
+
+  const activeTooltipTab =
+    tooltipTabId != null && dragState === 'idle' && isTabTruncated(tooltipTabId)
+      ? orderedTabs.find((tab) => tab.id === tooltipTabId) ?? null
+      : null
+  const activeTooltipPosition =
+    activeTooltipTab != null
+      ? (() => {
+          const buttonElement = tabButtonRefs.current[activeTooltipTab.id]
+          if (buttonElement == null) {
+            return null
+          }
+
+          const rect = buttonElement.getBoundingClientRect()
+          return {
+            left: rect.left + rect.width / 2,
+            top: rect.bottom + 10,
+          }
+        })()
+      : null
 
   return (
     <header className="topbar" role="banner">
@@ -391,16 +715,14 @@ export function TopBar({
       </div>
 
       <div className="topbar__center">
-        <div className="topbar__tabstrip" role="tablist" aria-label="打开的文档标签">
-          {tabs.map((tab) => {
+        <div
+          ref={tabstripRef}
+          className="topbar__tabstrip"
+          role="tablist"
+          aria-label="打开的文档标签"
+        >
+          {orderedTabs.map((tab) => {
             const isActive = tab.id === activeTabId
-            const isDirty = tab.saveState !== 'clean'
-            const tabStateLabel =
-              tab.saveState === 'save_failed_retryable' || tab.saveState === 'conflict_hard'
-                ? `异常${tab.saveErrorMessage ? `：${tab.saveErrorMessage}` : ''}`
-                : isDirty
-                  ? '未保存'
-                  : '已保存'
 
             return (
               <div
@@ -408,7 +730,26 @@ export function TopBar({
                 className="topbar__tab"
                 data-active={isActive ? 'true' : undefined}
                 data-editable={isActive && isUnlocked && isRegularMode ? 'true' : undefined}
-                title={`${tab.documentPath}\n${tabStateLabel}`}
+                data-dragging={dragTabId === tab.id && dragState === 'dragging' ? 'true' : undefined}
+                data-shifting={
+                  dragTabId !== tab.id && dragState === 'dragging' && shiftMap[tab.id] !== 0
+                    ? 'true'
+                    : undefined
+                }
+                data-settling={
+                  dragState === 'settling' && settlingTabId !== tab.id ? 'true' : undefined
+                }
+                data-settling-dragged={
+                  dragState === 'settling' && settlingTabId === tab.id ? 'true' : undefined
+                }
+                style={{
+                  transform:
+                    dragTabId === tab.id && dragState === 'dragging'
+                      ? `translateX(${dragOffsetX}px)`
+                      : shiftMap[tab.id] != null && shiftMap[tab.id] !== 0
+                        ? `translateX(${shiftMap[tab.id]}px)`
+                        : undefined,
+                }}
               >
                 <button
                   type="button"
@@ -416,19 +757,39 @@ export function TopBar({
                   className="topbar__tab-button"
                   aria-selected={isActive}
                   aria-controls={undefined}
-                  onClick={() => onTabSelect(tab.id)}
+                  ref={(element) => {
+                    tabButtonRefs.current[tab.id] = element
+                  }}
+                  onPointerDown={(event) => handleTabPointerDown(event, tab.id)}
+                  onClick={() => {
+                    if (dragState === 'idle') {
+                      onTabSelect(tab.id)
+                    }
+                  }}
+                  onMouseEnter={() => showTabTooltip(tab.id)}
+                  onMouseLeave={hideTabTooltip}
+                  onFocus={() => showTabTooltip(tab.id)}
+                  onBlur={hideTabTooltip}
                 >
                   <span
                     className="topbar__tab-state"
                     data-state={tab.saveState}
                     aria-hidden="true"
                   />
-                  <span className="topbar__tab-label">{tab.title}</span>
+                  <span
+                    className="topbar__tab-label"
+                    ref={(element) => {
+                      tabLabelRefs.current[tab.id] = element
+                    }}
+                  >
+                    {tab.title}
+                  </span>
                 </button>
                 <button
                   type="button"
                   className="topbar__tab-close"
                   aria-label={`关闭标签：${tab.title}`}
+                  onPointerDown={(event) => event.stopPropagation()}
                   onClick={() => onTabClose(tab.id)}
                 >
                   <X />
@@ -438,6 +799,19 @@ export function TopBar({
           })}
         </div>
       </div>
+
+      {activeTooltipTab != null && activeTooltipPosition != null ? (
+        <div
+          className="topbar__tab-tooltip"
+          role="tooltip"
+          style={{
+            left: activeTooltipPosition.left,
+            top: activeTooltipPosition.top,
+          }}
+        >
+          {activeTooltipTab.title}
+        </div>
+      ) : null}
 
       <div className="topbar__group topbar__group--end">
         <TopBarSelect

@@ -152,7 +152,7 @@ describe('App repo-tracked profiles', () => {
 
     render(<App />)
 
-    await screen.findByRole('tab', { name: 'guide.md' })
+    await screen.findByRole('tab', { name: 'guide' })
 
     await user.click(screen.getByRole('combobox', { name: 'Profile 切换' }))
     expect(screen.getByRole('option', { name: 'Lans' })).toBeInTheDocument()

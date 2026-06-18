@@ -124,15 +124,35 @@ vi.mock('../../src/editor/visual-markdown-editor', () => ({
   ),
 }))
 
+vi.mock('../../src/app/AppShell', () => ({
+  AppShell: (props: {
+    tabs: Array<{ title: string }>
+    onTabReorder?: (nextOrderedTabIds: string[]) => void
+  }) => (
+    <div>
+      <button
+        type="button"
+        onClick={() => props.onTabReorder?.(['docs/next.md', 'docs/guide.md'])}
+      >
+        reorder-tabs
+      </button>
+      <div data-testid="tab-order">{props.tabs.map((tab) => tab.title).join(',')}</div>
+    </div>
+  ),
+}))
+
 import App from '../../src/App'
 
-describe('App session restore', () => {
+describe('App tab reorder persistence', () => {
   beforeEach(() => {
     bridgeMocks.getDocumentContentFromBridge.mockReset()
     bridgeMocks.getProfileFromBridge.mockReset()
     bridgeMocks.listProjectProfilesFromBridge.mockReset()
     bridgeMocks.saveProfileToBridge.mockReset()
     bridgeMocks.saveState.mockReset()
+
+    localState.openDocumentPaths = ['docs/guide.md', 'docs/next.md']
+    localState.activeDocumentPath = 'docs/next.md'
 
     bridgeMocks.listProjectProfilesFromBridge.mockResolvedValue({
       profileIds: ['default', 'Lans'],
@@ -170,36 +190,35 @@ describe('App session restore', () => {
     )
   })
 
-  it('restores the previous tab set and returns to the last active tab', async () => {
+  it('persists reordered openDocumentPaths after a tab drag reorder', async () => {
     const user = userEvent.setup()
+    render(<App />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('tab-order')).toHaveTextContent('guide,next')
+    })
+
+    await user.click(screen.getByRole('button', { name: 'reorder-tabs' }))
+
+    await waitFor(() => {
+      expect(bridgeMocks.saveState).toHaveBeenCalledWith(
+        'notes',
+        expect.objectContaining({
+          openDocumentPaths: ['docs/next.md', 'docs/guide.md'],
+          activeDocumentPath: 'docs/next.md',
+        }),
+      )
+    })
+  })
+
+  it('restores reordered tabs on the next mount', async () => {
+    localState.openDocumentPaths = ['docs/next.md', 'docs/guide.md']
+    localState.activeDocumentPath = 'docs/next.md'
 
     render(<App />)
 
     await waitFor(() => {
-      expect(screen.getByRole('tab', { name: 'guide' })).toBeInTheDocument()
-      expect(screen.getByRole('tab', { name: 'next' })).toBeInTheDocument()
+      expect(screen.getByTestId('tab-order')).toHaveTextContent('next,guide')
     })
-
-    expect(screen.getByRole('tab', { name: 'next' })).toHaveAttribute('aria-selected', 'true')
-    expect(screen.getByRole('button', { name: '分栏' })).toHaveAttribute('aria-pressed', 'true')
-    expect(screen.getByRole('textbox', { name: 'Markdown 编辑器' })).toHaveValue(
-      '# Next\n\nNext body',
-    )
-
-    await user.click(screen.getByRole('tab', { name: 'guide' }))
-
-    await waitFor(() => {
-      expect(screen.getByRole('tab', { name: 'guide' })).toHaveAttribute('aria-selected', 'true')
-    })
-
-    expect(bridgeMocks.saveState).toHaveBeenCalledWith(
-      'notes',
-      expect.objectContaining({
-        openDocumentPaths: ['docs/guide.md', 'docs/next.md'],
-        activeDocumentPath: 'docs/guide.md',
-        activeMode: 'split',
-        regularViewState: 'editable',
-      }),
-    )
   })
 })

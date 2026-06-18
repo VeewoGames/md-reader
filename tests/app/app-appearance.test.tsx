@@ -118,7 +118,7 @@ describe('App appearance preferences', () => {
 
     const { container } = render(<App />)
 
-    await screen.findByRole('tab', { name: 'guide.md' })
+    await screen.findByRole('tab', { name: 'guide' })
 
     await waitFor(() => {
       const shell = container.querySelector('.app-shell') as HTMLElement | null

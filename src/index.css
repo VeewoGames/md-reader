@@ -133,19 +133,44 @@ select {
 }
 
 .topbar__tab {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 26px;
-  align-items: center;
+  display: block;
   flex: 1 1 140px;
   min-width: 0;
   max-width: 220px;
   height: 34px;
-  padding: 0 3px;
+  padding: 0;
   border: 1px solid rgba(116, 95, 71, 0.1);
   border-radius: 12px;
   background: rgba(111, 93, 74, 0.08);
   box-shadow: none;
   position: relative;
+  transition:
+    transform 160ms ease,
+    background-color 140ms ease,
+    border-color 140ms ease;
+}
+
+.topbar__tab[data-dragging='true'] {
+  z-index: 2;
+  box-shadow: 0 10px 24px rgba(62, 44, 28, 0.18);
+  transition: none;
+  will-change: transform;
+}
+
+.topbar__tab[data-shifting='true'] {
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease;
+  will-change: transform;
+}
+
+.topbar__tab[data-settling='true'] {
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease;
+}
+
+.topbar__tab[data-settling-dragged='true'] {
   transition:
     background-color 140ms ease,
     border-color 140ms ease;
@@ -187,26 +212,28 @@ select {
 }
 
 .topbar__tab-button {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
+  position: relative;
+  display: block;
+  width: 100%;
   height: 100%;
-  padding: 0 10px;
+  padding: 0;
   border-radius: 10px;
   cursor: pointer;
 }
 
 .topbar__tab-close {
+  position: absolute;
+  top: 50%;
+  right: 5px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 24px;
   height: 24px;
-  margin-right: 1px;
   border-radius: 999px;
   cursor: pointer;
   transition: background-color 140ms ease;
+  transform: translateY(-50%);
 }
 
 .topbar__tab:not([data-active='true']) .topbar__tab-button:hover {
@@ -226,19 +253,46 @@ select {
 }
 
 .topbar__tab-label {
+  position: absolute;
+  top: 50%;
+  left: 16px;
+  right: 34px;
+  display: block;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  line-height: 1.2;
+  text-align: center;
   font-size: 0.83rem;
+  transform: translateY(-50%);
+}
+
+.topbar__tab-tooltip {
+  position: fixed;
+  z-index: 40;
+  max-width: min(420px, calc(100vw - 24px));
+  padding: 10px 14px;
+  border-radius: 14px;
+  background: rgba(24, 24, 27, 0.96);
+  color: #f8fafc;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.32);
+  font-size: 0.95rem;
+  line-height: 1.35;
+  transform: translateX(-50%);
+  pointer-events: none;
+  white-space: nowrap;
 }
 
 .topbar__tab-state {
+  position: absolute;
+  top: 50%;
+  left: 14px;
   width: 8px;
   height: 8px;
-  flex: 0 0 8px;
   border-radius: 999px;
   background: transparent;
+  transform: translateY(-50%);
 }
 
 .topbar__tab-state[data-state='typing'],

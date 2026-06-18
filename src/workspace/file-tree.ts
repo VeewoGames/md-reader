@@ -60,26 +60,28 @@ export function filterFileTree(nodes: FileTreeNode[], query: string): FileTreeNo
     return nodes
   }
 
-  return nodes.flatMap((node) => {
+  return nodes.reduce<FileTreeNode[]>((result, node) => {
     const matchesNode =
       node.name.toLocaleLowerCase().includes(normalizedQuery) ||
       node.path.toLocaleLowerCase().includes(normalizedQuery)
 
     if (node.kind === 'file') {
-      return matchesNode ? [node] : []
+      if (matchesNode) {
+        result.push(node)
+      }
+      return result
     }
 
     const filteredChildren = matchesNode ? node.children : filterFileTree(node.children, normalizedQuery)
 
     if (filteredChildren.length === 0) {
-      return []
+      return result
     }
 
-    return [
-      {
+    result.push({
         ...node,
         children: filteredChildren,
-      } satisfies FileTreeDirectoryNode,
-    ]
-  })
+      } satisfies FileTreeDirectoryNode)
+    return result
+  }, [])
 }

@@ -276,7 +276,7 @@ describe('App autosave transitions', () => {
       '# 第二篇\n\n第二篇内容',
     )
 
-    await user.click(screen.getByRole('tab', { name: 'guide.md' }))
+    await user.click(screen.getByRole('tab', { name: 'guide' }))
 
     expect(screen.getByRole('textbox', { name: '可视 Markdown 编辑器' })).toHaveValue(
       '# 当前文档已改动',
@@ -362,7 +362,7 @@ describe('App autosave transitions', () => {
     expect(screen.getByRole('textbox', { name: '可视 Markdown 编辑器' })).toHaveValue(
       '# 第二篇\n\n第二篇内容',
     )
-    expect(screen.getByRole('tab', { name: 'next.md' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tab', { name: 'next' })).toHaveAttribute('aria-selected', 'true')
   })
 
   it('requires a session-level save gate before restarting service when any tab is dirty', async () => {
@@ -469,7 +469,7 @@ describe('App autosave transitions', () => {
     await user.clear(editor)
     await user.type(editor, '# 第一篇待保存')
     await user.click(screen.getByRole('button', { name: 'next.md' }))
-    await user.click(screen.getByRole('button', { name: '关闭标签：guide.md' }))
+    await user.click(screen.getByRole('button', { name: '关闭标签：guide' }))
 
     expect(screen.getByRole('dialog', { name: '关闭未保存标签' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '保存' })).toBeInTheDocument()
@@ -489,8 +489,8 @@ describe('App autosave transitions', () => {
       )
     })
 
-    expect(screen.queryByRole('tab', { name: 'guide.md' })).not.toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: 'next.md' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.queryByRole('tab', { name: 'guide' })).not.toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'next' })).toHaveAttribute('aria-selected', 'true')
   })
 
   it('does not autosave during composition until composition ends', async () => {

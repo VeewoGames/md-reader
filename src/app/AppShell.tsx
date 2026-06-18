@@ -45,6 +45,7 @@ interface AppShellProps {
   onToggleRegularLock: () => void
   onTabSelect: (tabId: string) => void
   onTabClose: (tabId: string) => void
+  onTabReorder: (nextOrderedTabIds: string[]) => void
   onRestartService?: () => void
   onStopService?: () => void
   onDocumentSelect: (path: string) => void
@@ -97,6 +98,7 @@ export function AppShell(props: AppShellProps) {
         onToggleRegularLock={props.onToggleRegularLock}
         onTabSelect={props.onTabSelect}
         onTabClose={props.onTabClose}
+        onTabReorder={props.onTabReorder}
         onRestartService={props.onRestartService}
         onStopService={props.onStopService}
         documentFontSize={documentFontSize}
