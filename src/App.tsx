@@ -234,6 +234,8 @@ function App() {
   const [statusMessage, setStatusMessage] = useState<string | null>('还没有接入任何 Markdown 项目')
   const [sidebarWidth, setSidebarWidth] = useState(280)
   const [outlineWidth, setOutlineWidth] = useState(320)
+  const [expandedFileNodes, setExpandedFileNodes] = useState<string[]>([])
+  const [hasPersistedExpandedFileNodes, setHasPersistedExpandedFileNodes] = useState(false)
   const [documentFontSize, setDocumentFontSize] = useState(16)
   const [documentPageWidth, setDocumentPageWidth] = useState<PageWidthMode>('narrow')
   const [documentLineHeight, setDocumentLineHeight] = useState<DocumentLineHeight>(1.6)
@@ -415,6 +417,8 @@ function App() {
       )
       setSidebarWidth(280)
       setOutlineWidth(320)
+      setExpandedFileNodes([])
+      setHasPersistedExpandedFileNodes(false)
       setDocumentFontSize(16)
       setDocumentPageWidth('narrow')
       setDocumentLineHeight(1.6)
@@ -440,6 +444,10 @@ function App() {
       setProfileIds(nextProfileIds)
       setSidebarWidth(profile.layout.sidebarWidth)
       setOutlineWidth(profile.layout.outlineWidth)
+      setExpandedFileNodes(profile.navigation?.expandedFileNodes ?? [])
+      setHasPersistedExpandedFileNodes(
+        profile.navigation?.expandedFileNodesInitialized ?? false,
+      )
       setDocumentFontSize(profile.appearance?.fontSize ?? 16)
       setDocumentPageWidth(profile.appearance?.pageWidth ?? 'narrow')
       setDocumentLineHeight(profile.appearance?.lineHeight ?? 1.6)
@@ -1340,6 +1348,35 @@ function App() {
     await profileStore.saveProfile(activeProjectId, nextProfile)
   }
 
+  async function saveActiveProfileNavigation(nextNavigation: {
+    expandedFileNodes?: string[]
+    expandedFileNodesInitialized?: boolean
+  }) {
+    if (!activeProjectId) {
+      return
+    }
+
+    const profile =
+      workspaceSource === 'local-service'
+        ? await getProfileFromBridge(activeProjectId, activeProfileId, activeProfileIdRef.current)
+        : await profileStore.getProfile(activeProjectId, activeProfileId)
+
+    const nextProfile = {
+      ...profile,
+      navigation: {
+        ...profile.navigation,
+        ...nextNavigation,
+      },
+    }
+
+    if (workspaceSource === 'local-service') {
+      await saveProfileToBridge(activeProjectId, nextProfile, activeProfileIdRef.current)
+      return
+    }
+
+    await profileStore.saveProfile(activeProjectId, nextProfile)
+  }
+
   async function saveActiveProfileAppearance(nextAppearance: {
     fontSize?: number
     pageWidth?: PageWidthMode
@@ -1407,6 +1444,15 @@ function App() {
   async function handleDocumentLineHeightChange(nextLineHeight: DocumentLineHeight) {
     setDocumentLineHeight(nextLineHeight)
     await saveActiveProfileAppearance({ lineHeight: nextLineHeight })
+  }
+
+  async function handleExpandedFileNodesChange(nextExpandedFileNodes: string[]) {
+    setExpandedFileNodes(nextExpandedFileNodes)
+    setHasPersistedExpandedFileNodes(true)
+    await saveActiveProfileNavigation({
+      expandedFileNodes: nextExpandedFileNodes,
+      expandedFileNodesInitialized: true,
+    })
   }
 
   async function waitForLocalBridgeReady(timeoutMs = 6000) {
@@ -1545,6 +1591,8 @@ function App() {
         statusMessage={statusMessage}
         sidebarWidth={sidebarWidth}
         outlineWidth={outlineWidth}
+        expandedFileNodes={expandedFileNodes}
+        hasPersistedExpandedFileNodes={hasPersistedExpandedFileNodes}
         documentFontSize={documentFontSize}
         documentPageWidth={documentPageWidth}
         documentLineHeight={documentLineHeight}
@@ -1559,6 +1607,7 @@ function App() {
         onRestartService={handleRestartService}
         onStopService={handleStopService}
         onDocumentSelect={handleDocumentSelect}
+        onExpandedFileNodesChange={handleExpandedFileNodesChange}
         onDocumentFontSizeChange={handleDocumentFontSizeChange}
         onDocumentPageWidthChange={handleDocumentPageWidthChange}
         onDocumentLineHeightChange={handleDocumentLineHeightChange}

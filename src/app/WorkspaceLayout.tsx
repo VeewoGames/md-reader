@@ -12,6 +12,58 @@ import type { FileTreeNode } from '../workspace/file-tree-types'
 import { filterFileTree } from '../workspace/file-tree'
 import type { RegularViewState, WorkspaceMode } from './TopBar'
 
+function collectDirectoryPaths(nodes: FileTreeNode[], paths = new Set<string>()): Set<string> {
+  for (const node of nodes) {
+    if (node.kind !== 'directory') {
+      continue
+    }
+
+    paths.add(node.path)
+    collectDirectoryPaths(node.children, paths)
+  }
+
+  return paths
+}
+
+function createDefaultExpandedDirectories(
+  fileTree: FileTreeNode[],
+  currentDocumentPath: string | null,
+): Set<string> {
+  const next = new Set<string>()
+
+  for (const node of fileTree) {
+    if (node.kind === 'directory') {
+      next.add(node.path)
+    }
+  }
+
+  if (!currentDocumentPath) {
+    return next
+  }
+
+  const segments = currentDocumentPath.split('/').filter(Boolean)
+
+  for (let index = 0; index < segments.length - 1; index += 1) {
+    next.add(segments.slice(0, index + 1).join('/'))
+  }
+
+  return next
+}
+
+function createInitialExpandedDirectories(
+  fileTree: FileTreeNode[],
+  currentDocumentPath: string | null,
+  persistedExpandedDirectories: string[],
+  hasPersistedExpandedDirectories: boolean,
+): Set<string> {
+  const availableDirectories = collectDirectoryPaths(fileTree)
+  const sourceDirectories = hasPersistedExpandedDirectories
+    ? persistedExpandedDirectories
+    : [...createDefaultExpandedDirectories(fileTree, currentDocumentPath)]
+
+  return new Set(sourceDirectories.filter((path) => availableDirectories.has(path)))
+}
+
 interface WorkspaceLayoutProps {
   mode: WorkspaceMode
   regularViewState: RegularViewState
@@ -23,8 +75,11 @@ interface WorkspaceLayoutProps {
   statusMessage: string | null
   sidebarWidth: number
   outlineWidth: number
+  persistedExpandedDirectories?: string[]
+  hasPersistedExpandedDirectories?: boolean
   hasProjects: boolean
   onDocumentSelect: (path: string) => void
+  onExpandedDirectoriesChange?: (paths: string[]) => void | Promise<void>
   onEditingDocumentContentChange?: (content: string) => void
   onEditingCompositionStart?: () => void
   onEditingCompositionEnd?: () => void
@@ -40,8 +95,6 @@ function FileTreeBranch({
   searchActive,
   currentDocumentPath,
   expandedDirectories,
-  forcedExpandedDirectories,
-  collapsedForcedDirectories,
   onToggleDirectory,
   onDocumentSelect,
 }: {
@@ -50,8 +103,6 @@ function FileTreeBranch({
   searchActive: boolean
   currentDocumentPath: string | null
   expandedDirectories: Set<string>
-  forcedExpandedDirectories: Set<string>
-  collapsedForcedDirectories: Set<string>
   onToggleDirectory: (path: string) => void
   onDocumentSelect: (path: string) => void
 }) {
@@ -61,11 +112,7 @@ function FileTreeBranch({
         <li key={node.id} className="file-tree__item">
           {node.kind === 'directory' ? (
             (() => {
-              const isForcedExpanded = forcedExpandedDirectories.has(node.path)
-              const isExpanded =
-                searchActive ||
-                expandedDirectories.has(node.path) ||
-                (isForcedExpanded && !collapsedForcedDirectories.has(node.path))
+              const isExpanded = searchActive || expandedDirectories.has(node.path)
               const isCurrentBranch =
                 currentDocumentPath != null &&
                 (currentDocumentPath === node.path || currentDocumentPath.startsWith(`${node.path}/`))
@@ -91,8 +138,6 @@ function FileTreeBranch({
                         searchActive={searchActive}
                         currentDocumentPath={currentDocumentPath}
                         expandedDirectories={expandedDirectories}
-                        forcedExpandedDirectories={forcedExpandedDirectories}
-                        collapsedForcedDirectories={collapsedForcedDirectories}
                         onToggleDirectory={onToggleDirectory}
                         onDocumentSelect={onDocumentSelect}
                       />
@@ -131,8 +176,11 @@ export function WorkspaceLayout({
   statusMessage,
   sidebarWidth,
   outlineWidth,
+  persistedExpandedDirectories = [],
+  hasPersistedExpandedDirectories = false,
   hasProjects,
   onDocumentSelect,
+  onExpandedDirectoriesChange,
   onEditingDocumentContentChange,
   onEditingCompositionStart,
   onEditingCompositionEnd,
@@ -145,14 +193,12 @@ export function WorkspaceLayout({
   const activeDocumentContent =
     mode === 'split' ? (editingDocumentContent ?? currentDocumentContent) : currentDocumentContent
   const [expandedDirectories, setExpandedDirectories] = useState<Set<string>>(new Set())
-  const [collapsedForcedDirectories, setCollapsedForcedDirectories] = useState<Set<string>>(new Set())
   const [fileSearchQuery, setFileSearchQuery] = useState('')
   const [documentHeadings, setDocumentHeadings] = useState<MarkdownHeading[]>([])
   const [activeHeadingId, setActiveHeadingId] = useState<string | null>(null)
   const documentRef = useRef<HTMLElement | null>(null)
   const canvasRef = useRef<HTMLDivElement | null>(null)
   const outlineRef = useRef<HTMLDivElement | null>(null)
-  const forcedExpandedDirectories = new Set<string>()
   const minSidebarWidth = 220
   const maxSidebarWidth = 520
   const minOutlineWidth = 220
@@ -161,31 +207,16 @@ export function WorkspaceLayout({
   const isFilteringFiles = deferredFileSearchQuery.trim().length > 0
   const visibleFileTree = filterFileTree(fileTree, deferredFileSearchQuery)
 
-  if (currentDocumentPath) {
-    const segments = currentDocumentPath.split('/').filter(Boolean)
-
-    for (let index = 0; index < segments.length - 1; index += 1) {
-      forcedExpandedDirectories.add(segments.slice(0, index + 1).join('/'))
-    }
-  }
-
   useEffect(() => {
-    setExpandedDirectories((previous) => {
-      const next = new Set(previous)
-
-      for (const node of fileTree) {
-        if (node.kind === 'directory') {
-          next.add(node.path)
-        }
-      }
-
-      return next
-    })
-  }, [fileTree])
-
-  useEffect(() => {
-    setCollapsedForcedDirectories(new Set())
-  }, [currentDocumentPath])
+    setExpandedDirectories(
+      createInitialExpandedDirectories(
+        fileTree,
+        currentDocumentPath,
+        persistedExpandedDirectories,
+        hasPersistedExpandedDirectories,
+      ),
+    )
+  }, [fileTree, currentDocumentPath, persistedExpandedDirectories, hasPersistedExpandedDirectories])
 
   useEffect(() => {
     if (!activeDocumentContent) {
@@ -344,21 +375,6 @@ export function WorkspaceLayout({
   }, [activeHeadingId])
 
   function handleToggleDirectory(path: string) {
-    if (forcedExpandedDirectories.has(path)) {
-      setCollapsedForcedDirectories((previous) => {
-        const next = new Set(previous)
-
-        if (next.has(path)) {
-          next.delete(path)
-        } else {
-          next.add(path)
-        }
-
-        return next
-      })
-      return
-    }
-
     setExpandedDirectories((previous) => {
       const next = new Set(previous)
 
@@ -368,6 +384,7 @@ export function WorkspaceLayout({
         next.add(path)
       }
 
+      void onExpandedDirectoriesChange?.([...next].sort())
       return next
     })
   }
@@ -559,8 +576,6 @@ export function WorkspaceLayout({
                 searchActive={isFilteringFiles}
                 currentDocumentPath={currentDocumentPath}
                 expandedDirectories={expandedDirectories}
-                forcedExpandedDirectories={forcedExpandedDirectories}
-                collapsedForcedDirectories={collapsedForcedDirectories}
                 onToggleDirectory={handleToggleDirectory}
                 onDocumentSelect={onDocumentSelect}
               />

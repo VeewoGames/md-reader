@@ -21,6 +21,7 @@ function createDefaultProfile(profileId = "default") {
     },
     navigation: {
       expandedFileNodes: [],
+      expandedFileNodesInitialized: false,
       expandedHeadingNodes: {},
     },
   };
@@ -46,6 +47,9 @@ function normalizeProfile(profileId, profile = {}) {
       ...fallback.navigation,
       ...(profile.navigation ?? {}),
       expandedFileNodes: profile.navigation?.expandedFileNodes ?? fallback.navigation.expandedFileNodes,
+      expandedFileNodesInitialized:
+        profile.navigation?.expandedFileNodesInitialized ??
+        fallback.navigation.expandedFileNodesInitialized,
       expandedHeadingNodes:
         profile.navigation?.expandedHeadingNodes ?? fallback.navigation.expandedHeadingNodes,
     },

@@ -202,4 +202,35 @@ describe('App session restore', () => {
       }),
     )
   })
+
+  it('restores a previously collapsed root directory from the saved profile navigation state', async () => {
+    bridgeMocks.getProfileFromBridge.mockResolvedValueOnce({
+      id: 'default',
+      appearance: {
+        theme: 'system',
+        fontSize: 16,
+        pageWidth: 'narrow',
+      },
+      layout: {
+        sidebarWidth: 280,
+        outlineWidth: 320,
+        sidebarCollapsed: false,
+        outlineCollapsed: false,
+      },
+      navigation: {
+        expandedFileNodes: [],
+        expandedFileNodesInitialized: true,
+        expandedHeadingNodes: {},
+      },
+    })
+
+    render(<App />)
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'docs' })).toHaveAttribute('aria-expanded', 'false')
+    })
+
+    expect(screen.queryByRole('button', { name: 'guide.md' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'next.md' })).not.toBeInTheDocument()
+  })
 })

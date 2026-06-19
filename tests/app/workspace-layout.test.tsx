@@ -599,4 +599,66 @@ describe('WorkspaceLayout outline navigation', () => {
     expect(screen.queryByRole('button', { name: 'guide.md' })).not.toBeInTheDocument()
   })
 
+  it('restores persisted directory expansion state exactly when a saved preference exists', () => {
+    render(
+      <WorkspaceLayout
+        mode="regular"
+        regularViewState="locked"
+        fileTree={buildFileTree(['docs/guides/guide.md', 'notes/todo.md'])}
+        currentDocumentPath="docs/guides/guide.md"
+        currentDocumentContent={'# 标题\n\n正文'}
+        statusMessage="当前项目：Notes"
+        sidebarWidth={280}
+        outlineWidth={320}
+        persistedExpandedDirectories={[]}
+        hasPersistedExpandedDirectories
+        hasProjects
+        onDocumentSelect={() => {}}
+        onSidebarWidthChange={() => {}}
+        onSidebarWidthCommit={() => {}}
+        onOutlineWidthChange={() => {}}
+        onOutlineWidthCommit={() => {}}
+      />,
+    )
+
+    expect(screen.getByRole('button', { name: 'docs' })).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.getByRole('button', { name: 'notes' })).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByRole('button', { name: 'guide.md' })).not.toBeInTheDocument()
+  })
+
+  it('reports expanded directory changes so the caller can persist them', async () => {
+    const user = userEvent.setup()
+    const onExpandedDirectoriesChange = vi.fn()
+
+    render(
+      <WorkspaceLayout
+        mode="regular"
+        regularViewState="locked"
+        fileTree={buildFileTree(['docs/guides/guide.md'])}
+        currentDocumentPath={null}
+        currentDocumentContent={null}
+        statusMessage="当前项目：Notes"
+        sidebarWidth={280}
+        outlineWidth={320}
+        persistedExpandedDirectories={['docs']}
+        hasPersistedExpandedDirectories
+        hasProjects
+        onDocumentSelect={() => {}}
+        onExpandedDirectoriesChange={onExpandedDirectoriesChange}
+        onSidebarWidthChange={() => {}}
+        onSidebarWidthCommit={() => {}}
+        onOutlineWidthChange={() => {}}
+        onOutlineWidthCommit={() => {}}
+      />,
+    )
+
+    await user.click(screen.getByRole('button', { name: 'guides' }))
+
+    expect(onExpandedDirectoriesChange).toHaveBeenCalledWith(['docs', 'docs/guides'])
+
+    await user.click(screen.getByRole('button', { name: 'guides' }))
+
+    expect(onExpandedDirectoriesChange).toHaveBeenLastCalledWith(['docs'])
+  })
+
 })

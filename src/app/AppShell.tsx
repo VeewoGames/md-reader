@@ -35,6 +35,8 @@ interface AppShellProps {
   statusMessage: string | null
   sidebarWidth: number
   outlineWidth: number
+  expandedFileNodes?: string[]
+  hasPersistedExpandedFileNodes?: boolean
   documentFontSize?: number
   documentPageWidth?: PageWidthMode
   documentLineHeight?: DocumentLineHeight
@@ -49,6 +51,7 @@ interface AppShellProps {
   onRestartService?: () => void
   onStopService?: () => void
   onDocumentSelect: (path: string) => void
+  onExpandedFileNodesChange?: (paths: string[]) => void | Promise<void>
   onDocumentFontSizeChange?: (fontSize: number) => void
   onDocumentPageWidthChange?: (pageWidth: PageWidthMode) => void
   onDocumentLineHeightChange?: (lineHeight: DocumentLineHeight) => void
@@ -120,8 +123,11 @@ export function AppShell(props: AppShellProps) {
         statusMessage={props.statusMessage}
         sidebarWidth={props.sidebarWidth}
         outlineWidth={props.outlineWidth}
+        persistedExpandedDirectories={props.expandedFileNodes}
+        hasPersistedExpandedDirectories={props.hasPersistedExpandedFileNodes}
         hasProjects={props.projects.length > 0}
         onDocumentSelect={props.onDocumentSelect}
+        onExpandedDirectoriesChange={props.onExpandedFileNodesChange}
         onEditingDocumentContentChange={props.onEditingDocumentContentChange}
         onEditingCompositionStart={props.onEditingCompositionStart}
         onEditingCompositionEnd={props.onEditingCompositionEnd}
