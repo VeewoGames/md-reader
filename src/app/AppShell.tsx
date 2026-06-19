@@ -65,7 +65,8 @@ export function AppShell(props: AppShellProps) {
   const documentFontSize = props.documentFontSize ?? 16
   const documentPageWidth = props.documentPageWidth ?? 'narrow'
   const documentLineHeight = props.documentLineHeight ?? 1.6
-  const documentMaxWidth = documentPageWidth === 'wide' ? '960px' : '720px'
+  const documentMaxWidth =
+    documentPageWidth === 'full' ? 'none' : documentPageWidth === 'wide' ? '960px' : '720px'
 
   return (
     <div

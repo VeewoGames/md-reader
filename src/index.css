@@ -948,7 +948,7 @@ select {
 
 .markdown-document,
 .visual-markdown-editor .editor {
-  width: min(100%, var(--doc-max-width));
+  width: 100%;
   max-width: var(--doc-max-width);
   margin: 0 auto;
   font-family: var(--doc-font-family);

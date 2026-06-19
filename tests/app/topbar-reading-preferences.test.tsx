@@ -77,13 +77,14 @@ describe('TopBar reading preferences', () => {
     expect(screen.getByRole('button', { name: '17 px' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '1.5' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '2.0' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '全屏' })).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: '17 px' }))
-    await user.click(screen.getByRole('button', { name: '宽版' }))
+    await user.click(screen.getByRole('button', { name: '全屏' }))
     await user.click(screen.getByRole('button', { name: '1.8' }))
 
     expect(onFontSizeChange).toHaveBeenCalledWith(17)
-    expect(onPageWidthChange).toHaveBeenCalledWith('wide')
+    expect(onPageWidthChange).toHaveBeenCalledWith('full')
     expect(onLineHeightChange).toHaveBeenCalledWith(1.8)
   })
 })

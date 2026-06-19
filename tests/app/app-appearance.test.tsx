@@ -181,4 +181,36 @@ describe('App appearance preferences', () => {
       expect(shell?.style.getPropertyValue('--doc-body-line-height')).toBe('1.8')
     })
   })
+
+  it('removes the document max-width cap when page width is full', async () => {
+    bridgeMocks.getProfileFromBridge.mockResolvedValue({
+      id: 'default',
+      appearance: {
+        theme: 'system',
+        fontSize: 18,
+        pageWidth: 'full',
+        lineHeight: 1.6,
+      },
+      layout: {
+        sidebarWidth: 280,
+        outlineWidth: 320,
+        sidebarCollapsed: false,
+        outlineCollapsed: false,
+      },
+      navigation: {
+        expandedFileNodes: [],
+        expandedHeadingNodes: {},
+      },
+    })
+
+    const { container } = render(<App />)
+
+    await screen.findByRole('tab', { name: 'guide' })
+
+    await waitFor(() => {
+      const shell = container.querySelector('.app-shell') as HTMLElement | null
+      expect(shell).not.toBeNull()
+      expect(shell?.style.getPropertyValue('--doc-max-width')).toBe('none')
+    })
+  })
 })

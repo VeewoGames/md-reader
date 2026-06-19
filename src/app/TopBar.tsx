@@ -74,6 +74,7 @@ const FONT_SIZE_OPTIONS = [14, 15, 16, 17, 18] as const
 const PAGE_WIDTH_OPTIONS: Array<{ value: PageWidthMode; label: string }> = [
   { value: 'narrow', label: '窄版' },
   { value: 'wide', label: '宽版' },
+  { value: 'full', label: '全屏' },
 ]
 const LINE_HEIGHT_OPTIONS: Array<{ value: DocumentLineHeight; label: string }> = [
   { value: 1.5, label: '1.5' },

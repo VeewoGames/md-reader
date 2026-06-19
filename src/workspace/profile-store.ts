@@ -1,7 +1,7 @@
 import type { KeyValueStore } from '../shared/key-value-store'
 import { STORAGE_KEYS } from '../shared/storage-keys'
 
-export type PageWidthMode = 'narrow' | 'wide'
+export type PageWidthMode = 'narrow' | 'wide' | 'full'
 export type ThemeMode = 'light' | 'dark' | 'system'
 export type DocumentLineHeight = number
 
