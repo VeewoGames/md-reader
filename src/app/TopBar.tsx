@@ -1,6 +1,8 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
 import {
   ChevronDown,
+  Eye,
+  EyeOff,
   Lock,
   LockOpen,
   PanelTop,
@@ -52,6 +54,8 @@ interface TopBarProps {
   onProfileChange: (profileId: string) => void
   onModeChange: (mode: WorkspaceMode) => void
   onToggleRegularLock: () => void
+  showHiddenItems?: boolean
+  onToggleShowHiddenItems?: () => void
   onTabSelect: (tabId: string) => void
   onTabClose: (tabId: string) => void
   onTabReorder?: (nextOrderedTabIds: string[]) => void
@@ -350,6 +354,8 @@ export function TopBar({
   onProfileChange,
   onModeChange,
   onToggleRegularLock,
+  showHiddenItems = false,
+  onToggleShowHiddenItems,
   onTabSelect,
   onTabClose,
   onTabReorder,
@@ -843,6 +849,19 @@ export function TopBar({
               </button>
             ) : null}
 
+            <button
+              type="button"
+              className="topbar__lock-toggle topbar__hidden-toggle"
+              aria-pressed={showHiddenItems}
+              aria-label="显示隐藏项"
+              title="显示隐藏项"
+              onClick={onToggleShowHiddenItems}
+            >
+              <span className="topbar__lock-icon" aria-hidden="true">
+                {showHiddenItems ? <Eye /> : <EyeOff />}
+              </span>
+            </button>
+
             <div className="topbar__modes" role="group" aria-label="模式切换">
               {(Object.keys(MODE_LABELS) as WorkspaceMode[]).map((nextMode) => (
                 <button
@@ -888,7 +907,7 @@ export function TopBar({
             </button>
             <button
               type="button"
-              className="topbar__service-button"
+              className="topbar__service-button topbar__service-button--danger"
               aria-label="关闭服务"
               title="关闭服务"
               disabled={isServiceActionPending}

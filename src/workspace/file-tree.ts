@@ -1,4 +1,9 @@
-import type { FileTreeDirectoryNode, FileTreeNode } from './file-tree-types'
+import type {
+  FileTreeDirectoryNode,
+  FileTreeNode,
+  VisibleFileTreeNode,
+  VisibleFileTreeResult,
+} from './file-tree-types'
 
 export function buildFileTree(paths: string[]): FileTreeNode[] {
   const root: FileTreeDirectoryNode = {
@@ -84,4 +89,80 @@ export function filterFileTree(nodes: FileTreeNode[], query: string): FileTreeNo
       } satisfies FileTreeDirectoryNode)
     return result
   }, [])
+}
+
+function listAncestorPaths(path: string): string[] {
+  const segments = path.split('/').filter(Boolean)
+  return segments.slice(0, -1).map((_, index) => segments.slice(0, index + 1).join('/'))
+}
+
+export function isPathExplicitlyHidden(path: string, hiddenPaths: Set<string>): boolean {
+  return hiddenPaths.has(path)
+}
+
+export function isPathHiddenByAncestor(path: string, hiddenPaths: Set<string>): boolean {
+  return listAncestorPaths(path).some((ancestorPath) => hiddenPaths.has(ancestorPath))
+}
+
+export function createVisibleFileTree({
+  sourceNodes,
+  hiddenPaths,
+  showHiddenItems,
+}: {
+  sourceNodes: FileTreeNode[]
+  hiddenPaths: string[]
+  showHiddenItems: boolean
+}): VisibleFileTreeResult {
+  const hiddenPathSet = new Set(hiddenPaths)
+  const availableDirectoryPaths = new Set<string>()
+
+  function visit(node: FileTreeNode): VisibleFileTreeNode | null {
+    const isExplicitlyHidden = isPathExplicitlyHidden(node.path, hiddenPathSet)
+    const isHiddenByAncestor = isPathHiddenByAncestor(node.path, hiddenPathSet)
+    const isHidden = isExplicitlyHidden || isHiddenByAncestor
+    const isVisibleInCurrentMode = showHiddenItems || !isHidden
+
+    if (node.kind === 'file') {
+      if (!isVisibleInCurrentMode) {
+        return null
+      }
+
+      return {
+        ...node,
+        meta: {
+          isExplicitlyHidden,
+          isHiddenByAncestor,
+          isVisibleInCurrentMode,
+        },
+      }
+    }
+
+    availableDirectoryPaths.add(node.path)
+    const nextChildren = node.children
+      .map(visit)
+      .filter((child): child is VisibleFileTreeNode => child != null)
+
+    if (!isVisibleInCurrentMode && nextChildren.length === 0) {
+      return null
+    }
+
+    return {
+      ...node,
+      children: nextChildren,
+      meta: {
+        isExplicitlyHidden,
+        isHiddenByAncestor,
+        isVisibleInCurrentMode,
+      },
+    }
+  }
+
+  const visibleNodes = sourceNodes
+    .map(visit)
+    .filter((node): node is VisibleFileTreeNode => node != null)
+
+  return {
+    visibleNodes,
+    availableDirectoryPaths: [...availableDirectoryPaths],
+  }
 }

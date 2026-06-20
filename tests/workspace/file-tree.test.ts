@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { buildFileTree, filterFileTree } from '../../src/workspace/file-tree'
+import { buildFileTree, createVisibleFileTree, filterFileTree } from '../../src/workspace/file-tree'
 
 describe('buildFileTree', () => {
   it('builds nested directory nodes from markdown-relative paths', () => {
@@ -121,5 +121,73 @@ describe('filterFileTree', () => {
 
     expect(filterFileTree(tree, '')).toEqual(tree)
     expect(filterFileTree(tree, '   ')).toEqual(tree)
+  })
+})
+
+describe('createVisibleFileTree', () => {
+  it('hides descendants when an ancestor path is explicitly hidden', () => {
+    const tree = buildFileTree(['docs/guide.md', 'docs/private/secret.md'])
+    const visibleTree = createVisibleFileTree({
+      sourceNodes: tree,
+      hiddenPaths: ['docs/private'],
+      showHiddenItems: false,
+    })
+
+    expect(visibleTree.visibleNodes).toEqual([
+      expect.objectContaining({
+        path: 'docs',
+        children: [expect.objectContaining({ path: 'docs/guide.md' })],
+      }),
+    ])
+  })
+
+  it('keeps hidden descendants in the rendered tree when showHiddenItems is true', () => {
+    const tree = buildFileTree(['docs/guide.md', 'docs/private/secret.md'])
+    const visibleTree = createVisibleFileTree({
+      sourceNodes: tree,
+      hiddenPaths: ['docs/private'],
+      showHiddenItems: true,
+    })
+
+    expect(visibleTree.visibleNodes).toEqual([
+      expect.objectContaining({
+        path: 'docs',
+        children: [
+          expect.objectContaining({ path: 'docs/guide.md' }),
+          expect.objectContaining({
+            path: 'docs/private',
+            meta: expect.objectContaining({ isExplicitlyHidden: true }),
+            children: [
+              expect.objectContaining({
+                path: 'docs/private/secret.md',
+                meta: expect.objectContaining({ isHiddenByAncestor: true }),
+              }),
+            ],
+          }),
+        ],
+      }),
+    ])
+  })
+
+  it('does not mutate or prune the source tree when deriving a visible tree', () => {
+    const tree = buildFileTree(['docs/private/secret.md'])
+
+    createVisibleFileTree({
+      sourceNodes: tree,
+      hiddenPaths: ['docs/private'],
+      showHiddenItems: false,
+    })
+
+    expect(tree).toEqual([
+      expect.objectContaining({
+        path: 'docs',
+        children: [
+          expect.objectContaining({
+            path: 'docs/private',
+            children: [expect.objectContaining({ path: 'docs/private/secret.md' })],
+          }),
+        ],
+      }),
+    ])
   })
 })

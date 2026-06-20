@@ -1,5 +1,5 @@
 import { useDeferredValue, useEffect, useEffectEvent, useRef, useState, type CSSProperties } from 'react'
-import { FileText } from 'lucide-react'
+import { Eye, EyeOff, FileText } from 'lucide-react'
 
 import { findActiveHeadingId, type HeadingTarget } from './outline-active-heading'
 import { VisualMarkdownEditor } from '../editor/visual-markdown-editor'
@@ -8,32 +8,19 @@ import {
   extractMarkdownHeadings,
   type MarkdownHeading,
 } from '../markdown/heading-outline'
-import type { FileTreeNode } from '../workspace/file-tree-types'
+import type { VisibleFileTreeNode } from '../workspace/file-tree-types'
 import { filterFileTree } from '../workspace/file-tree'
 import type { RegularViewState, WorkspaceMode } from './TopBar'
 
-function collectDirectoryPaths(nodes: FileTreeNode[], paths = new Set<string>()): Set<string> {
-  for (const node of nodes) {
-    if (node.kind !== 'directory') {
-      continue
-    }
-
-    paths.add(node.path)
-    collectDirectoryPaths(node.children, paths)
-  }
-
-  return paths
-}
-
-function createDefaultExpandedDirectories(
-  fileTree: FileTreeNode[],
+export function createDefaultExpandedDirectories(
+  availableDirectoryPaths: string[],
   currentDocumentPath: string | null,
 ): Set<string> {
   const next = new Set<string>()
 
-  for (const node of fileTree) {
-    if (node.kind === 'directory') {
-      next.add(node.path)
+  for (const path of availableDirectoryPaths) {
+    if (!path.includes('/')) {
+      next.add(path)
     }
   }
 
@@ -50,24 +37,25 @@ function createDefaultExpandedDirectories(
   return next
 }
 
-function createInitialExpandedDirectories(
-  fileTree: FileTreeNode[],
+export function createInitialExpandedDirectories(
+  availableDirectoryPaths: string[],
   currentDocumentPath: string | null,
   persistedExpandedDirectories: string[],
   hasPersistedExpandedDirectories: boolean,
 ): Set<string> {
-  const availableDirectories = collectDirectoryPaths(fileTree)
   const sourceDirectories = hasPersistedExpandedDirectories
     ? persistedExpandedDirectories
-    : [...createDefaultExpandedDirectories(fileTree, currentDocumentPath)]
+    : [...createDefaultExpandedDirectories(availableDirectoryPaths, currentDocumentPath)]
 
+  const availableDirectories = new Set(availableDirectoryPaths)
   return new Set(sourceDirectories.filter((path) => availableDirectories.has(path)))
 }
 
 interface WorkspaceLayoutProps {
   mode: WorkspaceMode
   regularViewState: RegularViewState
-  fileTree: FileTreeNode[]
+  fileTree: VisibleFileTreeNode[]
+  availableDirectoryPaths?: string[]
   currentDocumentPath: string | null
   currentDocumentContent: string | null
   editingDocumentContent?: string | null
@@ -79,6 +67,9 @@ interface WorkspaceLayoutProps {
   hasPersistedExpandedDirectories?: boolean
   hasProjects: boolean
   onDocumentSelect: (path: string) => void
+  showHiddenItems?: boolean
+  onHidePath?: (path: string) => void
+  onUnhidePath?: (path: string) => void
   onExpandedDirectoriesChange?: (paths: string[]) => void | Promise<void>
   onEditingDocumentContentChange?: (content: string) => void
   onEditingCompositionStart?: () => void
@@ -89,7 +80,7 @@ interface WorkspaceLayoutProps {
   onOutlineWidthCommit: (width: number) => void | Promise<void>
 }
 
-function FileTreeBranch({
+export function WorkspaceFileTree({
   nodes,
   level,
   searchActive,
@@ -97,14 +88,20 @@ function FileTreeBranch({
   expandedDirectories,
   onToggleDirectory,
   onDocumentSelect,
+  showHiddenItems,
+  onHidePath,
+  onUnhidePath,
 }: {
-  nodes: FileTreeNode[]
+  nodes: VisibleFileTreeNode[]
   level: number
   searchActive: boolean
   currentDocumentPath: string | null
   expandedDirectories: Set<string>
   onToggleDirectory: (path: string) => void
   onDocumentSelect: (path: string) => void
+  showHiddenItems: boolean
+  onHidePath: (path: string) => void
+  onUnhidePath: (path: string) => void
 }) {
   return (
     <ul className="file-tree" data-level={level}>
@@ -116,23 +113,48 @@ function FileTreeBranch({
               const isCurrentBranch =
                 currentDocumentPath != null &&
                 (currentDocumentPath === node.path || currentDocumentPath.startsWith(`${node.path}/`))
+              const isHidden = node.meta.isExplicitlyHidden || node.meta.isHiddenByAncestor
+              const canUnhideDirectly = node.meta.isExplicitlyHidden && showHiddenItems
+              const shouldShowActionButton = !node.meta.isHiddenByAncestor || node.meta.isExplicitlyHidden
 
               return (
                 <>
-                  <button
-                    type="button"
-                    className="file-tree__directory"
-                    aria-expanded={isExpanded}
-                    data-current-branch={isCurrentBranch ? 'true' : undefined}
-                    onClick={() => onToggleDirectory(node.path)}
-                  >
-                    <span className="file-tree__chevron" aria-hidden="true" />
-                    <span className="file-tree__directory-name">{node.name}</span>
-                  </button>
+                  <div className="file-tree__row" data-hidden={isHidden ? 'true' : undefined}>
+                    <button
+                      type="button"
+                      className="file-tree__directory"
+                      aria-expanded={isExpanded}
+                      data-current-branch={isCurrentBranch ? 'true' : undefined}
+                      onClick={() => onToggleDirectory(node.path)}
+                    >
+                      <span className="file-tree__chevron" aria-hidden="true" />
+                      <span className="file-tree__directory-name">{node.name}</span>
+                    </button>
+                    {showHiddenItems && node.meta.isHiddenByAncestor && !node.meta.isExplicitlyHidden ? (
+                      <span className="file-tree__derived-hidden-indicator" aria-hidden="true" />
+                    ) : null}
+                    {shouldShowActionButton ? (
+                      <button
+                        type="button"
+                        className="file-tree__action"
+                        aria-label={canUnhideDirectly ? `显示 ${node.name}` : `隐藏 ${node.name}`}
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          if (canUnhideDirectly) {
+                            onUnhidePath(node.path)
+                            return
+                          }
+                          onHidePath(node.path)
+                        }}
+                      >
+                        {canUnhideDirectly ? <Eye /> : <EyeOff />}
+                      </button>
+                    ) : null}
+                  </div>
 
                   {isExpanded ? (
                     <div className="file-tree__children">
-                      <FileTreeBranch
+                      <WorkspaceFileTree
                         nodes={node.children}
                         level={level + 1}
                         searchActive={searchActive}
@@ -140,25 +162,56 @@ function FileTreeBranch({
                         expandedDirectories={expandedDirectories}
                         onToggleDirectory={onToggleDirectory}
                         onDocumentSelect={onDocumentSelect}
+                        showHiddenItems={showHiddenItems}
+                        onHidePath={onHidePath}
+                        onUnhidePath={onUnhidePath}
                       />
                     </div>
                   ) : null}
                 </>
               )
             })()
-          ) : (
-            <button
-              type="button"
-              className="file-tree__file"
-              aria-current={currentDocumentPath === node.path ? 'page' : undefined}
-              onClick={() => onDocumentSelect(node.path)}
-            >
-              <span className="file-tree__file-icon" aria-hidden="true">
-                <FileText />
-              </span>
-              <span className="file-tree__file-name">{node.name}</span>
-            </button>
-          )}
+          ) : (() => {
+            const isHidden = node.meta.isExplicitlyHidden || node.meta.isHiddenByAncestor
+            const canUnhideDirectly = node.meta.isExplicitlyHidden && showHiddenItems
+            const shouldShowActionButton = !node.meta.isHiddenByAncestor || node.meta.isExplicitlyHidden
+
+            return (
+              <div className="file-tree__row" data-hidden={isHidden ? 'true' : undefined}>
+                <button
+                  type="button"
+                  className="file-tree__file"
+                  aria-current={currentDocumentPath === node.path ? 'page' : undefined}
+                  onClick={() => onDocumentSelect(node.path)}
+                >
+                  <span className="file-tree__file-icon" aria-hidden="true">
+                    <FileText />
+                  </span>
+                  <span className="file-tree__file-name">{node.name}</span>
+                </button>
+                {showHiddenItems && node.meta.isHiddenByAncestor && !node.meta.isExplicitlyHidden ? (
+                  <span className="file-tree__derived-hidden-indicator" aria-hidden="true" />
+                ) : null}
+                {shouldShowActionButton ? (
+                  <button
+                    type="button"
+                    className="file-tree__action"
+                    aria-label={canUnhideDirectly ? `显示 ${node.name}` : `隐藏 ${node.name}`}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      if (canUnhideDirectly) {
+                        onUnhidePath(node.path)
+                        return
+                      }
+                      onHidePath(node.path)
+                    }}
+                  >
+                    {canUnhideDirectly ? <Eye /> : <EyeOff />}
+                  </button>
+                ) : null}
+              </div>
+            )
+          })()}
         </li>
       ))}
     </ul>
@@ -178,8 +231,12 @@ export function WorkspaceLayout({
   outlineWidth,
   persistedExpandedDirectories = [],
   hasPersistedExpandedDirectories = false,
+  availableDirectoryPaths = [],
   hasProjects,
   onDocumentSelect,
+  showHiddenItems = false,
+  onHidePath = () => {},
+  onUnhidePath = () => {},
   onExpandedDirectoriesChange,
   onEditingDocumentContentChange,
   onEditingCompositionStart,
@@ -205,18 +262,21 @@ export function WorkspaceLayout({
   const maxOutlineWidth = 420
   const deferredFileSearchQuery = useDeferredValue(fileSearchQuery)
   const isFilteringFiles = deferredFileSearchQuery.trim().length > 0
-  const visibleFileTree = filterFileTree(fileTree, deferredFileSearchQuery)
+  const visibleFileTree = filterFileTree(
+    fileTree,
+    deferredFileSearchQuery,
+  ) as VisibleFileTreeNode[]
 
   useEffect(() => {
     setExpandedDirectories(
       createInitialExpandedDirectories(
-        fileTree,
+        availableDirectoryPaths,
         currentDocumentPath,
         persistedExpandedDirectories,
         hasPersistedExpandedDirectories,
       ),
     )
-  }, [fileTree, currentDocumentPath, persistedExpandedDirectories, hasPersistedExpandedDirectories])
+  }, [availableDirectoryPaths, currentDocumentPath, persistedExpandedDirectories, hasPersistedExpandedDirectories])
 
   useEffect(() => {
     if (!activeDocumentContent) {
@@ -570,7 +630,7 @@ export function WorkspaceLayout({
           </div>
           <div className="panel__content panel__content--tree">
             {fileTree.length > 0 && visibleFileTree.length > 0 ? (
-              <FileTreeBranch
+              <WorkspaceFileTree
                 nodes={visibleFileTree}
                 level={0}
                 searchActive={isFilteringFiles}
@@ -578,6 +638,9 @@ export function WorkspaceLayout({
                 expandedDirectories={expandedDirectories}
                 onToggleDirectory={handleToggleDirectory}
                 onDocumentSelect={onDocumentSelect}
+                showHiddenItems={showHiddenItems}
+                onHidePath={onHidePath}
+                onUnhidePath={onUnhidePath}
               />
             ) : isFilteringFiles ? (
               <p className="panel__empty">没有匹配的文件</p>

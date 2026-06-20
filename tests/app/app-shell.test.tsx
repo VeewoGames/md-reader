@@ -1,9 +1,45 @@
+import { useEffect, useState } from 'react'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
+vi.mock('../../src/editor/visual-markdown-editor', () => ({
+  preloadVisualMarkdownEditor: vi.fn(),
+  VisualMarkdownEditor: ({ value, readonly }: { value: string; readonly?: boolean }) => {
+    const [isReady, setIsReady] = useState(false)
+    const lines = value.split(/\r?\n/)
+
+    useEffect(() => {
+      const timer = window.setTimeout(() => {
+        setIsReady(true)
+      }, 0)
+
+      return () => {
+        window.clearTimeout(timer)
+      }
+    }, [])
+
+    if (!isReady) {
+      return <div role="status">正在加载可视编辑器…</div>
+    }
+
+    return (
+      <div aria-label="可视 Markdown 编辑器" data-readonly={readonly ? 'true' : 'false'}>
+        {renderMockMarkdown(lines, true)}
+      </div>
+    )
+  },
+}))
+
+vi.mock('../../src/document-renderer/readonly-markdown-renderer', () => ({
+  ReadonlyMarkdownRenderer: ({ value }: { value: string }) => (
+    <article aria-label="只读 Markdown 渲染器">{renderMockMarkdown(value.split(/\r?\n/), true)}</article>
+  ),
+}))
+
 import App from '../../src/App'
 import { AppShell } from '../../src/app/AppShell'
+import { buildFileTree, createVisibleFileTree } from '../../src/workspace/file-tree'
 
 const defaultTabs = [
   {
@@ -14,6 +50,37 @@ const defaultTabs = [
     saveErrorMessage: null,
   },
 ]
+
+function createVisibleTree(paths: string[]) {
+  return createVisibleFileTree({
+    sourceNodes: buildFileTree(paths),
+    hiddenPaths: [],
+    showHiddenItems: false,
+  })
+}
+
+function renderMockMarkdown(lines: string[], attachHeadingIds = false) {
+  return lines.map((line, index) => {
+    const match = line.match(/^(#{1,6})\s+(.*)$/)
+
+    if (match) {
+      const HeadingTag = `h${match[1].length}` as keyof JSX.IntrinsicElements
+      const headingProps = attachHeadingIds ? { 'data-heading-id': match[2] } : {}
+
+      return (
+        <HeadingTag key={`heading-${index}`} {...headingProps}>
+          {match[2]}
+        </HeadingTag>
+      )
+    }
+
+    if (line.trim().length === 0) {
+      return null
+    }
+
+    return <p key={`paragraph-${index}`}>{line}</p>
+  })
+}
 
 describe('App', () => {
   it('renders an empty workspace state before any project is connected', () => {
@@ -46,22 +113,8 @@ describe('AppShell', () => {
         activeTabId="docs/README.md"
         mode="regular"
         regularViewState="locked"
-        fileTree={[
-          {
-            id: 'docs',
-            kind: 'directory',
-            name: 'docs',
-            path: 'docs',
-            children: [
-              {
-                id: 'docs/README.md',
-                kind: 'file',
-                name: 'README.md',
-                path: 'docs/README.md',
-              },
-            ],
-          },
-        ]}
+        fileTree={createVisibleTree(['docs/README.md']).visibleNodes}
+        availableDirectoryPaths={['docs']}
         currentDocumentPath="docs/README.md"
         currentDocumentContent={'# Readme\n\nHello world'}
         statusMessage="项目已接入"
@@ -122,30 +175,8 @@ describe('AppShell', () => {
         activeTabId={null}
         mode="regular"
         regularViewState="locked"
-        fileTree={[
-          {
-            id: 'docs',
-            kind: 'directory',
-            name: 'docs',
-            path: 'docs',
-            children: [
-              {
-                id: 'docs/guides',
-                kind: 'directory',
-                name: 'guides',
-                path: 'docs/guides',
-                children: [
-                  {
-                    id: 'docs/guides/intro.md',
-                    kind: 'file',
-                    name: 'intro.md',
-                    path: 'docs/guides/intro.md',
-                  },
-                ],
-              },
-            ],
-          },
-        ]}
+        fileTree={createVisibleTree(['docs/guides/intro.md']).visibleNodes}
+        availableDirectoryPaths={['docs', 'docs/guides']}
         currentDocumentPath={null}
         currentDocumentContent={null}
         statusMessage="项目已接入"
@@ -220,6 +251,7 @@ describe('AppShell', () => {
         mode="regular"
         regularViewState="locked"
         fileTree={[]}
+        availableDirectoryPaths={[]}
         currentDocumentPath="docs/README.md"
         currentDocumentContent={'# Readme'}
         statusMessage="项目已接入"
@@ -278,30 +310,8 @@ describe('AppShell', () => {
         activeTabId="docs/guides/intro.md"
         mode="regular"
         regularViewState="editable"
-        fileTree={[
-          {
-            id: 'docs',
-            kind: 'directory',
-            name: 'docs',
-            path: 'docs',
-            children: [
-              {
-                id: 'docs/guides',
-                kind: 'directory',
-                name: 'guides',
-                path: 'docs/guides',
-                children: [
-                  {
-                    id: 'docs/guides/intro.md',
-                    kind: 'file',
-                    name: 'intro.md',
-                    path: 'docs/guides/intro.md',
-                  },
-                ],
-              },
-            ],
-          },
-        ]}
+        fileTree={createVisibleTree(['docs/guides/intro.md']).visibleNodes}
+        availableDirectoryPaths={['docs', 'docs/guides']}
         currentDocumentPath="docs/guides/intro.md"
         currentDocumentContent={'# Intro'}
         statusMessage="项目已接入"
@@ -358,30 +368,8 @@ describe('AppShell', () => {
         activeTabId="docs/guides/intro.md"
         mode="regular"
         regularViewState="editable"
-        fileTree={[
-          {
-            id: 'docs',
-            kind: 'directory',
-            name: 'docs',
-            path: 'docs',
-            children: [
-              {
-                id: 'docs/guides',
-                kind: 'directory',
-                name: 'guides',
-                path: 'docs/guides',
-                children: [
-                  {
-                    id: 'docs/guides/intro.md',
-                    kind: 'file',
-                    name: 'intro.md',
-                    path: 'docs/guides/intro.md',
-                  },
-                ],
-              },
-            ],
-          },
-        ]}
+        fileTree={createVisibleTree(['docs/guides/intro.md']).visibleNodes}
+        availableDirectoryPaths={['docs', 'docs/guides']}
         currentDocumentPath="docs/guides/intro.md"
         currentDocumentContent={'# Intro'}
         statusMessage="项目已接入"
@@ -439,6 +427,7 @@ describe('AppShell', () => {
         mode="regular"
         regularViewState="locked"
         fileTree={[]}
+        availableDirectoryPaths={[]}
         currentDocumentPath="docs/README.md"
         currentDocumentContent={'# Readme'}
         statusMessage="项目已接入"

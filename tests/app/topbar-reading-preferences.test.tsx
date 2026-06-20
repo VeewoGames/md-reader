@@ -2,6 +2,19 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
+vi.mock('../../src/editor/visual-markdown-editor', () => ({
+  preloadVisualMarkdownEditor: vi.fn(),
+  VisualMarkdownEditor: ({ value }: { value: string }) => (
+    <div aria-label="可视 Markdown 编辑器">{value}</div>
+  ),
+}))
+
+vi.mock('../../src/document-renderer/readonly-markdown-renderer', () => ({
+  ReadonlyMarkdownRenderer: ({ value }: { value: string }) => (
+    <article aria-label="只读 Markdown 渲染器">{value}</article>
+  ),
+}))
+
 import { AppShell } from '../../src/app/AppShell'
 
 const defaultTabs = [
@@ -40,6 +53,7 @@ describe('TopBar reading preferences', () => {
         mode="regular"
         regularViewState="locked"
         fileTree={[]}
+        availableDirectoryPaths={[]}
         currentDocumentPath="docs/README.md"
         currentDocumentContent={'# Readme'}
         statusMessage="项目已接入"

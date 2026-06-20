@@ -4,7 +4,7 @@ import { AppShell } from './app/AppShell'
 import type { RegularViewState, WorkspaceMode } from './app/TopBar'
 import { createBrowserKeyValueStore } from './shared/key-value-store'
 import { STORAGE_KEYS } from './shared/storage-keys'
-import { buildFileTree } from './workspace/file-tree'
+import { buildFileTree, createVisibleFileTree } from './workspace/file-tree'
 import { createContentHash } from './shared/content-hash'
 import type { FileTreeNode } from './workspace/file-tree-types'
 import {
@@ -226,6 +226,8 @@ function App() {
   const [activeProfileId, setActiveProfileId] = useState('default')
   const [session, setSession] = useState<WorkspaceSession>(createEmptySession)
   const [fileTree, setFileTree] = useState<FileTreeNode[]>([])
+  const [hiddenPaths, setHiddenPaths] = useState<string[]>([])
+  const [showHiddenItems, setShowHiddenItems] = useState(false)
   const [isDocumentLoading, setIsDocumentLoading] = useState(false)
   const [workspaceSource, setWorkspaceSource] = useState<WorkspaceSource>('offline')
   const [isServiceActionPending, setIsServiceActionPending] = useState(false)
@@ -247,6 +249,11 @@ function App() {
   const editingDocumentContent = activeTab?.draftContent ?? null
   const currentDocumentMtimeMs = activeTab?.mtimeMs ?? null
   const saveState = activeTab?.saveState ?? 'clean'
+  const { visibleNodes: visibleFileTree, availableDirectoryPaths } = createVisibleFileTree({
+    sourceNodes: fileTree,
+    hiddenPaths,
+    showHiddenItems,
+  })
   const autosaveTimerRef = useRef<number | null>(null)
   const flushPromiseRef = useRef<Promise<boolean> | null>(null)
   const activeProjectIdRef = useRef<string | null>(null)
@@ -419,6 +426,8 @@ function App() {
       setOutlineWidth(320)
       setExpandedFileNodes([])
       setHasPersistedExpandedFileNodes(false)
+      setHiddenPaths([])
+      setShowHiddenItems(false)
       setDocumentFontSize(16)
       setDocumentPageWidth('narrow')
       setDocumentLineHeight(1.6)
@@ -448,6 +457,8 @@ function App() {
       setHasPersistedExpandedFileNodes(
         profile.navigation?.expandedFileNodesInitialized ?? false,
       )
+      setHiddenPaths(profile.navigation?.hiddenPaths ?? [])
+      setShowHiddenItems(false)
       setDocumentFontSize(profile.appearance?.fontSize ?? 16)
       setDocumentPageWidth(profile.appearance?.pageWidth ?? 'narrow')
       setDocumentLineHeight(profile.appearance?.lineHeight ?? 1.6)
@@ -1351,6 +1362,7 @@ function App() {
   async function saveActiveProfileNavigation(nextNavigation: {
     expandedFileNodes?: string[]
     expandedFileNodesInitialized?: boolean
+    hiddenPaths?: string[]
   }) {
     if (!activeProjectId) {
       return
@@ -1453,6 +1465,22 @@ function App() {
       expandedFileNodes: nextExpandedFileNodes,
       expandedFileNodesInitialized: true,
     })
+  }
+
+  async function handleHidePath(path: string) {
+    const nextHiddenPaths = Array.from(new Set([...hiddenPaths, path]))
+    setHiddenPaths(nextHiddenPaths)
+    await saveActiveProfileNavigation({ hiddenPaths: nextHiddenPaths })
+  }
+
+  async function handleUnhidePath(path: string) {
+    const nextHiddenPaths = hiddenPaths.filter((item) => item !== path)
+    setHiddenPaths(nextHiddenPaths)
+    await saveActiveProfileNavigation({ hiddenPaths: nextHiddenPaths })
+  }
+
+  function handleToggleShowHiddenItems() {
+    setShowHiddenItems((current) => !current)
   }
 
   async function waitForLocalBridgeReady(timeoutMs = 6000) {
@@ -1582,7 +1610,9 @@ function App() {
         isServiceActionPending={isServiceActionPending}
         mode={mode}
         regularViewState={regularViewState}
-        fileTree={fileTree}
+        fileTree={visibleFileTree}
+        availableDirectoryPaths={availableDirectoryPaths}
+        showHiddenItems={showHiddenItems}
         currentDocumentPath={currentDocumentPath}
         currentDocumentContent={currentDocumentContent}
         editingDocumentContent={editingDocumentContent}
@@ -1601,6 +1631,9 @@ function App() {
         onProfileChange={handleProfileChange}
         onModeChange={handleModeChange}
         onToggleRegularLock={handleToggleRegularLock}
+        onToggleShowHiddenItems={handleToggleShowHiddenItems}
+        onHidePath={handleHidePath}
+        onUnhidePath={handleUnhidePath}
         onTabSelect={handleTabSelect}
         onTabClose={handleTabClose}
         onTabReorder={handleTabReorder}

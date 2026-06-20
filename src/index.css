@@ -255,7 +255,7 @@ select {
 .topbar__tab-label {
   position: absolute;
   top: 50%;
-  left: 16px;
+  left: 18px;
   right: 34px;
   display: block;
   min-width: 0;
@@ -538,6 +538,12 @@ select {
   box-shadow: 0 8px 18px rgba(31, 111, 235, 0.14);
 }
 
+.topbar__action:hover:not(:disabled) {
+  border-color: rgba(31, 111, 235, 0.24);
+  background: linear-gradient(135deg, #4a90f8 0%, #3780f2 100%);
+  box-shadow: 0 10px 22px rgba(31, 111, 235, 0.18);
+}
+
 .topbar__modes {
   display: inline-flex;
   gap: 2px;
@@ -603,8 +609,21 @@ select {
 }
 
 .topbar__lock-toggle[aria-pressed='false']:hover:not(:disabled) {
-  border-color: rgba(31, 111, 235, 0.2);
-  background: linear-gradient(135deg, #3a84f5 0%, #2b73ed 100%);
+  border-color: rgba(31, 111, 235, 0.24);
+  background: linear-gradient(135deg, #4a90f8 0%, #3780f2 100%);
+  box-shadow: 0 10px 22px rgba(31, 111, 235, 0.18);
+}
+
+.topbar__hidden-toggle[aria-pressed='false'] {
+  border-color: rgba(181, 130, 79, 0.26);
+  background: linear-gradient(135deg, #bc9a7b 0%, #a98564 100%);
+  color: #fff;
+  box-shadow: 0 8px 18px rgba(174, 123, 78, 0.15);
+}
+
+.topbar__hidden-toggle[aria-pressed='false']:hover:not(:disabled) {
+  border-color: rgba(181, 130, 79, 0.32);
+  background: linear-gradient(135deg, #d5a779 0%, #ba8a5c 100%);
 }
 
 .topbar__lock-toggle[aria-pressed='true'] {
@@ -653,6 +672,29 @@ select {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.65);
 }
 
+.topbar__service-button:hover:not(:disabled) {
+  border-color: rgba(111, 93, 74, 0.24);
+  background: #fffdfa;
+  color: #8b5e34;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.78),
+    0 6px 14px rgba(112, 91, 62, 0.08);
+}
+
+.topbar__service-button--danger:hover:not(:disabled) {
+  border-color: rgba(201, 74, 74, 0.3);
+  background: #fff4f4;
+  color: #c94a4a;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.82),
+    0 6px 14px rgba(201, 74, 74, 0.12);
+}
+
+.topbar__service-button:focus-visible {
+  outline: 2px solid rgba(31, 111, 235, 0.22);
+  outline-offset: 1px;
+}
+
 .topbar__service-button:disabled {
   cursor: progress;
   opacity: 0.6;
@@ -662,6 +704,12 @@ select {
   background: var(--accent-soft);
   border-color: rgba(31, 111, 235, 0.28);
   color: var(--accent);
+}
+
+.topbar__mode[aria-pressed='true']:hover:not(:disabled) {
+  background: rgba(31, 111, 235, 0.16);
+  border-color: rgba(31, 111, 235, 0.34);
+  color: #2f7cf3;
 }
 
 .topbar__icon {
@@ -1674,6 +1722,12 @@ select {
   position: relative;
 }
 
+.file-tree__row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .file-tree__directory {
   display: flex;
   align-items: center;
@@ -1708,6 +1762,11 @@ select {
   box-shadow: none;
   cursor: pointer;
   min-width: 0;
+}
+
+.file-tree__row[data-hidden='true'] .file-tree__directory,
+.file-tree__row[data-hidden='true'] .file-tree__file {
+  opacity: 0.52;
 }
 
 .file-tree__children {
@@ -1787,6 +1846,59 @@ select {
   background: rgba(79, 68, 56, 0.1);
   color: var(--text-strong);
   font-weight: 560;
+}
+
+.file-tree__action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  margin-right: 4px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: rgba(79, 68, 56, 0.72);
+  box-shadow: none;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.file-tree__action svg,
+.file-tree__derived-hidden-indicator svg {
+  width: 14px;
+  height: 14px;
+  stroke-width: 2;
+}
+
+.file-tree__row:hover .file-tree__action,
+.file-tree__row:focus-within .file-tree__action {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.file-tree__action:hover {
+  background: rgba(79, 68, 56, 0.08);
+  color: var(--text-strong);
+}
+
+.file-tree__action:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+  outline: 2px solid rgba(31, 111, 235, 0.32);
+  outline-offset: 1px;
+}
+
+.file-tree__derived-hidden-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  margin-right: 4px;
+  color: rgba(79, 68, 56, 0.36);
 }
 
 @media (max-width: 1080px) {

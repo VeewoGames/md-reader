@@ -2,7 +2,7 @@ import type { CSSProperties } from 'react'
 
 import { TopBar, type RegularViewState, type WorkspaceMode } from './TopBar'
 import { WorkspaceLayout } from './WorkspaceLayout'
-import type { FileTreeNode } from '../workspace/file-tree-types'
+import type { VisibleFileTreeNode } from '../workspace/file-tree-types'
 import type { ProjectRegistryRecord } from '../workspace/registry'
 import type { TabSaveState } from '../workspace/workspace-session'
 import type { DocumentLineHeight, PageWidthMode } from '../workspace/profile-store'
@@ -26,7 +26,8 @@ interface AppShellProps {
   isServiceActionPending?: boolean
   mode: WorkspaceMode
   regularViewState: RegularViewState
-  fileTree: FileTreeNode[]
+  fileTree: VisibleFileTreeNode[]
+  availableDirectoryPaths: string[]
   currentDocumentPath: string | null
   currentDocumentContent: string | null
   editingDocumentContent?: string | null
@@ -45,6 +46,10 @@ interface AppShellProps {
   onProfileChange: (profileId: string) => void
   onModeChange: (mode: WorkspaceMode) => void
   onToggleRegularLock: () => void
+  showHiddenItems?: boolean
+  onToggleShowHiddenItems?: () => void
+  onHidePath?: (path: string) => void
+  onUnhidePath?: (path: string) => void
   onTabSelect: (tabId: string) => void
   onTabClose: (tabId: string) => void
   onTabReorder: (nextOrderedTabIds: string[]) => void
@@ -100,6 +105,8 @@ export function AppShell(props: AppShellProps) {
         onProfileChange={props.onProfileChange}
         onModeChange={props.onModeChange}
         onToggleRegularLock={props.onToggleRegularLock}
+        showHiddenItems={props.showHiddenItems}
+        onToggleShowHiddenItems={props.onToggleShowHiddenItems}
         onTabSelect={props.onTabSelect}
         onTabClose={props.onTabClose}
         onTabReorder={props.onTabReorder}
@@ -116,6 +123,7 @@ export function AppShell(props: AppShellProps) {
         mode={props.mode}
         regularViewState={props.regularViewState}
         fileTree={props.fileTree}
+        availableDirectoryPaths={props.availableDirectoryPaths}
         currentDocumentPath={props.currentDocumentPath}
         currentDocumentContent={props.currentDocumentContent}
         editingDocumentContent={props.editingDocumentContent}
@@ -127,6 +135,9 @@ export function AppShell(props: AppShellProps) {
         hasPersistedExpandedDirectories={props.hasPersistedExpandedFileNodes}
         hasProjects={props.projects.length > 0}
         onDocumentSelect={props.onDocumentSelect}
+        showHiddenItems={props.showHiddenItems}
+        onHidePath={props.onHidePath}
+        onUnhidePath={props.onUnhidePath}
         onExpandedDirectoriesChange={props.onExpandedFileNodesChange}
         onEditingDocumentContentChange={props.onEditingDocumentContentChange}
         onEditingCompositionStart={props.onEditingCompositionStart}
