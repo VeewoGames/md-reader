@@ -57,4 +57,83 @@ describe('applyMarkdownTransforms', () => {
     expect(transformed).toContain('## 真实召唤物')
     expect(transformed).toContain('正文')
   })
+
+  it('removes escaped leading page metadata artifacts without dropping the real body content', () => {
+    const transformed = applyMarkdownTransforms(
+      [
+        '# 通用放大器关键词体系',
+        '',
+        '\\<!-- page\\_id: 34d668a9-8f0d-81c8-8370-c55d3c076baf -->',
+        '',
+        '# 通用放大器关键词体系',
+        '',
+        '## 概述',
+        '',
+        '本文档统一定义游戏中所有放大器为关键词体系。',
+      ].join('\n'),
+    )
+
+    expect(transformed).toBe(
+      [
+        '# 通用放大器关键词体系',
+        '',
+        '## 概述',
+        '',
+        '本文档统一定义游戏中所有放大器为关键词体系。',
+      ].join('\n'),
+    )
+  })
+
+  it('unwraps malformed synced_block pseudo code fences that only contain markdown labels', () => {
+    const transformed = applyMarkdownTransforms(
+      [
+        '### A. 伤害类与基础战斗参数',
+        '',
+        '```',
+        '**攻击力**（Attack Damage / AD）',
+        '**定义**：攻击类与武器类伤害的基础缩放属性。',
+        '**规则**',
+        '```',
+        '',
+        '| 维度 | 规则 |',
+        '| --- | --- |',
+        '| 作用范围 | 主要作用于 Attack / 武器类技能的伤害公式。 |',
+        '',
+        '```',
+        '**标签**：伤害 / 基础 / 核心',
+        '**设计定位**：攻击构筑的主基础属性。',
+        '```',
+      ].join('\n'),
+    )
+
+    expect(transformed).toBe(
+      [
+        '### A. 伤害类与基础战斗参数',
+        '',
+        '**攻击力**（Attack Damage / AD）',
+        '',
+        '**定义**：攻击类与武器类伤害的基础缩放属性。',
+        '',
+        '**规则**',
+        '',
+        '| 维度 | 规则 |',
+        '| --- | --- |',
+        '| 作用范围 | 主要作用于 Attack / 武器类技能的伤害公式。 |',
+        '',
+        '**标签**：伤害 / 基础 / 核心',
+        '',
+        '**设计定位**：攻击构筑的主基础属性。',
+      ].join('\n'),
+    )
+  })
+
+  it('keeps real unlabeled code fences when the content looks like actual code', () => {
+    expect(
+      applyMarkdownTransforms(
+        ['```', 'const attackDamage = baseDamage * coefficient', 'return attackDamage', '```'].join(
+          '\n',
+        ),
+      ),
+    ).toBe(['```', 'const attackDamage = baseDamage * coefficient', 'return attackDamage', '```'].join('\n'))
+  })
 })

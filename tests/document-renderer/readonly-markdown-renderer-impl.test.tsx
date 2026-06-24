@@ -81,4 +81,62 @@ describe('ReadonlyMarkdownRendererImpl', () => {
     expect(screen.getByText('正文')).toBeInTheDocument()
     expect(screen.queryByText(/synced_block/i)).toBeNull()
   })
+
+  it('removes escaped page_id artifacts and the duplicated leading heading from malformed exports', () => {
+    render(
+      <ReadonlyMarkdownRendererImpl
+        value={[
+          '# 通用放大器关键词体系',
+          '',
+          '\\<!-- page\\_id: 34d668a9-8f0d-81c8-8370-c55d3c076baf -->',
+          '',
+          '# 通用放大器关键词体系',
+          '',
+          '## 概述',
+          '',
+          '本文档统一定义游戏中所有放大器为关键词体系。',
+        ].join('\n')}
+      />,
+    )
+
+    expect(screen.getAllByRole('heading', { level: 1, name: '通用放大器关键词体系' })).toHaveLength(1)
+    expect(screen.getByRole('heading', { level: 2, name: '概述' })).toBeInTheDocument()
+    expect(screen.getByText('本文档统一定义游戏中所有放大器为关键词体系。')).toBeInTheDocument()
+    expect(screen.queryByText(/page_id/i)).toBeNull()
+  })
+
+  it('renders malformed synced_block pseudo code fences as normal markdown content', () => {
+    const { container } = render(
+      <ReadonlyMarkdownRendererImpl
+        value={[
+          '### A. 伤害类与基础战斗参数',
+          '',
+          '```',
+          '**攻击力**（Attack Damage / AD）',
+          '**定义**：攻击类与武器类伤害的基础缩放属性。',
+          '**规则**',
+          '```',
+          '',
+          '| 维度 | 规则 |',
+          '| --- | --- |',
+          '| 作用范围 | 主要作用于 Attack / 武器类技能的伤害公式。 |',
+          '',
+          '```',
+          '**标签**：伤害 / 基础 / 核心',
+          '**设计定位**：攻击构筑的主基础属性。',
+          '```',
+        ].join('\n')}
+      />,
+    )
+
+    expect(screen.getByRole('heading', { level: 3, name: 'A. 伤害类与基础战斗参数' })).toBeInTheDocument()
+    expect(screen.getByText(/攻击力/).closest('p')?.tagName).toBe('P')
+    expect(
+      screen
+        .getByText((_, node) => node?.textContent === '定义：攻击类与武器类伤害的基础缩放属性。')
+        .closest('p')?.tagName,
+    ).toBe('P')
+    expect(screen.getByRole('table')).toBeInTheDocument()
+    expect(container.querySelector('pre')).toBeNull()
+  })
 })
