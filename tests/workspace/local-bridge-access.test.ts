@@ -141,6 +141,8 @@ describe('local bridge access', () => {
           navigation: {
             expandedFileNodes: [],
             expandedHeadingNodes: {},
+            hiddenPaths: [],
+            favoritePaths: ['docs/guide.md'],
           },
         },
       }),
@@ -153,6 +155,7 @@ describe('local bridge access', () => {
     )
     expect(payload.id).toBe('Lans')
     expect(payload.appearance.fontSize).toBe(17)
+    expect(payload.navigation.favoritePaths).toEqual(['docs/guide.md'])
   })
 
   it('saves a repo-tracked profile through the local bridge', async () => {
@@ -175,6 +178,8 @@ describe('local bridge access', () => {
           navigation: {
             expandedFileNodes: [],
             expandedHeadingNodes: {},
+            hiddenPaths: [],
+            favoritePaths: ['docs/guide.md'],
           },
         },
       }),
@@ -198,6 +203,8 @@ describe('local bridge access', () => {
         navigation: {
           expandedFileNodes: [],
           expandedHeadingNodes: {},
+          hiddenPaths: [],
+          favoritePaths: ['docs/guide.md'],
         },
       },
       'default',
@@ -211,6 +218,28 @@ describe('local bridge access', () => {
         headers: {
           'content-type': 'application/json',
         },
+        body: JSON.stringify({
+          profile: {
+            id: 'Lans',
+            appearance: {
+              theme: 'system',
+              fontSize: 17,
+              pageWidth: 'wide',
+            },
+            layout: {
+              sidebarWidth: 280,
+              outlineWidth: 320,
+              sidebarCollapsed: false,
+              outlineCollapsed: false,
+            },
+            navigation: {
+              expandedFileNodes: [],
+              expandedHeadingNodes: {},
+              hiddenPaths: [],
+              favoritePaths: ['docs/guide.md'],
+            },
+          },
+        }),
       }),
     )
     expect(payload.id).toBe('Lans')

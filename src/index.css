@@ -814,6 +814,40 @@ select {
   margin-bottom: 12px;
 }
 
+.panel__search--with-favorites {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+}
+
+.panel__favorite-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  min-width: 34px;
+  min-height: 34px;
+  padding: 0;
+  border: 1px solid rgba(127, 105, 82, 0.18);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.7);
+  color: rgba(127, 105, 82, 0.72);
+  cursor: pointer;
+}
+
+.panel__favorite-toggle svg {
+  width: 15px;
+  height: 15px;
+  stroke-width: 2;
+}
+
+.panel__favorite-toggle[aria-pressed='true'] {
+  color: #9b6514;
+  background: rgba(234, 193, 109, 0.22);
+  border-color: rgba(190, 139, 69, 0.3);
+}
+
 .panel__search-input {
   width: 100%;
   min-height: 34px;
@@ -1726,6 +1760,7 @@ select {
   display: flex;
   align-items: center;
   gap: 6px;
+  position: relative;
 }
 
 .file-tree__directory {
@@ -1744,6 +1779,8 @@ select {
   text-align: left;
   box-shadow: none;
   cursor: pointer;
+  min-width: 0;
+  transition: padding-right 140ms ease;
 }
 
 .file-tree__file {
@@ -1762,6 +1799,7 @@ select {
   box-shadow: none;
   cursor: pointer;
   min-width: 0;
+  transition: padding-right 140ms ease;
 }
 
 .file-tree__row[data-hidden='true'] .file-tree__directory,
@@ -1784,6 +1822,7 @@ select {
 }
 
 .file-tree__directory-name {
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1805,6 +1844,7 @@ select {
 }
 
 .file-tree__file-name {
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1848,14 +1888,16 @@ select {
   font-weight: 560;
 }
 
+.file-tree__file[data-favorited='true'] {
+  padding-right: 40px;
+}
+
 .file-tree__action {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  flex: 0 0 auto;
   width: 26px;
   height: 26px;
-  margin-right: 4px;
   border: 0;
   border-radius: 7px;
   background: transparent;
@@ -1865,6 +1907,16 @@ select {
   pointer-events: none;
 }
 
+.file-tree__actions {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  transform: translateY(-50%);
+}
+
 .file-tree__action svg,
 .file-tree__derived-hidden-indicator svg {
   width: 14px;
@@ -1872,10 +1924,17 @@ select {
   stroke-width: 2;
 }
 
-.file-tree__row:hover .file-tree__action,
-.file-tree__row:focus-within .file-tree__action {
+.file-tree__row:hover .file-tree__action--visibility,
+.file-tree__row:focus-within .file-tree__action--visibility {
   opacity: 1;
   pointer-events: auto;
+}
+
+.file-tree__row:hover .file-tree__directory,
+.file-tree__row:hover .file-tree__file,
+.file-tree__row:focus-within .file-tree__directory,
+.file-tree__row:focus-within .file-tree__file {
+  padding-right: 72px;
 }
 
 .file-tree__action:hover {
@@ -1890,15 +1949,38 @@ select {
   outline-offset: 1px;
 }
 
+.file-tree__action--favorite {
+  color: rgba(158, 122, 54, 0.62);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.file-tree__action--favorite[data-favorited='true'] {
+  opacity: 1;
+  pointer-events: auto;
+  color: #c48721;
+}
+
+.file-tree__row:hover .file-tree__action--favorite,
+.file-tree__row:focus-within .file-tree__action--favorite {
+  opacity: 1;
+  pointer-events: auto;
+}
+
 .file-tree__derived-hidden-indicator {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  flex: 0 0 auto;
   width: 26px;
   height: 26px;
-  margin-right: 4px;
   color: rgba(79, 68, 56, 0.36);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.file-tree__row:hover .file-tree__derived-hidden-indicator,
+.file-tree__row:focus-within .file-tree__derived-hidden-indicator {
+  opacity: 1;
 }
 
 @media (max-width: 1080px) {

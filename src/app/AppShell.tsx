@@ -46,7 +46,11 @@ interface AppShellProps {
   onProfileChange: (profileId: string) => void
   onModeChange: (mode: WorkspaceMode) => void
   onToggleRegularLock: () => void
+  favoritePaths?: string[]
+  showFavoritesOnly?: boolean
   showHiddenItems?: boolean
+  onToggleFavoriteDocument?: (path: string) => void
+  onToggleShowFavoritesOnly?: () => void
   onToggleShowHiddenItems?: () => void
   onHidePath?: (path: string) => void
   onUnhidePath?: (path: string) => void
@@ -135,7 +139,11 @@ export function AppShell(props: AppShellProps) {
         hasPersistedExpandedDirectories={props.hasPersistedExpandedFileNodes}
         hasProjects={props.projects.length > 0}
         onDocumentSelect={props.onDocumentSelect}
+        favoritePaths={props.favoritePaths}
+        showFavoritesOnly={props.showFavoritesOnly}
         showHiddenItems={props.showHiddenItems}
+        onToggleFavoriteDocument={props.onToggleFavoriteDocument}
+        onToggleShowFavoritesOnly={props.onToggleShowFavoritesOnly}
         onHidePath={props.onHidePath}
         onUnhidePath={props.onUnhidePath}
         onExpandedDirectoriesChange={props.onExpandedFileNodesChange}

@@ -153,6 +153,8 @@ describe('App session restore', () => {
       navigation: {
         expandedFileNodes: [],
         expandedHeadingNodes: {},
+        hiddenPaths: [],
+        favoritePaths: [],
       },
     })
     bridgeMocks.saveProfileToBridge.mockImplementation(async (_projectId, profile) => profile)
@@ -221,6 +223,8 @@ describe('App session restore', () => {
         expandedFileNodes: [],
         expandedFileNodesInitialized: true,
         expandedHeadingNodes: {},
+        hiddenPaths: [],
+        favoritePaths: [],
       },
     })
 

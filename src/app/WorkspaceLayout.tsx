@@ -1,5 +1,5 @@
 import { useDeferredValue, useEffect, useEffectEvent, useRef, useState, type CSSProperties } from 'react'
-import { Eye, EyeOff, FileText } from 'lucide-react'
+import { Eye, EyeOff, FileText, Star } from 'lucide-react'
 
 import { findActiveHeadingId, type HeadingTarget } from './outline-active-heading'
 import { VisualMarkdownEditor } from '../editor/visual-markdown-editor'
@@ -67,7 +67,11 @@ interface WorkspaceLayoutProps {
   hasPersistedExpandedDirectories?: boolean
   hasProjects: boolean
   onDocumentSelect: (path: string) => void
+  favoritePaths?: string[]
+  showFavoritesOnly?: boolean
   showHiddenItems?: boolean
+  onToggleFavoriteDocument?: (path: string) => void
+  onToggleShowFavoritesOnly?: () => void
   onHidePath?: (path: string) => void
   onUnhidePath?: (path: string) => void
   onExpandedDirectoriesChange?: (paths: string[]) => void | Promise<void>
@@ -88,7 +92,9 @@ export function WorkspaceFileTree({
   expandedDirectories,
   onToggleDirectory,
   onDocumentSelect,
+  favoritePaths,
   showHiddenItems,
+  onToggleFavoriteDocument,
   onHidePath,
   onUnhidePath,
 }: {
@@ -99,7 +105,9 @@ export function WorkspaceFileTree({
   expandedDirectories: Set<string>
   onToggleDirectory: (path: string) => void
   onDocumentSelect: (path: string) => void
+  favoritePaths: string[]
   showHiddenItems: boolean
+  onToggleFavoriteDocument: (path: string) => void
   onHidePath: (path: string) => void
   onUnhidePath: (path: string) => void
 }) {
@@ -130,26 +138,28 @@ export function WorkspaceFileTree({
                       <span className="file-tree__chevron" aria-hidden="true" />
                       <span className="file-tree__directory-name">{node.name}</span>
                     </button>
-                    {showHiddenItems && node.meta.isHiddenByAncestor && !node.meta.isExplicitlyHidden ? (
-                      <span className="file-tree__derived-hidden-indicator" aria-hidden="true" />
-                    ) : null}
-                    {shouldShowActionButton ? (
-                      <button
-                        type="button"
-                        className="file-tree__action"
-                        aria-label={canUnhideDirectly ? `显示 ${node.name}` : `隐藏 ${node.name}`}
-                        onClick={(event) => {
-                          event.stopPropagation()
-                          if (canUnhideDirectly) {
-                            onUnhidePath(node.path)
-                            return
-                          }
-                          onHidePath(node.path)
-                        }}
-                      >
-                        {canUnhideDirectly ? <Eye /> : <EyeOff />}
-                      </button>
-                    ) : null}
+                    <div className="file-tree__actions">
+                      {showHiddenItems && node.meta.isHiddenByAncestor && !node.meta.isExplicitlyHidden ? (
+                        <span className="file-tree__derived-hidden-indicator" aria-hidden="true" />
+                      ) : null}
+                      {shouldShowActionButton ? (
+                        <button
+                          type="button"
+                          className="file-tree__action file-tree__action--visibility"
+                          aria-label={canUnhideDirectly ? `显示 ${node.name}` : `隐藏 ${node.name}`}
+                          onClick={(event) => {
+                            event.stopPropagation()
+                            if (canUnhideDirectly) {
+                              onUnhidePath(node.path)
+                              return
+                            }
+                            onHidePath(node.path)
+                          }}
+                        >
+                          {canUnhideDirectly ? <Eye /> : <EyeOff />}
+                        </button>
+                      ) : null}
+                    </div>
                   </div>
 
                   {isExpanded ? (
@@ -162,7 +172,9 @@ export function WorkspaceFileTree({
                         expandedDirectories={expandedDirectories}
                         onToggleDirectory={onToggleDirectory}
                         onDocumentSelect={onDocumentSelect}
+                        favoritePaths={favoritePaths}
                         showHiddenItems={showHiddenItems}
+                        onToggleFavoriteDocument={onToggleFavoriteDocument}
                         onHidePath={onHidePath}
                         onUnhidePath={onUnhidePath}
                       />
@@ -175,12 +187,15 @@ export function WorkspaceFileTree({
             const isHidden = node.meta.isExplicitlyHidden || node.meta.isHiddenByAncestor
             const canUnhideDirectly = node.meta.isExplicitlyHidden && showHiddenItems
             const shouldShowActionButton = !node.meta.isHiddenByAncestor || node.meta.isExplicitlyHidden
+            const isFavorited = favoritePaths.includes(node.path)
+            const favoriteIndicatorTestId = `favorite-indicator-${node.path.replaceAll('/', '-')}`
 
             return (
               <div className="file-tree__row" data-hidden={isHidden ? 'true' : undefined}>
                 <button
                   type="button"
                   className="file-tree__file"
+                  data-favorited={isFavorited ? 'true' : undefined}
                   aria-current={currentDocumentPath === node.path ? 'page' : undefined}
                   onClick={() => onDocumentSelect(node.path)}
                 >
@@ -189,26 +204,41 @@ export function WorkspaceFileTree({
                   </span>
                   <span className="file-tree__file-name">{node.name}</span>
                 </button>
-                {showHiddenItems && node.meta.isHiddenByAncestor && !node.meta.isExplicitlyHidden ? (
-                  <span className="file-tree__derived-hidden-indicator" aria-hidden="true" />
-                ) : null}
-                {shouldShowActionButton ? (
+                <div className="file-tree__actions">
                   <button
                     type="button"
-                    className="file-tree__action"
-                    aria-label={canUnhideDirectly ? `显示 ${node.name}` : `隐藏 ${node.name}`}
+                    className="file-tree__action file-tree__action--favorite"
+                    data-favorited={isFavorited ? 'true' : undefined}
+                    data-testid={favoriteIndicatorTestId}
+                    aria-label={isFavorited ? `取消收藏 ${node.name}` : `收藏 ${node.name}`}
                     onClick={(event) => {
                       event.stopPropagation()
-                      if (canUnhideDirectly) {
-                        onUnhidePath(node.path)
-                        return
-                      }
-                      onHidePath(node.path)
+                      onToggleFavoriteDocument(node.path)
                     }}
                   >
-                    {canUnhideDirectly ? <Eye /> : <EyeOff />}
+                    <Star fill={isFavorited ? 'currentColor' : 'none'} />
                   </button>
-                ) : null}
+                  {showHiddenItems && node.meta.isHiddenByAncestor && !node.meta.isExplicitlyHidden ? (
+                    <span className="file-tree__derived-hidden-indicator" aria-hidden="true" />
+                  ) : null}
+                  {shouldShowActionButton ? (
+                    <button
+                      type="button"
+                      className="file-tree__action file-tree__action--visibility"
+                      aria-label={canUnhideDirectly ? `显示 ${node.name}` : `隐藏 ${node.name}`}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        if (canUnhideDirectly) {
+                          onUnhidePath(node.path)
+                          return
+                        }
+                        onHidePath(node.path)
+                      }}
+                    >
+                      {canUnhideDirectly ? <Eye /> : <EyeOff />}
+                    </button>
+                  ) : null}
+                </div>
               </div>
             )
           })()}
@@ -234,7 +264,11 @@ export function WorkspaceLayout({
   availableDirectoryPaths = [],
   hasProjects,
   onDocumentSelect,
+  favoritePaths = [],
+  showFavoritesOnly = false,
   showHiddenItems = false,
+  onToggleFavoriteDocument = () => {},
+  onToggleShowFavoritesOnly = () => {},
   onHidePath = () => {},
   onUnhidePath = () => {},
   onExpandedDirectoriesChange,
@@ -266,6 +300,7 @@ export function WorkspaceLayout({
     fileTree,
     deferredFileSearchQuery,
   ) as VisibleFileTreeNode[]
+  const hasFavorites = favoritePaths.length > 0
 
   useEffect(() => {
     setExpandedDirectories(
@@ -616,7 +651,16 @@ export function WorkspaceLayout({
     >
       <aside className="workspace__sidebar workspace__sidebar--left">
         <div id="workspace-file-tree" className="panel panel--sidebar">
-          <div className="panel__search">
+          <div className="panel__search panel__search--with-favorites">
+            <button
+              type="button"
+              className="panel__favorite-toggle"
+              aria-label="只看收藏文档"
+              aria-pressed={showFavoritesOnly}
+              onClick={onToggleShowFavoritesOnly}
+            >
+              <Star fill={showFavoritesOnly ? 'currentColor' : 'none'} />
+            </button>
             <input
               type="search"
               className="panel__search-input"
@@ -638,12 +682,16 @@ export function WorkspaceLayout({
                 expandedDirectories={expandedDirectories}
                 onToggleDirectory={handleToggleDirectory}
                 onDocumentSelect={onDocumentSelect}
+                favoritePaths={favoritePaths}
                 showHiddenItems={showHiddenItems}
+                onToggleFavoriteDocument={onToggleFavoriteDocument}
                 onHidePath={onHidePath}
                 onUnhidePath={onUnhidePath}
               />
             ) : isFilteringFiles ? (
               <p className="panel__empty">没有匹配的文件</p>
+            ) : showFavoritesOnly && !hasFavorites ? (
+              <p className="panel__empty">当前还没有收藏文档</p>
             ) : (
               <p className="panel__empty">
                 {hasProjects ? '当前项目还没有可用的 Markdown 文件' : '还没有接入任何 Markdown 项目'}

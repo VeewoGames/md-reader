@@ -4,7 +4,7 @@ import { AppShell } from './app/AppShell'
 import type { RegularViewState, WorkspaceMode } from './app/TopBar'
 import { createBrowserKeyValueStore } from './shared/key-value-store'
 import { STORAGE_KEYS } from './shared/storage-keys'
-import { buildFileTree, createVisibleFileTree } from './workspace/file-tree'
+import { buildFileTree, createVisibleFileTree, filterFileTreeByFavorites } from './workspace/file-tree'
 import { createContentHash } from './shared/content-hash'
 import type { FileTreeNode } from './workspace/file-tree-types'
 import {
@@ -227,6 +227,8 @@ function App() {
   const [session, setSession] = useState<WorkspaceSession>(createEmptySession)
   const [fileTree, setFileTree] = useState<FileTreeNode[]>([])
   const [hiddenPaths, setHiddenPaths] = useState<string[]>([])
+  const [favoritePaths, setFavoritePaths] = useState<string[]>([])
+  const [showFavoritesOnly, setShowFavoritesOnly] = useState(false)
   const [showHiddenItems, setShowHiddenItems] = useState(false)
   const [isDocumentLoading, setIsDocumentLoading] = useState(false)
   const [workspaceSource, setWorkspaceSource] = useState<WorkspaceSource>('offline')
@@ -249,11 +251,14 @@ function App() {
   const editingDocumentContent = activeTab?.draftContent ?? null
   const currentDocumentMtimeMs = activeTab?.mtimeMs ?? null
   const saveState = activeTab?.saveState ?? 'clean'
-  const { visibleNodes: visibleFileTree, availableDirectoryPaths } = createVisibleFileTree({
+  const { visibleNodes: visibleAfterHidden, availableDirectoryPaths } = createVisibleFileTree({
     sourceNodes: fileTree,
     hiddenPaths,
     showHiddenItems,
   })
+  const visibleFileTree = showFavoritesOnly
+    ? filterFileTreeByFavorites(visibleAfterHidden, favoritePaths)
+    : visibleAfterHidden
   const autosaveTimerRef = useRef<number | null>(null)
   const flushPromiseRef = useRef<Promise<boolean> | null>(null)
   const activeProjectIdRef = useRef<string | null>(null)
@@ -427,6 +432,8 @@ function App() {
       setExpandedFileNodes([])
       setHasPersistedExpandedFileNodes(false)
       setHiddenPaths([])
+      setFavoritePaths([])
+      setShowFavoritesOnly(false)
       setShowHiddenItems(false)
       setDocumentFontSize(16)
       setDocumentPageWidth('narrow')
@@ -458,6 +465,8 @@ function App() {
         profile.navigation?.expandedFileNodesInitialized ?? false,
       )
       setHiddenPaths(profile.navigation?.hiddenPaths ?? [])
+      setFavoritePaths(profile.navigation?.favoritePaths ?? [])
+      setShowFavoritesOnly(false)
       setShowHiddenItems(false)
       setDocumentFontSize(profile.appearance?.fontSize ?? 16)
       setDocumentPageWidth(profile.appearance?.pageWidth ?? 'narrow')
@@ -1363,6 +1372,7 @@ function App() {
     expandedFileNodes?: string[]
     expandedFileNodesInitialized?: boolean
     hiddenPaths?: string[]
+    favoritePaths?: string[]
   }) {
     if (!activeProjectId) {
       return
@@ -1477,6 +1487,18 @@ function App() {
     const nextHiddenPaths = hiddenPaths.filter((item) => item !== path)
     setHiddenPaths(nextHiddenPaths)
     await saveActiveProfileNavigation({ hiddenPaths: nextHiddenPaths })
+  }
+
+  async function handleToggleFavoriteDocument(path: string) {
+    const nextFavoritePaths = favoritePaths.includes(path)
+      ? favoritePaths.filter((item) => item !== path)
+      : [...favoritePaths, path]
+    setFavoritePaths(nextFavoritePaths)
+    await saveActiveProfileNavigation({ favoritePaths: nextFavoritePaths })
+  }
+
+  function handleToggleShowFavoritesOnly() {
+    setShowFavoritesOnly((current) => !current)
   }
 
   function handleToggleShowHiddenItems() {
@@ -1612,6 +1634,8 @@ function App() {
         regularViewState={regularViewState}
         fileTree={visibleFileTree}
         availableDirectoryPaths={availableDirectoryPaths}
+        favoritePaths={favoritePaths}
+        showFavoritesOnly={showFavoritesOnly}
         showHiddenItems={showHiddenItems}
         currentDocumentPath={currentDocumentPath}
         currentDocumentContent={currentDocumentContent}
@@ -1631,6 +1655,8 @@ function App() {
         onProfileChange={handleProfileChange}
         onModeChange={handleModeChange}
         onToggleRegularLock={handleToggleRegularLock}
+        onToggleFavoriteDocument={handleToggleFavoriteDocument}
+        onToggleShowFavoritesOnly={handleToggleShowFavoritesOnly}
         onToggleShowHiddenItems={handleToggleShowHiddenItems}
         onHidePath={handleHidePath}
         onUnhidePath={handleUnhidePath}

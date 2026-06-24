@@ -91,6 +91,36 @@ export function filterFileTree(nodes: FileTreeNode[], query: string): FileTreeNo
   }, [])
 }
 
+export function filterFileTreeByFavorites(
+  nodes: VisibleFileTreeNode[],
+  favoritePaths: string[],
+): VisibleFileTreeNode[] {
+  const favoritePathSet = new Set(favoritePaths)
+
+  function visit(node: VisibleFileTreeNode): VisibleFileTreeNode | null {
+    if (node.kind === 'file') {
+      return favoritePathSet.has(node.path) ? node : null
+    }
+
+    const nextChildren = node.children
+      .map(visit)
+      .filter((child): child is VisibleFileTreeNode => child != null)
+
+    if (nextChildren.length === 0) {
+      return null
+    }
+
+    return {
+      ...node,
+      children: nextChildren,
+    }
+  }
+
+  return nodes
+    .map(visit)
+    .filter((node): node is VisibleFileTreeNode => node != null)
+}
+
 function listAncestorPaths(path: string): string[] {
   const segments = path.split('/').filter(Boolean)
   return segments.slice(0, -1).map((_, index) => segments.slice(0, index + 1).join('/'))

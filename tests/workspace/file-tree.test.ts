@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
-import { buildFileTree, createVisibleFileTree, filterFileTree } from '../../src/workspace/file-tree'
+import {
+  buildFileTree,
+  createVisibleFileTree,
+  filterFileTree,
+  filterFileTreeByFavorites,
+} from '../../src/workspace/file-tree'
 
 describe('buildFileTree', () => {
   it('builds nested directory nodes from markdown-relative paths', () => {
@@ -185,6 +190,91 @@ describe('createVisibleFileTree', () => {
           expect.objectContaining({
             path: 'docs/private',
             children: [expect.objectContaining({ path: 'docs/private/secret.md' })],
+          }),
+        ],
+      }),
+    ])
+  })
+})
+
+describe('filterFileTreeByFavorites', () => {
+  it('keeps only favorite documents while preserving directory context', () => {
+    const visibleTree = createVisibleFileTree({
+      sourceNodes: buildFileTree([
+        'docs/guide.md',
+        'docs/api/reference.md',
+        'notes/todo.md',
+      ]),
+      hiddenPaths: [],
+      showHiddenItems: false,
+    }).visibleNodes
+
+    expect(filterFileTreeByFavorites(visibleTree, ['docs/api/reference.md'])).toEqual([
+      expect.objectContaining({
+        path: 'docs',
+        children: [
+          expect.objectContaining({
+            path: 'docs/api',
+            children: [expect.objectContaining({ path: 'docs/api/reference.md' })],
+          }),
+        ],
+      }),
+    ])
+  })
+
+  it('supports combined mode after hidden visibility derivation', () => {
+    const visibleTree = createVisibleFileTree({
+      sourceNodes: buildFileTree([
+        'docs/public.md',
+        'docs/private.md',
+        'docs/secret/hidden.md',
+      ]),
+      hiddenPaths: ['docs/secret'],
+      showHiddenItems: true,
+    }).visibleNodes
+
+    const favoritesOnlyTree = filterFileTreeByFavorites(visibleTree, [
+      'docs/private.md',
+      'docs/secret/hidden.md',
+    ])
+
+    expect(favoritesOnlyTree).toEqual([
+      expect.objectContaining({
+        path: 'docs',
+        children: [
+          expect.objectContaining({ path: 'docs/private.md' }),
+          expect.objectContaining({
+            path: 'docs/secret',
+            meta: expect.objectContaining({ isExplicitlyHidden: true }),
+            children: [
+              expect.objectContaining({
+                path: 'docs/secret/hidden.md',
+                meta: expect.objectContaining({ isHiddenByAncestor: true }),
+              }),
+            ],
+          }),
+        ],
+      }),
+    ])
+  })
+
+  it('does not mutate the visible tree when filtering favorites', () => {
+    const visibleTree = createVisibleFileTree({
+      sourceNodes: buildFileTree(['docs/guide.md', 'docs/api/reference.md']),
+      hiddenPaths: [],
+      showHiddenItems: false,
+    }).visibleNodes
+
+    filterFileTreeByFavorites(visibleTree, ['docs/api/reference.md'])
+
+    expect(visibleTree).toEqual([
+      expect.objectContaining({
+        path: 'docs',
+        children: [
+          expect.objectContaining({ path: 'docs/guide.md' }),
+          expect.objectContaining({
+            path: 'docs/api',
+            children: [expect.objectContaining({ path: 'docs/api/reference.md' })],
           }),
         ],
       }),

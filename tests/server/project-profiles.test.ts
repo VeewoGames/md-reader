@@ -53,6 +53,8 @@ describe('project profiles', () => {
       navigation: {
         expandedFileNodes: ['docs'],
         expandedHeadingNodes: {},
+        hiddenPaths: [],
+        favoritePaths: ['docs/guide.md'],
       },
     })
 
@@ -63,5 +65,6 @@ describe('project profiles', () => {
     expect(profile.appearance.lineHeight).toBe(1.8)
     expect(profile.layout.sidebarWidth).toBe(300)
     expect(profile.navigation.expandedFileNodes).toEqual(['docs'])
+    expect(profile.navigation.favoritePaths).toEqual(['docs/guide.md'])
   })
 })

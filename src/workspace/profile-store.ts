@@ -24,6 +24,7 @@ export interface WorkspaceProfile {
     expandedFileNodesInitialized?: boolean
     expandedHeadingNodes: Record<string, string[]>
     hiddenPaths: string[]
+    favoritePaths: string[]
   }
 }
 
@@ -47,6 +48,7 @@ export function createDefaultProfile(profileId = 'default'): WorkspaceProfile {
       expandedFileNodesInitialized: false,
       expandedHeadingNodes: {},
       hiddenPaths: [],
+      favoritePaths: [],
     },
   }
 }

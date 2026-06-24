@@ -18,6 +18,7 @@ const localState = {
 const bridgeMocks = vi.hoisted(() => ({
   getProfileFromBridge: vi.fn(),
   listProjectProfilesFromBridge: vi.fn(),
+  saveProfileToBridge: vi.fn(),
 }))
 
 const storageMocks = vi.hoisted(() => ({
@@ -68,7 +69,7 @@ vi.mock('../../src/workspace/local-bridge-access', () => ({
   })),
   listProjectProfilesFromBridge: bridgeMocks.listProjectProfilesFromBridge,
   getProfileFromBridge: bridgeMocks.getProfileFromBridge,
-  saveProfileToBridge: vi.fn(async (_projectId, profile) => profile),
+  saveProfileToBridge: bridgeMocks.saveProfileToBridge,
   getFileTreePathsFromBridge: vi.fn(async () => ['docs/guide.md', 'docs/private.md']),
   getDocumentContentFromBridge: vi.fn(async (_projectId, _profileId, documentPath: string) => ({
     path: documentPath,
@@ -99,7 +100,11 @@ vi.mock('../../src/app/AppShell', () => ({
       kind: 'directory' | 'file'
       children?: Array<unknown>
     }>
+    favoritePaths?: string[]
+    showFavoritesOnly?: boolean
     showHiddenItems?: boolean
+    onToggleShowFavoritesOnly?: () => void
+    onToggleFavoriteDocument?: (path: string) => void
     onToggleShowHiddenItems?: () => void
     onProfileChange: (profileId: string) => void
   }) => {
@@ -123,9 +128,17 @@ vi.mock('../../src/app/AppShell', () => ({
         <div data-testid="active-profile">{props.activeProfileId}</div>
         <div data-testid="current-document">{props.currentDocumentPath ?? ''}</div>
         <div data-testid="show-hidden-items">{props.showHiddenItems ? 'true' : 'false'}</div>
+        <div data-testid="show-favorites-only">{props.showFavoritesOnly ? 'true' : 'false'}</div>
+        <div data-testid="favorite-paths">{(props.favoritePaths ?? []).join(',')}</div>
         <div data-testid="visible-tree">{flattenPaths(props.fileTree).join(',')}</div>
         <button type="button" onClick={() => props.onToggleShowHiddenItems?.()}>
           toggle-hidden-items
+        </button>
+        <button type="button" onClick={() => props.onToggleShowFavoritesOnly?.()}>
+          toggle-favorites-only
+        </button>
+        <button type="button" onClick={() => props.onToggleFavoriteDocument?.('docs/private.md')}>
+          toggle-favorite-private
         </button>
         <button type="button" onClick={() => props.onProfileChange('writer')}>
           switch-profile
@@ -143,6 +156,7 @@ describe('App hidden items state', () => {
     storageMocks.setItem.mockReset()
     bridgeMocks.getProfileFromBridge.mockReset()
     bridgeMocks.listProjectProfilesFromBridge.mockReset()
+    bridgeMocks.saveProfileToBridge.mockReset()
 
     storageMocks.getItem.mockResolvedValue(null)
     storageMocks.setItem.mockResolvedValue(undefined)
@@ -166,8 +180,10 @@ describe('App hidden items state', () => {
         expandedFileNodes: [],
         expandedHeadingNodes: {},
         hiddenPaths: profileId === 'default' ? ['docs/private.md'] : [],
+        favoritePaths: profileId === 'default' ? ['docs/private.md'] : [],
       },
     }))
+    bridgeMocks.saveProfileToBridge.mockImplementation(async (_projectId: string, profile: unknown) => profile)
   })
 
   it('keeps the active hidden document open, reveals it temporarily, and resets the reveal state on profile switch', async () => {
@@ -199,6 +215,39 @@ describe('App hidden items state', () => {
       expect(screen.getByTestId('active-profile')).toHaveTextContent('writer')
     })
     expect(screen.getByTestId('show-hidden-items')).toHaveTextContent('false')
+    expect(screen.getByTestId('visible-tree')).toHaveTextContent('docs/private.md')
+  })
+
+  it('supports the combined hidden-items and favorites-only mode, and resets favorites-only on profile switch', async () => {
+    const user = userEvent.setup()
+
+    render(<App />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('favorite-paths')).toHaveTextContent('docs/private.md')
+    })
+    expect(screen.getByTestId('show-hidden-items')).toHaveTextContent('false')
+    expect(screen.getByTestId('show-favorites-only')).toHaveTextContent('false')
+    expect(screen.getByTestId('visible-tree')).not.toHaveTextContent('docs/private.md')
+
+    await user.click(screen.getByRole('button', { name: 'toggle-hidden-items' }))
+    await user.click(screen.getByRole('button', { name: 'toggle-favorites-only' }))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('show-hidden-items')).toHaveTextContent('true')
+      expect(screen.getByTestId('show-favorites-only')).toHaveTextContent('true')
+    })
+    expect(screen.getByTestId('visible-tree')).toHaveTextContent('docs/private.md')
+    expect(screen.getByTestId('visible-tree')).not.toHaveTextContent('docs/guide.md')
+
+    await user.click(screen.getByRole('button', { name: 'switch-profile' }))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('active-profile')).toHaveTextContent('writer')
+    })
+    expect(screen.getByTestId('show-hidden-items')).toHaveTextContent('false')
+    expect(screen.getByTestId('show-favorites-only')).toHaveTextContent('false')
+    expect(screen.getByTestId('favorite-paths')).toHaveTextContent('')
     expect(screen.getByTestId('visible-tree')).toHaveTextContent('docs/private.md')
   })
 })

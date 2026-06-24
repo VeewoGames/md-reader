@@ -6,6 +6,41 @@ import { WorkspaceFileTree } from '../../src/app/WorkspaceLayout'
 import { buildFileTree, createVisibleFileTree } from '../../src/workspace/file-tree'
 
 describe('WorkspaceFileTree hidden items actions', () => {
+  it('keeps a favorited document star visible and forwards the favorite toggle action', async () => {
+    const user = userEvent.setup()
+    const onToggleFavoriteDocument = vi.fn()
+
+    render(
+      <WorkspaceFileTree
+        nodes={
+          createVisibleFileTree({
+            sourceNodes: buildFileTree(['docs/api/reference.md']),
+            hiddenPaths: [],
+            showHiddenItems: false,
+          }).visibleNodes
+        }
+        level={0}
+        searchActive={false}
+        currentDocumentPath={null}
+        expandedDirectories={new Set(['docs', 'docs/api'])}
+        onToggleDirectory={() => {}}
+        onDocumentSelect={() => {}}
+        favoritePaths={['docs/api/reference.md']}
+        showHiddenItems={false}
+        onToggleFavoriteDocument={onToggleFavoriteDocument}
+        onHidePath={() => {}}
+        onUnhidePath={() => {}}
+      />,
+    )
+
+    const favoriteButton = screen.getByRole('button', { name: '取消收藏 reference.md' })
+    expect(favoriteButton).toHaveAttribute('data-favorited', 'true')
+
+    await user.click(favoriteButton)
+
+    expect(onToggleFavoriteDocument).toHaveBeenCalledWith('docs/api/reference.md')
+  })
+
   it('calls onHidePath for a visible document action button', async () => {
     const user = userEvent.setup()
     const onHidePath = vi.fn()
@@ -25,7 +60,9 @@ describe('WorkspaceFileTree hidden items actions', () => {
         expandedDirectories={new Set(['docs'])}
         onToggleDirectory={() => {}}
         onDocumentSelect={() => {}}
+        favoritePaths={[]}
         showHiddenItems={false}
+        onToggleFavoriteDocument={() => {}}
         onHidePath={onHidePath}
         onUnhidePath={() => {}}
       />,
@@ -55,7 +92,9 @@ describe('WorkspaceFileTree hidden items actions', () => {
         expandedDirectories={new Set(['docs'])}
         onToggleDirectory={() => {}}
         onDocumentSelect={() => {}}
+        favoritePaths={[]}
         showHiddenItems
+        onToggleFavoriteDocument={() => {}}
         onHidePath={() => {}}
         onUnhidePath={onUnhidePath}
       />,
@@ -82,7 +121,9 @@ describe('WorkspaceFileTree hidden items actions', () => {
         expandedDirectories={new Set(['docs', 'docs/private'])}
         onToggleDirectory={() => {}}
         onDocumentSelect={() => {}}
+        favoritePaths={[]}
         showHiddenItems
+        onToggleFavoriteDocument={() => {}}
         onHidePath={() => {}}
         onUnhidePath={() => {}}
       />,
