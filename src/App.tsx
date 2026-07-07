@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 
+import { ActionDialog } from './app/ActionDialog'
 import { AppShell } from './app/AppShell'
+import type { WorkspaceActionToast } from './app/WorkspaceLayout'
 import type { RegularViewState, WorkspaceMode } from './app/TopBar'
 import { createBrowserKeyValueStore } from './shared/key-value-store'
 import { STORAGE_KEYS } from './shared/storage-keys'
@@ -14,13 +16,19 @@ import {
   type WorkspaceTab,
 } from './workspace/workspace-session'
 import {
+  createDirectoryNodeInBridge,
+  createDocumentNodeInBridge,
+  deleteDocumentNodeInBridge,
+  duplicateDocumentNodeInBridge,
   BridgeDocumentConflictError,
+  moveDocumentNodeInBridge,
   getDocumentContentFromBridge,
   getProfileFromBridge,
   getFileTreePathsFromBridge,
   getLocalBridgeHealth,
   listProjectsFromBridge,
   listProjectProfilesFromBridge,
+  renameDocumentNodeInBridge,
   registerProjectWithBridge,
   restartLocalBridgeService,
   saveProfileToBridge,
@@ -29,6 +37,12 @@ import {
   stopLocalBridgeService,
 } from './workspace/local-bridge-access'
 import { createLocalStateStore } from './workspace/local-state'
+import type { WorkspaceLocalState } from './workspace/local-state'
+import {
+  removePathCollections,
+  rewritePathCollections,
+  rewriteSessionDocumentPath,
+} from './workspace/document-path-mutation'
 import {
   createProfileStore,
   type DocumentLineHeight,
@@ -127,6 +141,53 @@ function normalizeLocalStateSnapshot(state: {
   }
 }
 
+function reconcileLocalStateWithFileTree(
+  state: ReturnType<typeof normalizeLocalStateSnapshot>,
+  markdownPaths: string[],
+) {
+  const availableDocumentPaths = new Set(markdownPaths)
+  const nextOpenDocumentPaths = state.openDocumentPaths.filter((path) => availableDocumentPaths.has(path))
+  const nextActiveDocumentPath =
+    state.activeDocumentPath && availableDocumentPaths.has(state.activeDocumentPath)
+      ? state.activeDocumentPath
+      : nextOpenDocumentPaths[0] ?? null
+  const nextTabStateByDocument = Object.fromEntries(
+    Object.entries(state.tabStateByDocument).filter(([path]) => availableDocumentPaths.has(path)),
+  )
+  const nextReadingProgressByDocument = Object.fromEntries(
+    Object.entries(state.readingProgressByDocument).filter(([path]) => availableDocumentPaths.has(path)),
+  )
+  const changed =
+    nextActiveDocumentPath !== state.activeDocumentPath ||
+    nextOpenDocumentPaths.length !== state.openDocumentPaths.length ||
+    Object.keys(nextTabStateByDocument).length !== Object.keys(state.tabStateByDocument).length ||
+    Object.keys(nextReadingProgressByDocument).length !==
+      Object.keys(state.readingProgressByDocument).length
+
+  return {
+    changed,
+    state: {
+      ...state,
+      openDocumentPaths: nextOpenDocumentPaths,
+      activeDocumentPath: nextActiveDocumentPath,
+      tabStateByDocument: nextTabStateByDocument,
+      readingProgressByDocument: nextReadingProgressByDocument,
+    },
+  }
+}
+
+function isMissingDocumentLoadError(error: unknown) {
+  if (!(error instanceof Error)) {
+    return false
+  }
+
+  return (
+    error.message.includes('Document not found:') ||
+    error.message.includes('missing document:') ||
+    error.message.includes('ENOENT:')
+  )
+}
+
 function removeTab(session: WorkspaceSession, tabId: string): WorkspaceSession {
   return {
     ...session,
@@ -182,6 +243,19 @@ function formatSaveErrorMessage(message: string): string {
   return message
 }
 
+function getDocumentDirectoryPath(documentPath: string | null): string {
+  if (!documentPath || !documentPath.includes('/')) {
+    return ''
+  }
+
+  return documentPath.split('/').slice(0, -1).join('/')
+}
+
+function joinNodePath(directoryPath: string, name: string): string {
+  const trimmedName = name.trim()
+  return directoryPath ? `${directoryPath}/${trimmedName}` : trimmedName
+}
+
 type PendingWorkspaceAction =
   | { kind: 'switch-project'; projectId: string }
   | { kind: 'switch-profile'; profileId: string }
@@ -191,6 +265,17 @@ type PendingWorkspaceAction =
 type PendingCloseTabAction = {
   kind: 'close-tab'
   tabId: string
+}
+
+type PendingDeleteDocumentAction = {
+  kind: 'delete-document'
+  documentPath: string
+}
+
+type PendingCreateNodeAction = {
+  kind: 'document' | 'directory'
+  directoryPath: string
+  defaultName: string
 }
 
 function getSaveIndicator(
@@ -235,7 +320,12 @@ function App() {
   const [isServiceActionPending, setIsServiceActionPending] = useState(false)
   const [pendingWorkspaceAction, setPendingWorkspaceAction] = useState<PendingWorkspaceAction | null>(null)
   const [pendingCloseTabAction, setPendingCloseTabAction] = useState<PendingCloseTabAction | null>(null)
+  const [pendingDeleteDocumentAction, setPendingDeleteDocumentAction] =
+    useState<PendingDeleteDocumentAction | null>(null)
+  const [pendingCreateNodeAction, setPendingCreateNodeAction] = useState<PendingCreateNodeAction | null>(null)
+  const [pendingCreateNodeName, setPendingCreateNodeName] = useState('')
   const [statusMessage, setStatusMessage] = useState<string | null>('还没有接入任何 Markdown 项目')
+  const [actionToast, setActionToast] = useState<WorkspaceActionToast | null>(null)
   const [sidebarWidth, setSidebarWidth] = useState(280)
   const [outlineWidth, setOutlineWidth] = useState(320)
   const [expandedFileNodes, setExpandedFileNodes] = useState<string[]>([])
@@ -260,6 +350,7 @@ function App() {
     ? filterFileTreeByFavorites(visibleAfterHidden, favoritePaths)
     : visibleAfterHidden
   const autosaveTimerRef = useRef<number | null>(null)
+  const actionToastTimerRef = useRef<number | null>(null)
   const flushPromiseRef = useRef<Promise<boolean> | null>(null)
   const activeProjectIdRef = useRef<string | null>(null)
   const activeProfileIdRef = useRef(activeProfileId)
@@ -274,6 +365,7 @@ function App() {
   const lastAckedSaveRevisionRef = useRef(0)
   const isComposingRef = useRef(false)
   const hasHydratedActiveProfileRef = useRef(false)
+  const actionToastIdRef = useRef(0)
 
   function clearSaveFailureStatus(projectId: string | null) {
     setStatusMessage((current) => {
@@ -286,6 +378,31 @@ function App() {
 
       return projectName ? `当前项目：${projectName}` : current
     })
+  }
+
+  function clearActionToastTimer() {
+    if (actionToastTimerRef.current != null) {
+      window.clearTimeout(actionToastTimerRef.current)
+      actionToastTimerRef.current = null
+    }
+  }
+
+  function showActionToast(message: string, tone: WorkspaceActionToast['tone'] = 'success') {
+    actionToastIdRef.current += 1
+    setActionToast({
+      id: actionToastIdRef.current,
+      message,
+      tone,
+    })
+  }
+
+  function publishActionFeedback(
+    message: string,
+    tone: WorkspaceActionToast['tone'] = 'success',
+    statusOverride?: string,
+  ) {
+    setStatusMessage(statusOverride ?? message)
+    showActionToast(message, tone)
   }
 
   function getDirtyTabs(nextSession = sessionRef.current): WorkspaceTab[] {
@@ -413,6 +530,23 @@ function App() {
   }, [])
 
   useEffect(() => {
+    if (actionToast == null) {
+      clearActionToastTimer()
+      return
+    }
+
+    clearActionToastTimer()
+    actionToastTimerRef.current = window.setTimeout(() => {
+      setActionToast((current) => (current?.id === actionToast.id ? null : current))
+      actionToastTimerRef.current = null
+    }, 2600)
+
+    return () => {
+      clearActionToastTimer()
+    }
+  }, [actionToast])
+
+  useEffect(() => {
     if (!hasHydratedActiveProfileRef.current) {
       return
     }
@@ -526,6 +660,12 @@ function App() {
       }
     }
   }, [activeProjectId, activeTab])
+
+  useEffect(() => {
+    return () => {
+      clearActionToastTimer()
+    }
+  }, [])
 
   function resetSessionState() {
     draftRevisionRef.current = 0
@@ -891,10 +1031,14 @@ function App() {
     }
 
     const markdownPaths = await workspaceProvider.getFileTreePaths(project.id, nextProfileId)
-    const localState = normalizeLocalStateSnapshot(
+    const restoredLocalState = normalizeLocalStateSnapshot(
       (await localStateStore.getState(project.id)) as Awaited<
         ReturnType<typeof localStateStore.getState>
       > & { activeMode: 'regular' | 'split' | 'read' | 'edit'; lastKnownScrollTop?: number },
+    )
+    const { state: localState, changed: localStateChanged } = reconcileLocalStateWithFileTree(
+      restoredLocalState,
+      markdownPaths,
     )
     const openDocumentPaths = localState.openDocumentPaths
     const tabStateByDocument = localState.tabStateByDocument
@@ -910,19 +1054,30 @@ function App() {
       openDocumentPaths.includes(localState.activeDocumentPath)
         ? localState.activeDocumentPath
         : openDocumentPaths[0] ?? null
-
-    setActiveProjectId(project.id)
-    setFileTree(buildFileTree(markdownPaths))
-    setSession({
+    const restoredSession: WorkspaceSession = {
       tabs,
       activeTabId: nextActiveDocumentPath ? createTabId(nextActiveDocumentPath) : null,
       mode: normalizeWorkspaceMode(localState.activeMode),
       regularViewState:
         localState.regularViewState ?? inferRegularViewStateFromMode(localState.activeMode),
-    })
+    }
+
+    setActiveProjectId(project.id)
+    setFileTree(buildFileTree(markdownPaths))
+    sessionRef.current = restoredSession
+    setSession(restoredSession)
     setStatusMessage(
       markdownPaths.length > 0 ? `当前项目：${project.name}` : `当前项目：${project.name}，但还没有发现 Markdown 文件`,
     )
+
+    if (localStateChanged) {
+      await localStateStore.saveState(project.id, {
+        ...localState,
+        activeMode: normalizeWorkspaceMode(localState.activeMode),
+        regularViewState:
+          localState.regularViewState ?? inferRegularViewStateFromMode(localState.activeMode),
+      })
+    }
 
     if (nextActiveDocumentPath) {
       await loadDocumentContent(project, nextActiveDocumentPath, nextProfileId)
@@ -1134,6 +1289,185 @@ function App() {
     await continueWorkspaceAction({ kind: 'switch-profile', profileId })
   }
 
+  async function readNormalizedLocalState(projectId: string): Promise<WorkspaceLocalState> {
+    return normalizeLocalStateSnapshot(
+      (await localStateStore.getState(projectId)) as Awaited<
+        ReturnType<typeof localStateStore.getState>
+      > & { activeMode: 'regular' | 'split' | 'read' | 'edit'; lastKnownScrollTop?: number },
+    ) as WorkspaceLocalState
+  }
+
+  async function readActiveProfile(projectId: string) {
+    return workspaceSource === 'local-service'
+      ? getProfileFromBridge(projectId, activeProfileIdRef.current, activeProfileIdRef.current)
+      : profileStore.getProfile(projectId, activeProfileIdRef.current)
+  }
+
+  async function persistActiveProfile(projectId: string, profile: Awaited<ReturnType<typeof readActiveProfile>>) {
+    if (workspaceSource === 'local-service') {
+      await saveProfileToBridge(projectId, profile, activeProfileIdRef.current)
+      return
+    }
+
+    await profileStore.saveProfile(projectId, profile)
+  }
+
+  async function refreshProjectTree(projectId: string, profileId: string) {
+    const markdownPaths = await workspaceProvider.getFileTreePaths(projectId, profileId)
+    setFileTree(buildFileTree(markdownPaths))
+    return markdownPaths
+  }
+
+  async function purgeMissingDocumentPath(
+    project: ProjectRegistryRecord,
+    profileId: string,
+    documentPath: string,
+  ) {
+    const currentSession = sessionRef.current
+    const closingIndex = currentSession.tabs.findIndex((tab) => tab.documentPath === documentPath)
+    const closingTab = closingIndex >= 0 ? currentSession.tabs[closingIndex] : null
+    const remainingTabs =
+      closingTab == null
+        ? currentSession.tabs
+        : currentSession.tabs.filter((tab) => tab.documentPath !== documentPath)
+    const fallbackTab =
+      closingTab == null || closingTab.id !== currentSession.activeTabId
+        ? getActiveTab({
+            ...currentSession,
+            tabs: remainingTabs,
+          })
+        : remainingTabs[Math.max(0, closingIndex - 1)] ?? remainingTabs[0] ?? null
+    const nextSession =
+      closingTab == null
+        ? currentSession
+        : {
+            ...removeTab(currentSession, closingTab.id),
+            activeTabId:
+              currentSession.activeTabId === closingTab.id
+                ? (fallbackTab?.id ?? null)
+                : currentSession.activeTabId,
+          }
+
+    if (closingTab != null) {
+      sessionRef.current = nextSession
+      setSession(nextSession)
+    }
+
+    const localState = normalizeLocalStateSnapshot(
+      (await localStateStore.getState(project.id)) as Awaited<
+        ReturnType<typeof localStateStore.getState>
+      > & { activeMode: 'regular' | 'split' | 'read' | 'edit'; lastKnownScrollTop?: number },
+    )
+    await localStateStore.saveState(project.id, {
+      ...localState,
+      openDocumentPaths: remainingTabs.map((tab) => tab.documentPath).filter((path) => path !== documentPath),
+      activeDocumentPath:
+        fallbackTab?.documentPath ??
+        (localState.activeDocumentPath === documentPath ? null : localState.activeDocumentPath),
+      activeMode: nextSession.mode,
+      regularViewState: nextSession.regularViewState,
+      tabStateByDocument: Object.fromEntries(
+        Object.entries(localState.tabStateByDocument).filter(([path]) => path !== documentPath),
+      ),
+      readingProgressByDocument: Object.fromEntries(
+        Object.entries(localState.readingProgressByDocument).filter(([path]) => path !== documentPath),
+      ),
+    })
+
+    if (fallbackTab && fallbackTab.persistedContent == null) {
+      await loadDocumentContent(project, fallbackTab.documentPath, profileId)
+    }
+
+    await refreshProjectTree(project.id, profileId)
+    setStatusMessage(`已移除失效文档：${documentPath}`)
+  }
+
+  function resolveDefaultDirectoryPath(preferredDirectoryPath?: string) {
+    if (preferredDirectoryPath != null) {
+      return preferredDirectoryPath
+    }
+
+    return getDocumentDirectoryPath(currentDocumentPathRef.current)
+  }
+
+  async function flushDocumentDraftIfNeeded(documentPath: string): Promise<boolean> {
+    const tab = sessionRef.current.tabs.find((entry) => entry.documentPath === documentPath)
+    if (!tab) {
+      return true
+    }
+
+    const isDirty =
+      tab.persistedContent != null &&
+      tab.draftContent != null &&
+      tab.draftContent !== tab.persistedContent
+
+    if (!isDirty) {
+      return true
+    }
+
+    return saveTabById(tab.id, 'leave')
+  }
+
+  async function rewriteDocumentPathState(sourcePath: string, targetPath: string) {
+    const projectId = activeProjectIdRef.current
+    if (!projectId) {
+      return
+    }
+
+    const [localState, profile] = await Promise.all([
+      readNormalizedLocalState(projectId),
+      readActiveProfile(projectId),
+    ])
+    const nextCollections = rewritePathCollections({
+      localState,
+      profile,
+      sourcePath,
+      targetPath,
+    })
+
+    setSession((current) => rewriteSessionDocumentPath(current, sourcePath, targetPath))
+    setHiddenPaths(nextCollections.profile.navigation.hiddenPaths)
+    setFavoritePaths(nextCollections.profile.navigation.favoritePaths)
+
+    await Promise.all([
+      localStateStore.saveState(projectId, {
+        ...nextCollections.localState,
+        activeMode: sessionRef.current.mode,
+        regularViewState: sessionRef.current.regularViewState,
+      }),
+      persistActiveProfile(projectId, nextCollections.profile),
+    ])
+  }
+
+  async function removeDocumentPathState(documentPath: string) {
+    const projectId = activeProjectIdRef.current
+    if (!projectId) {
+      return
+    }
+
+    const [localState, profile] = await Promise.all([
+      readNormalizedLocalState(projectId),
+      readActiveProfile(projectId),
+    ])
+    const nextCollections = removePathCollections({
+      localState,
+      profile,
+      targetPath: documentPath,
+    })
+
+    setHiddenPaths(nextCollections.profile.navigation.hiddenPaths)
+    setFavoritePaths(nextCollections.profile.navigation.favoritePaths)
+
+    await Promise.all([
+      localStateStore.saveState(projectId, {
+        ...nextCollections.localState,
+        activeMode: sessionRef.current.mode,
+        regularViewState: sessionRef.current.regularViewState,
+      }),
+      persistActiveProfile(projectId, nextCollections.profile),
+    ])
+  }
+
   async function handleModeChange(nextMode: WorkspaceMode) {
     setSession((current) => ({ ...current, mode: nextMode }))
 
@@ -1152,6 +1486,258 @@ function App() {
       activeMode: nextMode,
       regularViewState: session.regularViewState,
     })
+  }
+
+  async function handleCreateDocument(preferredDirectoryPath?: string) {
+    const projectId = activeProjectIdRef.current
+    if (!projectId) {
+      return
+    }
+
+    const directoryPath = resolveDefaultDirectoryPath(preferredDirectoryPath)
+    setPendingCreateNodeAction({
+      kind: 'document',
+      directoryPath,
+      defaultName: '未命名文档.md',
+    })
+    setPendingCreateNodeName('未命名文档.md')
+  }
+
+  async function handleCreateDirectory(preferredDirectoryPath?: string) {
+    const projectId = activeProjectIdRef.current
+    if (!projectId) {
+      return
+    }
+
+    const directoryPath = resolveDefaultDirectoryPath(preferredDirectoryPath)
+    setPendingCreateNodeAction({
+      kind: 'directory',
+      directoryPath,
+      defaultName: '未命名文件夹',
+    })
+    setPendingCreateNodeName('未命名文件夹')
+  }
+
+  function handleCancelCreateNode() {
+    setPendingCreateNodeAction(null)
+    setPendingCreateNodeName('')
+  }
+
+  async function handleConfirmCreateNode() {
+    const action = pendingCreateNodeAction
+    const projectId = activeProjectIdRef.current
+    const profileId = activeProfileIdRef.current
+    if (!action || !projectId) {
+      handleCancelCreateNode()
+      return
+    }
+
+    try {
+      const nextName = pendingCreateNodeName.trim()
+      if (!nextName) {
+        return
+      }
+
+      const targetPath = joinNodePath(action.directoryPath, nextName)
+      if (action.kind === 'document') {
+        await createDocumentNodeInBridge(projectId, profileId, targetPath, '')
+      } else {
+        await createDirectoryNodeInBridge(projectId, profileId, targetPath)
+      }
+
+      await refreshProjectTree(projectId, profileId)
+      await handleExpandedFileNodesChange(
+        action.kind === 'document'
+          ? action.directoryPath && !expandedFileNodes.includes(action.directoryPath)
+            ? [...expandedFileNodes, action.directoryPath].sort()
+            : expandedFileNodes
+          : Array.from(new Set([...expandedFileNodes, action.directoryPath, targetPath].filter(Boolean))).sort(),
+      )
+
+      if (action.kind === 'document') {
+        await handleDocumentSelect(targetPath)
+        publishActionFeedback(`已新建文档：${targetPath}`)
+      } else {
+        publishActionFeedback(`已新建文件夹：${targetPath}`)
+      }
+
+      handleCancelCreateNode()
+    } catch (error) {
+      publishActionFeedback(
+        error instanceof Error
+          ? `${action.kind === 'document' ? '新建文档' : '新建文件夹'}失败：${error.message}`
+          : `${action.kind === 'document' ? '新建文档' : '新建文件夹'}失败`,
+        'error',
+      )
+    }
+  }
+
+  async function handleCopyDocumentLink(documentPath: string) {
+    try {
+      await navigator.clipboard.writeText(documentPath)
+      publishActionFeedback(`已拷贝链接：${documentPath}`)
+    } catch (error) {
+      publishActionFeedback(
+        error instanceof Error ? `拷贝链接失败：${error.message}` : '拷贝链接失败',
+        'error',
+      )
+    }
+  }
+
+  async function handleCopyDirectoryPath(directoryPath: string) {
+    try {
+      await navigator.clipboard.writeText(directoryPath)
+      publishActionFeedback(`已拷贝路径：${directoryPath}`)
+    } catch (error) {
+      publishActionFeedback(
+        error instanceof Error ? `拷贝路径失败：${error.message}` : '拷贝路径失败',
+        'error',
+      )
+    }
+  }
+
+  async function handleDuplicateDocument(documentPath: string, duplicateName: string) {
+    const projectId = activeProjectIdRef.current
+    const profileId = activeProfileIdRef.current
+    if (!projectId) {
+      return false
+    }
+
+    try {
+      const baseName = documentPath.split('/').at(-1) ?? documentPath
+      const trimmedDuplicateName = duplicateName.trim()
+      if (!trimmedDuplicateName || trimmedDuplicateName === baseName) {
+        return false
+      }
+
+      const targetPath = joinNodePath(getDocumentDirectoryPath(documentPath), trimmedDuplicateName)
+      await duplicateDocumentNodeInBridge(projectId, profileId, documentPath, targetPath)
+      await refreshProjectTree(projectId, profileId)
+      await handleDocumentSelect(targetPath)
+      publishActionFeedback(`已创建副本：${targetPath}`)
+      return true
+    } catch (error) {
+      publishActionFeedback(
+        error instanceof Error ? `创建副本失败：${error.message}` : '创建副本失败',
+        'error',
+      )
+      return false
+    }
+  }
+
+  async function handleRenameDocument(documentPath: string, nextName: string) {
+    const projectId = activeProjectIdRef.current
+    const profileId = activeProfileIdRef.current
+    if (!projectId) {
+      return false
+    }
+
+    try {
+      if (!(await flushDocumentDraftIfNeeded(documentPath))) {
+        return false
+      }
+
+      const currentName = documentPath.split('/').at(-1) ?? documentPath
+      const trimmedNextName = nextName.trim()
+      if (!trimmedNextName || trimmedNextName === currentName) {
+        return false
+      }
+
+      const result = await renameDocumentNodeInBridge(projectId, profileId, documentPath, trimmedNextName)
+      await rewriteDocumentPathState(documentPath, result.path)
+      await refreshProjectTree(projectId, profileId)
+      publishActionFeedback(`已重命名：${currentName} -> ${trimmedNextName}`)
+      return true
+    } catch (error) {
+      publishActionFeedback(
+        error instanceof Error ? `重命名失败：${error.message}` : '重命名失败',
+        'error',
+      )
+      return false
+    }
+  }
+
+  async function handleDeleteDocument(documentPath: string) {
+    const projectId = activeProjectIdRef.current
+    if (!projectId) {
+      return
+    }
+
+    setPendingDeleteDocumentAction({
+      kind: 'delete-document',
+      documentPath,
+    })
+  }
+
+  function handleCancelDeleteDocument() {
+    setPendingDeleteDocumentAction(null)
+  }
+
+  async function handleConfirmDeleteDocument() {
+    const action = pendingDeleteDocumentAction
+    const projectId = activeProjectIdRef.current
+    const profileId = activeProfileIdRef.current
+    if (!action || !projectId) {
+      setPendingDeleteDocumentAction(null)
+      return
+    }
+
+    try {
+      if (!(await flushDocumentDraftIfNeeded(action.documentPath))) {
+        return
+      }
+
+      const tab = sessionRef.current.tabs.find((entry) => entry.documentPath === action.documentPath) ?? null
+      await deleteDocumentNodeInBridge(projectId, profileId, action.documentPath)
+
+      if (tab) {
+        await closeTabInternal(tab.id)
+      }
+
+      await removeDocumentPathState(action.documentPath)
+      await refreshProjectTree(projectId, profileId)
+      publishActionFeedback(`已删除：${action.documentPath}`)
+      setPendingDeleteDocumentAction(null)
+    } catch (error) {
+      publishActionFeedback(
+        error instanceof Error ? `删除失败：${error.message}` : '删除失败',
+        'error',
+      )
+    }
+  }
+
+  async function handleMoveDocumentToDirectory(sourcePath: string, targetDirectoryPath: string) {
+    const projectId = activeProjectIdRef.current
+    const profileId = activeProfileIdRef.current
+    if (!projectId) {
+      return
+    }
+
+    try {
+      const fileName = sourcePath.split('/').at(-1) ?? sourcePath
+      const targetPath = joinNodePath(targetDirectoryPath, fileName)
+
+      if (targetPath === sourcePath) {
+        return
+      }
+
+      if (!(await flushDocumentDraftIfNeeded(sourcePath))) {
+        return
+      }
+
+      const result = await moveDocumentNodeInBridge(projectId, profileId, sourcePath, targetPath)
+      await rewriteDocumentPathState(sourcePath, result.path)
+      await refreshProjectTree(projectId, profileId)
+      await handleExpandedFileNodesChange(
+        Array.from(new Set([...expandedFileNodes, targetDirectoryPath].filter(Boolean))).sort(),
+      )
+      publishActionFeedback(`已移动：${sourcePath} -> ${result.path}`)
+    } catch (error) {
+      publishActionFeedback(
+        error instanceof Error ? `移动失败：${error.message}` : '移动失败',
+        'error',
+      )
+    }
   }
 
   async function handleDocumentSelect(path: string) {
@@ -1292,6 +1878,11 @@ function App() {
       const document = await getDocumentContentFromBridge(project.id, profileId, documentPath)
       applyLoadedDocument(document.path, document.content, document.mtimeMs, `当前项目：${project.name}`)
     } catch (error) {
+      if (isMissingDocumentLoadError(error)) {
+        await purgeMissingDocumentPath(project, profileId, documentPath)
+        return
+      }
+
       setSession((current) => {
         const existingTab = getTabByDocumentPath(current, documentPath) ?? createWorkspaceTab(documentPath)
         const nextTab: WorkspaceTab = {
@@ -1643,6 +2234,7 @@ function App() {
         saveIndicator={getSaveIndicator(activeTab)}
         isDocumentLoading={isDocumentLoading}
         statusMessage={statusMessage}
+        actionToast={actionToast}
         sidebarWidth={sidebarWidth}
         outlineWidth={outlineWidth}
         expandedFileNodes={expandedFileNodes}
@@ -1666,6 +2258,14 @@ function App() {
         onRestartService={handleRestartService}
         onStopService={handleStopService}
         onDocumentSelect={handleDocumentSelect}
+        onCreateDocument={handleCreateDocument}
+        onCreateDirectory={handleCreateDirectory}
+        onCopyDocumentLink={handleCopyDocumentLink}
+        onCopyDirectoryPath={handleCopyDirectoryPath}
+        onDuplicateDocument={handleDuplicateDocument}
+        onRenameDocument={handleRenameDocument}
+        onDeleteDocument={handleDeleteDocument}
+        onMoveDocument={handleMoveDocumentToDirectory}
         onExpandedFileNodesChange={handleExpandedFileNodesChange}
         onDocumentFontSizeChange={handleDocumentFontSizeChange}
         onDocumentPageWidthChange={handleDocumentPageWidthChange}
@@ -1679,37 +2279,93 @@ function App() {
         onOutlineWidthCommit={handleOutlineWidthCommit}
       />
       {pendingWorkspaceAction ? (
-        <div role="dialog" aria-label="会话级保存闸门">
-          <p>当前会话存在未保存标签</p>
-          <ul>
+        <ActionDialog
+          ariaLabel="会话级保存闸门"
+          title="当前会话存在未保存标签"
+          description="继续执行前，需要先决定这些文档的保存方式。"
+          tone="warning"
+          actions={[
+            { label: '取消', onClick: handleCancelWorkspaceAction },
+            { label: '放弃全部', onClick: handleDiscardAllAndContinue },
+            { label: '保存全部', onClick: handleSaveAllAndContinue, tone: 'primary' },
+          ]}
+        >
+          <ul className="app-dialog__list">
             {getDirtyTabs().map((tab) => (
               <li key={tab.id}>{tab.documentPath.split('/').at(-1) ?? tab.documentPath}</li>
             ))}
           </ul>
-          <button type="button" onClick={handleSaveAllAndContinue}>
-            保存全部
-          </button>
-          <button type="button" onClick={handleDiscardAllAndContinue}>
-            放弃全部
-          </button>
-          <button type="button" onClick={handleCancelWorkspaceAction}>
-            取消
-          </button>
-        </div>
+        </ActionDialog>
       ) : null}
       {pendingCloseTabAction ? (
-        <div role="dialog" aria-label="关闭未保存标签">
-          <p>当前标签存在未保存内容</p>
-          <button type="button" onClick={handleSaveTabAndClose}>
-            保存
-          </button>
-          <button type="button" onClick={handleDiscardTabAndClose}>
-            放弃
-          </button>
-          <button type="button" onClick={handleCancelTabClose}>
-            取消
-          </button>
-        </div>
+        <ActionDialog
+          ariaLabel="关闭未保存标签"
+          title="当前标签存在未保存内容"
+          description="关闭前请选择是否保留这次编辑。"
+          tone="warning"
+          actions={[
+            { label: '取消', onClick: handleCancelTabClose },
+            { label: '放弃', onClick: handleDiscardTabAndClose },
+            { label: '保存', onClick: handleSaveTabAndClose, tone: 'primary' },
+          ]}
+        />
+      ) : null}
+      {pendingDeleteDocumentAction ? (
+        <ActionDialog
+          ariaLabel="删除文档"
+          title="删除文档"
+          description={`确认删除「${pendingDeleteDocumentAction.documentPath.split('/').at(-1) ?? pendingDeleteDocumentAction.documentPath}」？删除后无法恢复。`}
+          tone="danger"
+          actions={[
+            { label: '取消', onClick: handleCancelDeleteDocument },
+            { label: '删除', onClick: handleConfirmDeleteDocument, tone: 'danger' },
+          ]}
+        >
+          <p className="app-dialog__path">{pendingDeleteDocumentAction.documentPath}</p>
+        </ActionDialog>
+      ) : null}
+      {pendingCreateNodeAction ? (
+        <ActionDialog
+          ariaLabel={pendingCreateNodeAction.kind === 'document' ? '新建文档' : '新建文件夹'}
+          title={pendingCreateNodeAction.kind === 'document' ? '新建文档' : '新建文件夹'}
+          description={
+            pendingCreateNodeAction.kind === 'document'
+              ? '输入新文档名称，创建后会自动打开。'
+              : '输入新文件夹名称，创建后会保留在当前目录树中。'
+          }
+          actions={[
+            { label: '取消', onClick: handleCancelCreateNode },
+            {
+              label: pendingCreateNodeAction.kind === 'document' ? '创建文档' : '创建文件夹',
+              onClick: handleConfirmCreateNode,
+              tone: 'primary',
+            },
+          ]}
+        >
+          <div className="app-dialog__field">
+            <label className="app-dialog__label" htmlFor="create-node-name">
+              名称
+            </label>
+            <input
+              id="create-node-name"
+              className="app-dialog__input"
+              value={pendingCreateNodeName}
+              autoFocus
+              onChange={(event) => setPendingCreateNodeName(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault()
+                  void handleConfirmCreateNode()
+                }
+              }}
+            />
+            <p className="app-dialog__hint">
+              {pendingCreateNodeAction.directoryPath
+                ? `当前位置：${pendingCreateNodeAction.directoryPath}`
+                : '当前位置：项目根目录'}
+            </p>
+          </div>
+        </ActionDialog>
       ) : null}
     </>
   )

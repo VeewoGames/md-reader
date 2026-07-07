@@ -1,11 +1,17 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import {
+  createDirectoryNodeInBridge,
+  createDocumentNodeInBridge,
+  deleteDocumentNodeInBridge,
+  duplicateDocumentNodeInBridge,
   getDocumentContentFromBridge,
   getProfileFromBridge,
   getLocalBridgeHealth,
   listProjectsFromBridge,
   listProjectProfilesFromBridge,
+  moveDocumentNodeInBridge,
+  renameDocumentNodeInBridge,
   restartLocalBridgeService,
   registerProjectWithBridge,
   saveDocumentContentToBridge,
@@ -350,6 +356,170 @@ describe('local bridge access', () => {
       currentMtimeMs: 1718265605678,
       currentContentHash: 'ffffeeee',
     })
+  })
+
+  it('creates a markdown document through the local bridge', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        path: 'docs/guides/intro.md',
+        mtimeMs: 1718265605678,
+        size: 9,
+      }),
+    })
+
+    const payload = await createDocumentNodeInBridge('notes', 'default', 'docs/guides/intro.md', '# Intro', {
+      fetchImpl: fetchMock,
+    })
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://127.0.0.1:8797/api/projects/notes/nodes/document/create?profileId=default',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          path: 'docs/guides/intro.md',
+          content: '# Intro',
+        }),
+      }),
+    )
+    expect(payload.path).toBe('docs/guides/intro.md')
+  })
+
+  it('creates a directory through the local bridge', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        path: 'docs/guides',
+      }),
+    })
+
+    const payload = await createDirectoryNodeInBridge('notes', 'default', 'docs/guides', {
+      fetchImpl: fetchMock,
+    })
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://127.0.0.1:8797/api/projects/notes/nodes/directory/create?profileId=default',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          path: 'docs/guides',
+        }),
+      }),
+    )
+    expect(payload.path).toBe('docs/guides')
+  })
+
+  it('duplicates a document through the local bridge', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        path: 'docs/guide-copy.md',
+        mtimeMs: 1718265605678,
+        size: 9,
+      }),
+    })
+
+    const payload = await duplicateDocumentNodeInBridge(
+      'notes',
+      'default',
+      'docs/guide.md',
+      'docs/guide-copy.md',
+      { fetchImpl: fetchMock },
+    )
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://127.0.0.1:8797/api/projects/notes/nodes/document/duplicate?profileId=default',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          sourcePath: 'docs/guide.md',
+          targetPath: 'docs/guide-copy.md',
+        }),
+      }),
+    )
+    expect(payload.path).toBe('docs/guide-copy.md')
+  })
+
+  it('moves a document through the local bridge', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        path: 'docs/archive/guide.md',
+        mtimeMs: 1718265605678,
+        size: 9,
+      }),
+    })
+
+    const payload = await moveDocumentNodeInBridge(
+      'notes',
+      'default',
+      'docs/guide.md',
+      'docs/archive/guide.md',
+      { fetchImpl: fetchMock },
+    )
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://127.0.0.1:8797/api/projects/notes/nodes/document/move?profileId=default',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          sourcePath: 'docs/guide.md',
+          targetPath: 'docs/archive/guide.md',
+        }),
+      }),
+    )
+    expect(payload.path).toBe('docs/archive/guide.md')
+  })
+
+  it('renames a document through the local bridge', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        path: 'docs/guide-v2.md',
+        mtimeMs: 1718265605678,
+        size: 9,
+      }),
+    })
+
+    const payload = await renameDocumentNodeInBridge('notes', 'default', 'docs/guide.md', 'guide-v2.md', {
+      fetchImpl: fetchMock,
+    })
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://127.0.0.1:8797/api/projects/notes/nodes/document/rename?profileId=default',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          sourcePath: 'docs/guide.md',
+          nextName: 'guide-v2.md',
+        }),
+      }),
+    )
+    expect(payload.path).toBe('docs/guide-v2.md')
+  })
+
+  it('deletes a document through the local bridge', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        path: 'docs/guide.md',
+      }),
+    })
+
+    const payload = await deleteDocumentNodeInBridge('notes', 'default', 'docs/guide.md', {
+      fetchImpl: fetchMock,
+    })
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://127.0.0.1:8797/api/projects/notes/nodes/document/delete?profileId=default',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          path: 'docs/guide.md',
+        }),
+      }),
+    )
+    expect(payload.path).toBe('docs/guide.md')
   })
 
   it('requests bridge service restart through the local control endpoint', async () => {

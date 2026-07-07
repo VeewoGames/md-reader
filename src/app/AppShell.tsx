@@ -1,7 +1,7 @@
 import type { CSSProperties } from 'react'
 
 import { TopBar, type RegularViewState, type WorkspaceMode } from './TopBar'
-import { WorkspaceLayout } from './WorkspaceLayout'
+import { WorkspaceLayout, type WorkspaceActionToast } from './WorkspaceLayout'
 import type { VisibleFileTreeNode } from '../workspace/file-tree-types'
 import type { ProjectRegistryRecord } from '../workspace/registry'
 import type { TabSaveState } from '../workspace/workspace-session'
@@ -34,6 +34,7 @@ interface AppShellProps {
   saveIndicator?: string | null
   isDocumentLoading?: boolean
   statusMessage: string | null
+  actionToast?: WorkspaceActionToast | null
   sidebarWidth: number
   outlineWidth: number
   expandedFileNodes?: string[]
@@ -60,6 +61,14 @@ interface AppShellProps {
   onRestartService?: () => void
   onStopService?: () => void
   onDocumentSelect: (path: string) => void
+  onCreateDocument?: (directoryPath?: string) => void | Promise<void>
+  onCreateDirectory?: (directoryPath?: string) => void | Promise<void>
+  onCopyDocumentLink?: (path: string) => void | Promise<void>
+  onCopyDirectoryPath?: (path: string) => void | Promise<void>
+  onDuplicateDocument?: (path: string, nextName: string) => void | boolean | Promise<void | boolean>
+  onRenameDocument?: (path: string, nextName: string) => void | boolean | Promise<void | boolean>
+  onDeleteDocument?: (path: string) => void | Promise<void>
+  onMoveDocument?: (sourcePath: string, targetDirectoryPath: string) => void | Promise<void>
   onExpandedFileNodesChange?: (paths: string[]) => void | Promise<void>
   onDocumentFontSizeChange?: (fontSize: number) => void
   onDocumentPageWidthChange?: (pageWidth: PageWidthMode) => void
@@ -133,12 +142,21 @@ export function AppShell(props: AppShellProps) {
         editingDocumentContent={props.editingDocumentContent}
         isDocumentLoading={props.isDocumentLoading}
         statusMessage={props.statusMessage}
+        actionToast={props.actionToast}
         sidebarWidth={props.sidebarWidth}
         outlineWidth={props.outlineWidth}
         persistedExpandedDirectories={props.expandedFileNodes}
         hasPersistedExpandedDirectories={props.hasPersistedExpandedFileNodes}
         hasProjects={props.projects.length > 0}
         onDocumentSelect={props.onDocumentSelect}
+        onCreateDocument={props.onCreateDocument}
+        onCreateDirectory={props.onCreateDirectory}
+        onCopyDocumentLink={props.onCopyDocumentLink}
+        onCopyDirectoryPath={props.onCopyDirectoryPath}
+        onDuplicateDocument={props.onDuplicateDocument}
+        onRenameDocument={props.onRenameDocument}
+        onDeleteDocument={props.onDeleteDocument}
+        onMoveDocument={props.onMoveDocument}
         favoritePaths={props.favoritePaths}
         showFavoritesOnly={props.showFavoritesOnly}
         showHiddenItems={props.showHiddenItems}

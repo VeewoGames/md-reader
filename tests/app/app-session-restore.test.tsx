@@ -39,6 +39,7 @@ const documents = new Map([
 ])
 
 const bridgeMocks = vi.hoisted(() => ({
+  getFileTreePathsFromBridge: vi.fn(),
   getDocumentContentFromBridge: vi.fn(),
   getProfileFromBridge: vi.fn(),
   listProjectProfilesFromBridge: vi.fn(),
@@ -95,7 +96,7 @@ vi.mock('../../src/workspace/local-bridge-access', () => ({
   listProjectProfilesFromBridge: bridgeMocks.listProjectProfilesFromBridge,
   getProfileFromBridge: bridgeMocks.getProfileFromBridge,
   saveProfileToBridge: bridgeMocks.saveProfileToBridge,
-  getFileTreePathsFromBridge: vi.fn(async () => ['docs/guide.md', 'docs/next.md']),
+  getFileTreePathsFromBridge: bridgeMocks.getFileTreePathsFromBridge,
   getDocumentContentFromBridge: bridgeMocks.getDocumentContentFromBridge,
   saveDocumentContentToBridge: vi.fn(),
   registerProjectWithBridge: vi.fn(),
@@ -128,7 +129,21 @@ import App from '../../src/App'
 
 describe('App session restore', () => {
   beforeEach(() => {
+    localState.openDocumentPaths = ['docs/guide.md', 'docs/next.md']
+    localState.activeDocumentPath = 'docs/next.md'
+    localState.activeMode = 'split'
+    localState.regularViewState = 'editable'
+    localState.tabStateByDocument = {
+      'docs/guide.md': { lastKnownScrollTop: 128 },
+      'docs/next.md': { lastKnownScrollTop: 512 },
+    }
+    localState.readingProgressByDocument = {
+      'docs/guide.md': 128,
+      'docs/next.md': 512,
+    }
+
     bridgeMocks.getDocumentContentFromBridge.mockReset()
+    bridgeMocks.getFileTreePathsFromBridge.mockReset()
     bridgeMocks.getProfileFromBridge.mockReset()
     bridgeMocks.listProjectProfilesFromBridge.mockReset()
     bridgeMocks.saveProfileToBridge.mockReset()
@@ -137,6 +152,7 @@ describe('App session restore', () => {
     bridgeMocks.listProjectProfilesFromBridge.mockResolvedValue({
       profileIds: ['default', 'Lans'],
     })
+    bridgeMocks.getFileTreePathsFromBridge.mockResolvedValue(['docs/guide.md', 'docs/next.md'])
     bridgeMocks.getProfileFromBridge.mockResolvedValue({
       id: 'default',
       appearance: {
@@ -236,5 +252,86 @@ describe('App session restore', () => {
 
     expect(screen.queryByRole('button', { name: 'guide.md' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'next.md' })).not.toBeInTheDocument()
+  })
+
+  it('prunes missing restored documents before attempting to reload them', async () => {
+    localState.openDocumentPaths = ['docs/missing.md', 'docs/guide.md']
+    localState.activeDocumentPath = 'docs/missing.md'
+    localState.tabStateByDocument = {
+      'docs/missing.md': { lastKnownScrollTop: 32 },
+      'docs/guide.md': { lastKnownScrollTop: 128 },
+    }
+    localState.readingProgressByDocument = {
+      'docs/missing.md': 32,
+      'docs/guide.md': 128,
+    }
+
+    render(<App />)
+
+    await waitFor(() => {
+      expect(screen.getByRole('tab', { name: 'guide' })).toBeInTheDocument()
+    })
+
+    expect(screen.queryByRole('tab', { name: 'missing' })).not.toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'guide' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.queryByText(/读取文档失败/)).not.toBeInTheDocument()
+
+    expect(bridgeMocks.getDocumentContentFromBridge).toHaveBeenCalledWith('notes', 'default', 'docs/guide.md')
+    expect(bridgeMocks.getDocumentContentFromBridge).not.toHaveBeenCalledWith(
+      'notes',
+      'default',
+      'docs/missing.md',
+    )
+    expect(bridgeMocks.saveState).toHaveBeenCalledWith(
+      'notes',
+      expect.objectContaining({
+        openDocumentPaths: ['docs/guide.md'],
+        activeDocumentPath: 'docs/guide.md',
+      }),
+    )
+  })
+
+  it('self-heals a stale active tab when document loading reports the file is missing', async () => {
+    localState.openDocumentPaths = ['docs/missing.md', 'docs/guide.md']
+    localState.activeDocumentPath = 'docs/missing.md'
+    localState.tabStateByDocument = {
+      'docs/missing.md': { lastKnownScrollTop: 32 },
+      'docs/guide.md': { lastKnownScrollTop: 128 },
+    }
+    localState.readingProgressByDocument = {
+      'docs/missing.md': 32,
+      'docs/guide.md': 128,
+    }
+    bridgeMocks.getFileTreePathsFromBridge.mockResolvedValue(['docs/missing.md', 'docs/guide.md'])
+
+    render(<App />)
+
+    await waitFor(() => {
+      expect(screen.getByRole('tab', { name: 'guide' })).toBeInTheDocument()
+    })
+
+    await waitFor(() => {
+      expect(screen.queryByRole('tab', { name: 'missing' })).not.toBeInTheDocument()
+    })
+    expect(screen.getByRole('tab', { name: 'guide' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByText('已移除失效文档：docs/missing.md')).toBeInTheDocument()
+
+    expect(bridgeMocks.getDocumentContentFromBridge).toHaveBeenCalledWith(
+      'notes',
+      'default',
+      'docs/missing.md',
+    )
+    expect(bridgeMocks.getDocumentContentFromBridge).toHaveBeenCalledWith(
+      'notes',
+      'default',
+      'docs/guide.md',
+    )
+    expect(bridgeMocks.saveState).toHaveBeenCalledWith(
+      'notes',
+      expect.objectContaining({
+        openDocumentPaths: ['docs/guide.md'],
+        activeDocumentPath: 'docs/guide.md',
+      }),
+    )
   })
 })

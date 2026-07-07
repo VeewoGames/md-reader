@@ -23,6 +23,8 @@ function createDefaultProfile(profileId = "default") {
       expandedFileNodes: [],
       expandedFileNodesInitialized: false,
       expandedHeadingNodes: {},
+      hiddenPaths: [],
+      favoritePaths: [],
     },
   };
 }
@@ -52,6 +54,8 @@ function normalizeProfile(profileId, profile = {}) {
         fallback.navigation.expandedFileNodesInitialized,
       expandedHeadingNodes:
         profile.navigation?.expandedHeadingNodes ?? fallback.navigation.expandedHeadingNodes,
+      hiddenPaths: profile.navigation?.hiddenPaths ?? fallback.navigation.hiddenPaths,
+      favoritePaths: profile.navigation?.favoritePaths ?? fallback.navigation.favoritePaths,
     },
   };
 }

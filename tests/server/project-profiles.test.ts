@@ -30,6 +30,8 @@ describe('project profiles', () => {
     expect(profileIds).toEqual(['default', 'Lans'])
     expect(payload.profiles.default.id).toBe('default')
     expect(payload.profiles.Lans.id).toBe('Lans')
+    expect(payload.profiles.default.navigation.hiddenPaths).toEqual([])
+    expect(payload.profiles.default.navigation.favoritePaths).toEqual([])
   })
 
   it('saves and reloads a named repo profile', async () => {

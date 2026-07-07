@@ -20,6 +20,12 @@ export interface BridgeDocumentPayload {
   size: number
 }
 
+export interface BridgeNodePayload {
+  path: string
+  mtimeMs?: number
+  size?: number
+}
+
 export interface BridgeProjectProfilesPayload {
   profileIds: string[]
 }
@@ -278,6 +284,110 @@ export async function saveDocumentContentToBridge(
   return readJsonResponse<BridgeDocumentPayload>(response)
 }
 
+export async function createDocumentNodeInBridge(
+  projectId: string,
+  profileId: string,
+  documentPath: string,
+  content = '',
+  options: FetchOptions = {},
+): Promise<BridgeNodePayload> {
+  const fetchImpl = getFetch(options.fetchImpl)
+  const baseUrl = getBaseUrl(options.baseUrl)
+  const response = await fetchImpl(
+    `${baseUrl}/api/projects/${encodeURIComponent(projectId)}/nodes/document/create?profileId=${encodeURIComponent(profileId)}`,
+    {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        path: documentPath,
+        content,
+      }),
+    },
+  )
+
+  return readJsonResponse<BridgeNodePayload>(response)
+}
+
+export async function createDirectoryNodeInBridge(
+  projectId: string,
+  profileId: string,
+  directoryPath: string,
+  options: FetchOptions = {},
+): Promise<BridgeNodePayload> {
+  const fetchImpl = getFetch(options.fetchImpl)
+  const baseUrl = getBaseUrl(options.baseUrl)
+  const response = await fetchImpl(
+    `${baseUrl}/api/projects/${encodeURIComponent(projectId)}/nodes/directory/create?profileId=${encodeURIComponent(profileId)}`,
+    {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        path: directoryPath,
+      }),
+    },
+  )
+
+  return readJsonResponse<BridgeNodePayload>(response)
+}
+
+export async function duplicateDocumentNodeInBridge(
+  projectId: string,
+  profileId: string,
+  sourcePath: string,
+  targetPath: string,
+  options: FetchOptions = {},
+): Promise<BridgeNodePayload> {
+  return postDocumentPathMutation(projectId, profileId, 'duplicate', { sourcePath, targetPath }, options)
+}
+
+export async function moveDocumentNodeInBridge(
+  projectId: string,
+  profileId: string,
+  sourcePath: string,
+  targetPath: string,
+  options: FetchOptions = {},
+): Promise<BridgeNodePayload> {
+  return postDocumentPathMutation(projectId, profileId, 'move', { sourcePath, targetPath }, options)
+}
+
+export async function renameDocumentNodeInBridge(
+  projectId: string,
+  profileId: string,
+  sourcePath: string,
+  nextName: string,
+  options: FetchOptions = {},
+): Promise<BridgeNodePayload> {
+  return postDocumentPathMutation(projectId, profileId, 'rename', { sourcePath, nextName }, options)
+}
+
+export async function deleteDocumentNodeInBridge(
+  projectId: string,
+  profileId: string,
+  documentPath: string,
+  options: FetchOptions = {},
+): Promise<BridgeNodePayload> {
+  const fetchImpl = getFetch(options.fetchImpl)
+  const baseUrl = getBaseUrl(options.baseUrl)
+  const response = await fetchImpl(
+    `${baseUrl}/api/projects/${encodeURIComponent(projectId)}/nodes/document/delete?profileId=${encodeURIComponent(profileId)}`,
+    {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        path: documentPath,
+      }),
+    },
+  )
+
+  return readJsonResponse<BridgeNodePayload>(response)
+}
+
 async function postBridgeControl(
   action: 'restart' | 'stop',
   options: FetchOptions = {},
@@ -297,4 +407,27 @@ export async function restartLocalBridgeService(options: FetchOptions = {}): Pro
 
 export async function stopLocalBridgeService(options: FetchOptions = {}): Promise<void> {
   await postBridgeControl('stop', options)
+}
+
+async function postDocumentPathMutation(
+  projectId: string,
+  profileId: string,
+  action: 'duplicate' | 'move' | 'rename',
+  body: Record<string, string>,
+  options: FetchOptions = {},
+): Promise<BridgeNodePayload> {
+  const fetchImpl = getFetch(options.fetchImpl)
+  const baseUrl = getBaseUrl(options.baseUrl)
+  const response = await fetchImpl(
+    `${baseUrl}/api/projects/${encodeURIComponent(projectId)}/nodes/document/${action}?profileId=${encodeURIComponent(profileId)}`,
+    {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    },
+  )
+
+  return readJsonResponse<BridgeNodePayload>(response)
 }

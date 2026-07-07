@@ -12,6 +12,14 @@ import {
   setActiveProjectId,
 } from "./project-registry.mjs";
 import { getProjectProfile, listProjectProfiles, saveProjectProfile } from "./project-profiles.mjs";
+import {
+  createDirectoryNode,
+  createDocumentNode,
+  deleteDocumentNode,
+  duplicateDocumentNode,
+  moveDocumentNode,
+  renameDocumentNode,
+} from "./project-node-operations.mjs";
 import { readMarkdownDocument } from "./project-reader.mjs";
 import { DocumentConflictError, writeMarkdownDocument } from "./project-writer.mjs";
 import { scanMarkdownTree } from "./project-scanner.mjs";
@@ -275,6 +283,87 @@ async function handleRequest(request, response, { runtimeHome, port, stateFile, 
 
       throw error;
     }
+    return;
+  }
+
+  const documentNodeActionMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/nodes\/document\/([^/]+)$/);
+  if (request.method === "POST" && documentNodeActionMatch) {
+    const profileId = url.searchParams.get("profileId") ?? "default";
+    const projectId = decodeURIComponent(documentNodeActionMatch[1]);
+    const action = decodeURIComponent(documentNodeActionMatch[2]);
+    const project = await getProjectById(runtimeHome, profileId, projectId);
+    if (!project) {
+      sendJson(response, 404, { error: `Unknown project: ${projectId}` });
+      return;
+    }
+
+    const body = await readJsonBody(request);
+    let payload;
+
+    switch (action) {
+      case "create":
+        payload = await createDocumentNode(
+          project.rootPath,
+          project.contentRoots,
+          body.path ?? "",
+          body.content ?? "",
+        );
+        break;
+      case "duplicate":
+        payload = await duplicateDocumentNode(
+          project.rootPath,
+          project.contentRoots,
+          body.sourcePath ?? "",
+          body.targetPath ?? "",
+        );
+        break;
+      case "move":
+        payload = await moveDocumentNode(
+          project.rootPath,
+          project.contentRoots,
+          body.sourcePath ?? "",
+          body.targetPath ?? "",
+        );
+        break;
+      case "rename":
+        payload = await renameDocumentNode(
+          project.rootPath,
+          project.contentRoots,
+          body.sourcePath ?? "",
+          body.nextName ?? "",
+        );
+        break;
+      case "delete":
+        payload = await deleteDocumentNode(project.rootPath, project.contentRoots, body.path ?? "");
+        break;
+      default:
+        sendJson(response, 404, { error: `Unknown document node action: ${action}` });
+        return;
+    }
+
+    sendJson(response, 200, payload);
+    return;
+  }
+
+  const directoryNodeActionMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/nodes\/directory\/([^/]+)$/);
+  if (request.method === "POST" && directoryNodeActionMatch) {
+    const profileId = url.searchParams.get("profileId") ?? "default";
+    const projectId = decodeURIComponent(directoryNodeActionMatch[1]);
+    const action = decodeURIComponent(directoryNodeActionMatch[2]);
+    const project = await getProjectById(runtimeHome, profileId, projectId);
+    if (!project) {
+      sendJson(response, 404, { error: `Unknown project: ${projectId}` });
+      return;
+    }
+
+    if (action !== "create") {
+      sendJson(response, 404, { error: `Unknown directory node action: ${action}` });
+      return;
+    }
+
+    const body = await readJsonBody(request);
+    const payload = await createDirectoryNode(project.rootPath, project.contentRoots, body.path ?? "");
+    sendJson(response, 200, payload);
     return;
   }
 

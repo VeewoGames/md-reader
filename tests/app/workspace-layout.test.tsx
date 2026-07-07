@@ -47,7 +47,15 @@ vi.mock('../../src/document-renderer/readonly-markdown-renderer', () => ({
 }))
 
 import { WorkspaceLayout } from '../../src/app/WorkspaceLayout'
-import { buildFileTree } from '../../src/workspace/file-tree'
+import { buildFileTree, createVisibleFileTree } from '../../src/workspace/file-tree'
+
+function createVisibleTree(paths: string[], hiddenPaths: string[] = [], showHiddenItems = false) {
+  return createVisibleFileTree({
+    sourceNodes: buildFileTree(paths),
+    hiddenPaths,
+    showHiddenItems,
+  }).visibleNodes
+}
 
 function renderMockMarkdown(lines: string[], attachHeadingIds = false) {
   return lines.map((line, index) => {
@@ -532,7 +540,7 @@ describe('WorkspaceLayout outline navigation', () => {
       <WorkspaceLayout
         mode="regular"
         regularViewState="locked"
-        fileTree={buildFileTree(['docs/guide.md', 'docs/api/reference.md', 'notes/meeting.md'])}
+        fileTree={createVisibleTree(['docs/guide.md', 'docs/api/reference.md', 'notes/meeting.md'])}
         currentDocumentPath="docs/guide.md"
         currentDocumentContent={'# 标题\n\n正文'}
         statusMessage="当前项目：Notes"
@@ -578,7 +586,7 @@ describe('WorkspaceLayout outline navigation', () => {
       <WorkspaceLayout
         mode="regular"
         regularViewState="locked"
-        fileTree={buildFileTree(['docs/guide.md'])}
+        fileTree={createVisibleTree(['docs/guide.md'])}
         currentDocumentPath="docs/guide.md"
         currentDocumentContent={'# 标题\n\n正文'}
         statusMessage="当前项目：Notes"
@@ -604,7 +612,7 @@ describe('WorkspaceLayout outline navigation', () => {
       <WorkspaceLayout
         mode="regular"
         regularViewState="locked"
-        fileTree={buildFileTree(['docs/guides/guide.md', 'notes/todo.md'])}
+        fileTree={createVisibleTree(['docs/guides/guide.md', 'notes/todo.md'])}
         currentDocumentPath="docs/guides/guide.md"
         currentDocumentContent={'# 标题\n\n正文'}
         statusMessage="当前项目：Notes"
@@ -634,7 +642,7 @@ describe('WorkspaceLayout outline navigation', () => {
       <WorkspaceLayout
         mode="regular"
         regularViewState="locked"
-        fileTree={buildFileTree(['docs/guides/guide.md'])}
+        fileTree={createVisibleTree(['docs/guides/guide.md'])}
         currentDocumentPath={null}
         currentDocumentContent={null}
         statusMessage="当前项目：Notes"
@@ -659,6 +667,221 @@ describe('WorkspaceLayout outline navigation', () => {
     await user.click(screen.getByRole('button', { name: 'guides' }))
 
     expect(onExpandedDirectoriesChange).toHaveBeenLastCalledWith(['docs'])
+  })
+
+  it('renames a document inline from the context menu without using a browser prompt', async () => {
+    const user = userEvent.setup()
+    const onRenameDocument = vi.fn().mockResolvedValue(true)
+
+    render(
+      <WorkspaceLayout
+        mode="regular"
+        regularViewState="locked"
+        fileTree={createVisibleTree(['docs/guide.md'])}
+        currentDocumentPath="docs/guide.md"
+        currentDocumentContent={'# 标题\n\n正文'}
+        statusMessage="当前项目：Notes"
+        sidebarWidth={280}
+        outlineWidth={320}
+        hasProjects
+        onDocumentSelect={() => {}}
+        onRenameDocument={onRenameDocument}
+        onSidebarWidthChange={() => {}}
+        onSidebarWidthCommit={() => {}}
+        onOutlineWidthChange={() => {}}
+        onOutlineWidthCommit={() => {}}
+      />,
+    )
+
+    fireEvent.contextMenu(screen.getByRole('button', { name: 'guide.md' }))
+    await user.click(screen.getByRole('menuitem', { name: '重命名' }))
+
+    const renameInput = screen.getByRole('textbox', { name: '重命名 guide.md' })
+
+    expect(renameInput).toHaveValue('guide.md')
+
+    fireEvent.change(renameInput, { target: { value: 'guide-v2.md' } })
+    await user.keyboard('{Enter}')
+
+    expect(onRenameDocument).toHaveBeenCalledWith('docs/guide.md', 'guide-v2.md')
+    expect(screen.queryByRole('textbox', { name: '重命名 guide.md' })).not.toBeInTheDocument()
+  })
+
+  it('cancels inline rename with Escape', async () => {
+    const user = userEvent.setup()
+    const onRenameDocument = vi.fn()
+
+    render(
+      <WorkspaceLayout
+        mode="regular"
+        regularViewState="locked"
+        fileTree={createVisibleTree(['docs/guide.md'])}
+        currentDocumentPath="docs/guide.md"
+        currentDocumentContent={'# 标题\n\n正文'}
+        statusMessage="当前项目：Notes"
+        sidebarWidth={280}
+        outlineWidth={320}
+        hasProjects
+        onDocumentSelect={() => {}}
+        onRenameDocument={onRenameDocument}
+        onSidebarWidthChange={() => {}}
+        onSidebarWidthCommit={() => {}}
+        onOutlineWidthChange={() => {}}
+        onOutlineWidthCommit={() => {}}
+      />,
+    )
+
+    fireEvent.contextMenu(screen.getByRole('button', { name: 'guide.md' }))
+    await user.click(screen.getByRole('menuitem', { name: '重命名' }))
+
+    const renameInput = screen.getByRole('textbox', { name: '重命名 guide.md' })
+    await user.keyboard('{Escape}')
+
+    expect(onRenameDocument).not.toHaveBeenCalled()
+    expect(renameInput).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'guide.md' })).toBeInTheDocument()
+  })
+
+  it('creates a duplicate immediately from the context menu without opening inline rename UI', async () => {
+    const user = userEvent.setup()
+    const onDuplicateDocument = vi.fn().mockResolvedValue(true)
+
+    render(
+      <WorkspaceLayout
+        mode="regular"
+        regularViewState="locked"
+        fileTree={createVisibleTree(['docs/guide.md'])}
+        currentDocumentPath="docs/guide.md"
+        currentDocumentContent={'# 标题\n\n正文'}
+        statusMessage="当前项目：Notes"
+        sidebarWidth={280}
+        outlineWidth={320}
+        hasProjects
+        onDocumentSelect={() => {}}
+        onDuplicateDocument={onDuplicateDocument}
+        onSidebarWidthChange={() => {}}
+        onSidebarWidthCommit={() => {}}
+        onOutlineWidthChange={() => {}}
+        onOutlineWidthCommit={() => {}}
+      />,
+    )
+
+    fireEvent.contextMenu(screen.getByRole('button', { name: 'guide.md' }))
+    await user.click(screen.getByRole('menuitem', { name: '创建副本' }))
+
+    expect(onDuplicateDocument).toHaveBeenCalledWith('docs/guide.md', 'guide-副本.md')
+    expect(screen.queryByRole('textbox', { name: '创建副本 guide.md' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'guide.md' })).toBeInTheDocument()
+  })
+
+  it('increments the default duplicate name when the first copy name already exists', async () => {
+    const user = userEvent.setup()
+    const onDuplicateDocument = vi.fn().mockResolvedValue(true)
+
+    render(
+      <WorkspaceLayout
+        mode="regular"
+        regularViewState="locked"
+        fileTree={createVisibleTree(['docs/guide.md', 'docs/guide-副本.md'])}
+        currentDocumentPath="docs/guide.md"
+        currentDocumentContent={'# 标题\n\n正文'}
+        statusMessage="当前项目：Notes"
+        sidebarWidth={280}
+        outlineWidth={320}
+        hasProjects
+        onDocumentSelect={() => {}}
+        onDuplicateDocument={onDuplicateDocument}
+        onSidebarWidthChange={() => {}}
+        onSidebarWidthCommit={() => {}}
+        onOutlineWidthChange={() => {}}
+        onOutlineWidthCommit={() => {}}
+      />,
+    )
+
+    fireEvent.contextMenu(screen.getByRole('button', { name: 'guide.md' }))
+    await user.click(screen.getByRole('menuitem', { name: '创建副本' }))
+
+    expect(onDuplicateDocument).toHaveBeenCalledWith('docs/guide.md', 'guide-副本-2.md')
+  })
+
+  it('moves a dragged document into a directory drop target', async () => {
+    const onMoveDocument = vi.fn()
+    const dataTransfer = {
+      effectAllowed: 'all',
+      dropEffect: 'none',
+      setData: vi.fn(),
+      getData: vi.fn(),
+    }
+
+    render(
+      <WorkspaceLayout
+        mode="regular"
+        regularViewState="locked"
+        fileTree={createVisibleTree(['docs/guides/guide.md', 'docs/archive/old.md'])}
+        currentDocumentPath="docs/guides/guide.md"
+        currentDocumentContent={'# 标题\n\n正文'}
+        statusMessage="当前项目：Notes"
+        sidebarWidth={280}
+        outlineWidth={320}
+        hasProjects
+        onDocumentSelect={() => {}}
+        onMoveDocument={onMoveDocument}
+        onSidebarWidthChange={() => {}}
+        onSidebarWidthCommit={() => {}}
+        onOutlineWidthChange={() => {}}
+        onOutlineWidthCommit={() => {}}
+      />,
+    )
+
+    const guideButton = screen.getByRole('button', { name: 'guide.md' })
+    const archiveButton = screen.getByRole('button', { name: 'archive' })
+    const archiveRow = archiveButton.closest('.file-tree__row')
+    const fileTreeRoot = archiveButton.closest('.file-tree')
+
+    expect(archiveRow).not.toBeNull()
+    expect(fileTreeRoot).not.toBeNull()
+
+    fireEvent.dragStart(guideButton, { dataTransfer })
+    expect(fileTreeRoot).toHaveAttribute('data-drag-active', 'true')
+    fireEvent.dragOver(archiveButton, { dataTransfer })
+    expect(archiveRow).toHaveAttribute('data-drop-target', 'true')
+    fireEvent.drop(archiveButton, { dataTransfer })
+
+    expect(onMoveDocument).toHaveBeenCalledWith('docs/guides/guide.md', 'docs/archive')
+    expect(onMoveDocument).toHaveBeenCalledTimes(1)
+    expect(archiveRow).not.toHaveAttribute('data-drop-target')
+    expect(fileTreeRoot).not.toHaveAttribute('data-drag-active')
+  })
+
+  it('renders an action toast for immediate file-tree feedback', () => {
+    render(
+      <WorkspaceLayout
+        mode="regular"
+        regularViewState="locked"
+        fileTree={createVisibleTree(['docs/guides/guide.md'])}
+        currentDocumentPath="docs/guides/guide.md"
+        currentDocumentContent={'# 标题\n\n正文'}
+        statusMessage="当前项目：Notes"
+        actionToast={{
+          id: 1,
+          tone: 'success',
+          message: '已移动：docs/guides/guide.md -> docs/archive/guide.md',
+        }}
+        sidebarWidth={280}
+        outlineWidth={320}
+        hasProjects
+        onDocumentSelect={() => {}}
+        onSidebarWidthChange={() => {}}
+        onSidebarWidthCommit={() => {}}
+        onOutlineWidthChange={() => {}}
+        onOutlineWidthCommit={() => {}}
+      />,
+    )
+
+    const toast = screen.getByText('操作完成').closest('[role="status"]')
+
+    expect(toast).not.toBeNull()
+    expect(toast).toHaveTextContent('已移动：docs/guides/guide.md -> docs/archive/guide.md')
   })
 
 })

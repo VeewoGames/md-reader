@@ -153,6 +153,60 @@ describe('AppShell', () => {
     expect(screen.getByRole('button', { name: '关闭服务' })).toBeInTheDocument()
   })
 
+  it('passes action toast content into the workspace layout', () => {
+    render(
+      <AppShell
+        projects={[
+          {
+            id: 'notes',
+            name: 'Notes',
+            rootHandleKey: 'handle:notes',
+            contentRoots: ['docs'],
+            permissionState: 'granted',
+          },
+        ]}
+        activeProjectId="notes"
+        profileIds={['default']}
+        activeProfileId="default"
+        tabs={defaultTabs}
+        activeTabId="docs/README.md"
+        mode="regular"
+        regularViewState="locked"
+        fileTree={createVisibleTree(['docs/README.md']).visibleNodes}
+        availableDirectoryPaths={['docs']}
+        currentDocumentPath="docs/README.md"
+        currentDocumentContent={'# Readme\n\nHello world'}
+        statusMessage="项目已接入"
+        actionToast={{
+          id: 1,
+          tone: 'success',
+          message: '已拷贝链接：docs/README.md',
+        }}
+        sidebarWidth={280}
+        outlineWidth={320}
+        onConnectProject={() => {}}
+        onProjectChange={() => {}}
+        onProfileChange={() => {}}
+        onModeChange={() => {}}
+        onToggleRegularLock={() => {}}
+        onTabSelect={() => {}}
+        onTabClose={() => {}}
+        onRestartService={() => {}}
+        onStopService={() => {}}
+        onDocumentSelect={() => {}}
+        onSidebarWidthChange={() => {}}
+        onSidebarWidthCommit={() => {}}
+        onOutlineWidthChange={() => {}}
+        onOutlineWidthCommit={() => {}}
+      />,
+    )
+
+    const toast = screen.getByText('操作完成').closest('[role="status"]')
+
+    expect(toast).not.toBeNull()
+    expect(toast).toHaveTextContent('已拷贝链接：docs/README.md')
+  })
+
   it('toggles non-current directories without affecting file selection wiring', async () => {
     const user = userEvent.setup()
     const onDocumentSelect = vi.fn()
@@ -456,4 +510,5 @@ describe('AppShell', () => {
     expect(onToggleRegularLock).toHaveBeenCalledTimes(1)
     expect(onTabClose).toHaveBeenCalledWith('docs/README.md')
   })
+
 })
