@@ -7,6 +7,16 @@ import type { RegularViewState, WorkspaceMode } from './app/TopBar'
 import { createBrowserKeyValueStore } from './shared/key-value-store'
 import { STORAGE_KEYS } from './shared/storage-keys'
 import { buildFileTree, createVisibleFileTree, filterFileTreeByFavorites } from './workspace/file-tree'
+import {
+  appendNodeToManualOrder,
+  applyManualTreeOrder,
+  type ManualNodeOrderByParent,
+  moveNodeToParentTailInManualOrder,
+  normalizeManualNodeOrderByParent,
+  reorderManualNodeOrder,
+  rewriteManualOrderPaths,
+  removeNodeFromManualOrder,
+} from './workspace/file-tree-order'
 import { createContentHash } from './shared/content-hash'
 import type { FileTreeNode } from './workspace/file-tree-types'
 import {
@@ -256,6 +266,20 @@ function joinNodePath(directoryPath: string, name: string): string {
   return directoryPath ? `${directoryPath}/${trimmedName}` : trimmedName
 }
 
+function formatReorderFeedbackMessage(payload: {
+  sourcePath: string
+  targetPath: string | null
+  position: 'before' | 'after' | 'tail'
+}) {
+  if (payload.position === 'tail' || payload.targetPath == null) {
+    return `已调整顺序：${payload.sourcePath} 已移到当前分组末尾`
+  }
+
+  return `已调整顺序：${payload.sourcePath} 已排到 ${payload.targetPath} ${
+    payload.position === 'before' ? '之前' : '之后'
+  }`
+}
+
 type PendingWorkspaceAction =
   | { kind: 'switch-project'; projectId: string }
   | { kind: 'switch-profile'; profileId: string }
@@ -313,6 +337,7 @@ function App() {
   const [fileTree, setFileTree] = useState<FileTreeNode[]>([])
   const [hiddenPaths, setHiddenPaths] = useState<string[]>([])
   const [favoritePaths, setFavoritePaths] = useState<string[]>([])
+  const [manualNodeOrderByParent, setManualNodeOrderByParent] = useState<ManualNodeOrderByParent>({})
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(false)
   const [showHiddenItems, setShowHiddenItems] = useState(false)
   const [isDocumentLoading, setIsDocumentLoading] = useState(false)
@@ -377,6 +402,28 @@ function App() {
         projectId == null ? null : projects.find((entry) => entry.id === projectId)?.name ?? '当前项目'
 
       return projectName ? `当前项目：${projectName}` : current
+    })
+  }
+
+  function buildOrderedFileTree(markdownPaths: string[], orderMap: ManualNodeOrderByParent) {
+    return applyManualTreeOrder(buildFileTree(markdownPaths), orderMap)
+  }
+
+  async function persistManualNodeOrder(
+    nextManualNodeOrderByParent: ManualNodeOrderByParent,
+    options?: {
+      refreshPaths?: string[]
+    },
+  ) {
+    setManualNodeOrderByParent(nextManualNodeOrderByParent)
+
+    const nextPaths = options?.refreshPaths
+    if (nextPaths) {
+      setFileTree(buildOrderedFileTree(nextPaths, nextManualNodeOrderByParent))
+    }
+
+    await saveActiveProfileNavigation({
+      manualNodeOrderByParent: nextManualNodeOrderByParent,
     })
   }
 
@@ -567,6 +614,7 @@ function App() {
       setHasPersistedExpandedFileNodes(false)
       setHiddenPaths([])
       setFavoritePaths([])
+      setManualNodeOrderByParent({})
       setShowFavoritesOnly(false)
       setShowHiddenItems(false)
       setDocumentFontSize(16)
@@ -600,6 +648,7 @@ function App() {
       )
       setHiddenPaths(profile.navigation?.hiddenPaths ?? [])
       setFavoritePaths(profile.navigation?.favoritePaths ?? [])
+      setManualNodeOrderByParent(profile.navigation?.manualNodeOrderByParent ?? {})
       setShowFavoritesOnly(false)
       setShowHiddenItems(false)
       setDocumentFontSize(profile.appearance?.fontSize ?? 16)
@@ -1031,6 +1080,7 @@ function App() {
     }
 
     const markdownPaths = await workspaceProvider.getFileTreePaths(project.id, nextProfileId)
+    const profile = await getProfileFromBridge(project.id, nextProfileId, nextProfileId)
     const restoredLocalState = normalizeLocalStateSnapshot(
       (await localStateStore.getState(project.id)) as Awaited<
         ReturnType<typeof localStateStore.getState>
@@ -1063,7 +1113,8 @@ function App() {
     }
 
     setActiveProjectId(project.id)
-    setFileTree(buildFileTree(markdownPaths))
+    setManualNodeOrderByParent(profile.navigation?.manualNodeOrderByParent ?? {})
+    setFileTree(buildOrderedFileTree(markdownPaths, profile.navigation?.manualNodeOrderByParent ?? {}))
     sessionRef.current = restoredSession
     setSession(restoredSession)
     setStatusMessage(
@@ -1314,7 +1365,7 @@ function App() {
 
   async function refreshProjectTree(projectId: string, profileId: string) {
     const markdownPaths = await workspaceProvider.getFileTreePaths(projectId, profileId)
-    setFileTree(buildFileTree(markdownPaths))
+    setFileTree(buildOrderedFileTree(markdownPaths, manualNodeOrderByParent))
     return markdownPaths
   }
 
@@ -1408,7 +1459,11 @@ function App() {
     return saveTabById(tab.id, 'leave')
   }
 
-  async function rewriteDocumentPathState(sourcePath: string, targetPath: string) {
+  async function rewriteDocumentPathState(
+    sourcePath: string,
+    targetPath: string,
+    nextManualNodeOrderByParentOverride?: ManualNodeOrderByParent,
+  ) {
     const projectId = activeProjectIdRef.current
     if (!projectId) {
       return
@@ -1424,10 +1479,20 @@ function App() {
       sourcePath,
       targetPath,
     })
+    const nextProfile = nextManualNodeOrderByParentOverride
+      ? {
+          ...nextCollections.profile,
+          navigation: {
+            ...nextCollections.profile.navigation,
+            manualNodeOrderByParent: nextManualNodeOrderByParentOverride,
+          },
+        }
+      : nextCollections.profile
 
     setSession((current) => rewriteSessionDocumentPath(current, sourcePath, targetPath))
-    setHiddenPaths(nextCollections.profile.navigation.hiddenPaths)
-    setFavoritePaths(nextCollections.profile.navigation.favoritePaths)
+    setHiddenPaths(nextProfile.navigation.hiddenPaths)
+    setFavoritePaths(nextProfile.navigation.favoritePaths)
+    setManualNodeOrderByParent(nextProfile.navigation.manualNodeOrderByParent)
 
     await Promise.all([
       localStateStore.saveState(projectId, {
@@ -1435,7 +1500,7 @@ function App() {
         activeMode: sessionRef.current.mode,
         regularViewState: sessionRef.current.regularViewState,
       }),
-      persistActiveProfile(projectId, nextCollections.profile),
+      persistActiveProfile(projectId, nextProfile),
     ])
   }
 
@@ -1457,6 +1522,7 @@ function App() {
 
     setHiddenPaths(nextCollections.profile.navigation.hiddenPaths)
     setFavoritePaths(nextCollections.profile.navigation.favoritePaths)
+    setManualNodeOrderByParent(nextCollections.profile.navigation.manualNodeOrderByParent)
 
     await Promise.all([
       localStateStore.saveState(projectId, {
@@ -1545,7 +1611,11 @@ function App() {
         await createDirectoryNodeInBridge(projectId, profileId, targetPath)
       }
 
-      await refreshProjectTree(projectId, profileId)
+      const nextMarkdownPaths = await workspaceProvider.getFileTreePaths(projectId, profileId)
+      const nextManualNodeOrderByParent = appendNodeToManualOrder(manualNodeOrderByParent, targetPath)
+      await persistManualNodeOrder(nextManualNodeOrderByParent, {
+        refreshPaths: nextMarkdownPaths,
+      })
       await handleExpandedFileNodesChange(
         action.kind === 'document'
           ? action.directoryPath && !expandedFileNodes.includes(action.directoryPath)
@@ -1612,7 +1682,11 @@ function App() {
 
       const targetPath = joinNodePath(getDocumentDirectoryPath(documentPath), trimmedDuplicateName)
       await duplicateDocumentNodeInBridge(projectId, profileId, documentPath, targetPath)
-      await refreshProjectTree(projectId, profileId)
+      const nextMarkdownPaths = await workspaceProvider.getFileTreePaths(projectId, profileId)
+      const nextManualNodeOrderByParent = appendNodeToManualOrder(manualNodeOrderByParent, targetPath)
+      await persistManualNodeOrder(nextManualNodeOrderByParent, {
+        refreshPaths: nextMarkdownPaths,
+      })
       await handleDocumentSelect(targetPath)
       publishActionFeedback(`已创建副本：${targetPath}`)
       return true
@@ -1645,7 +1719,13 @@ function App() {
 
       const result = await renameDocumentNodeInBridge(projectId, profileId, documentPath, trimmedNextName)
       await rewriteDocumentPathState(documentPath, result.path)
-      await refreshProjectTree(projectId, profileId)
+      const nextMarkdownPaths = await workspaceProvider.getFileTreePaths(projectId, profileId)
+      setFileTree(
+        buildOrderedFileTree(
+          nextMarkdownPaths,
+          rewriteManualOrderPaths(manualNodeOrderByParent, documentPath, result.path),
+        ),
+      )
       publishActionFeedback(`已重命名：${currentName} -> ${trimmedNextName}`)
       return true
     } catch (error) {
@@ -1695,7 +1775,13 @@ function App() {
       }
 
       await removeDocumentPathState(action.documentPath)
-      await refreshProjectTree(projectId, profileId)
+      const nextMarkdownPaths = await workspaceProvider.getFileTreePaths(projectId, profileId)
+      setFileTree(
+        buildOrderedFileTree(
+          nextMarkdownPaths,
+          removeNodeFromManualOrder(manualNodeOrderByParent, action.documentPath),
+        ),
+      )
       publishActionFeedback(`已删除：${action.documentPath}`)
       setPendingDeleteDocumentAction(null)
     } catch (error) {
@@ -1726,8 +1812,19 @@ function App() {
       }
 
       const result = await moveDocumentNodeInBridge(projectId, profileId, sourcePath, targetPath)
-      await rewriteDocumentPathState(sourcePath, result.path)
-      await refreshProjectTree(projectId, profileId)
+      const nextManualNodeOrderByParent = moveNodeToParentTailInManualOrder(
+        manualNodeOrderByParent,
+        sourcePath,
+        result.path,
+      )
+      await rewriteDocumentPathState(sourcePath, result.path, nextManualNodeOrderByParent)
+      const nextMarkdownPaths = await workspaceProvider.getFileTreePaths(projectId, profileId)
+      setFileTree(
+        buildOrderedFileTree(
+          nextMarkdownPaths,
+          nextManualNodeOrderByParent,
+        ),
+      )
       await handleExpandedFileNodesChange(
         Array.from(new Set([...expandedFileNodes, targetDirectoryPath].filter(Boolean))).sort(),
       )
@@ -1735,6 +1832,38 @@ function App() {
     } catch (error) {
       publishActionFeedback(
         error instanceof Error ? `移动失败：${error.message}` : '移动失败',
+        'error',
+      )
+    }
+  }
+
+  async function handleReorderFileTreeNode(payload: {
+    sourcePath: string
+    sourceParentPath: string | null
+    targetPath: string | null
+    targetParentPath: string | null
+    position: 'before' | 'after' | 'tail'
+  }) {
+    const projectId = activeProjectIdRef.current
+    const profileId = activeProfileIdRef.current
+    if (!projectId) {
+      return
+    }
+
+    try {
+      const normalizedManualNodeOrder = normalizeManualNodeOrderByParent(
+        manualNodeOrderByParent,
+        fileTree,
+      )
+      const nextManualNodeOrderByParent = reorderManualNodeOrder(normalizedManualNodeOrder, payload)
+      const nextMarkdownPaths = await workspaceProvider.getFileTreePaths(projectId, profileId)
+      await persistManualNodeOrder(nextManualNodeOrderByParent, {
+        refreshPaths: nextMarkdownPaths,
+      })
+      publishActionFeedback(formatReorderFeedbackMessage(payload), 'info')
+    } catch (error) {
+      publishActionFeedback(
+        error instanceof Error ? `调整顺序失败：${error.message}` : '调整顺序失败',
         'error',
       )
     }
@@ -1964,6 +2093,7 @@ function App() {
     expandedFileNodesInitialized?: boolean
     hiddenPaths?: string[]
     favoritePaths?: string[]
+    manualNodeOrderByParent?: ManualNodeOrderByParent
   }) {
     if (!activeProjectId) {
       return
@@ -2266,6 +2396,7 @@ function App() {
         onRenameDocument={handleRenameDocument}
         onDeleteDocument={handleDeleteDocument}
         onMoveDocument={handleMoveDocumentToDirectory}
+        onReorderFileTreeNode={handleReorderFileTreeNode}
         onExpandedFileNodesChange={handleExpandedFileNodesChange}
         onDocumentFontSizeChange={handleDocumentFontSizeChange}
         onDocumentPageWidthChange={handleDocumentPageWidthChange}

@@ -29,6 +29,9 @@ describe('profile store', () => {
         expandedHeadingNodes: {},
         hiddenPaths: ['docs/private', 'docs/guides/draft.md'],
         favoritePaths: ['docs/guides/guide.md'],
+        manualNodeOrderByParent: {
+          docs: ['docs/guides', 'docs/guide.md'],
+        },
       },
     }
 
@@ -51,5 +54,6 @@ describe('profile store', () => {
     expect(restored.navigation.expandedFileNodes).toEqual([])
     expect(restored.navigation.hiddenPaths).toEqual([])
     expect(restored.navigation.favoritePaths).toEqual([])
+    expect(restored.navigation.manualNodeOrderByParent).toEqual({})
   })
 })

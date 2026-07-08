@@ -25,6 +25,7 @@ function createDefaultProfile(profileId = "default") {
       expandedHeadingNodes: {},
       hiddenPaths: [],
       favoritePaths: [],
+      manualNodeOrderByParent: {},
     },
   };
 }
@@ -56,6 +57,8 @@ function normalizeProfile(profileId, profile = {}) {
         profile.navigation?.expandedHeadingNodes ?? fallback.navigation.expandedHeadingNodes,
       hiddenPaths: profile.navigation?.hiddenPaths ?? fallback.navigation.hiddenPaths,
       favoritePaths: profile.navigation?.favoritePaths ?? fallback.navigation.favoritePaths,
+      manualNodeOrderByParent:
+        profile.navigation?.manualNodeOrderByParent ?? fallback.navigation.manualNodeOrderByParent,
     },
   };
 }

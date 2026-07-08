@@ -69,6 +69,13 @@ interface AppShellProps {
   onRenameDocument?: (path: string, nextName: string) => void | boolean | Promise<void | boolean>
   onDeleteDocument?: (path: string) => void | Promise<void>
   onMoveDocument?: (sourcePath: string, targetDirectoryPath: string) => void | Promise<void>
+  onReorderFileTreeNode?: (payload: {
+    sourcePath: string
+    sourceParentPath: string | null
+    targetPath: string | null
+    targetParentPath: string | null
+    position: 'before' | 'after' | 'tail'
+  }) => void | Promise<void>
   onExpandedFileNodesChange?: (paths: string[]) => void | Promise<void>
   onDocumentFontSizeChange?: (fontSize: number) => void
   onDocumentPageWidthChange?: (pageWidth: PageWidthMode) => void
@@ -157,6 +164,7 @@ export function AppShell(props: AppShellProps) {
         onRenameDocument={props.onRenameDocument}
         onDeleteDocument={props.onDeleteDocument}
         onMoveDocument={props.onMoveDocument}
+        onReorderFileTreeNode={props.onReorderFileTreeNode}
         favoritePaths={props.favoritePaths}
         showFavoritesOnly={props.showFavoritesOnly}
         showHiddenItems={props.showHiddenItems}

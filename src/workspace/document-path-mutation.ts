@@ -1,6 +1,10 @@
 import type { WorkspaceLocalState } from './local-state'
 import type { WorkspaceProfile } from './profile-store'
 import type { WorkspaceSession } from './workspace-session'
+import {
+  removeNodeFromManualOrder,
+  rewriteManualOrderPaths,
+} from './file-tree-order'
 
 export function rewriteSessionDocumentPath(
   session: WorkspaceSession,
@@ -52,6 +56,11 @@ export function rewritePathCollections({
         ...profile.navigation,
         hiddenPaths: rewritePathArray(profile.navigation.hiddenPaths, sourcePath, targetPath),
         favoritePaths: rewritePathArray(profile.navigation.favoritePaths, sourcePath, targetPath),
+        manualNodeOrderByParent: rewriteManualOrderPaths(
+          profile.navigation.manualNodeOrderByParent,
+          sourcePath,
+          targetPath,
+        ),
       },
     },
   }
@@ -85,6 +94,10 @@ export function removePathCollections({
         ...profile.navigation,
         hiddenPaths: profile.navigation.hiddenPaths.filter((path) => path !== targetPath),
         favoritePaths: profile.navigation.favoritePaths.filter((path) => path !== targetPath),
+        manualNodeOrderByParent: removeNodeFromManualOrder(
+          profile.navigation.manualNodeOrderByParent,
+          targetPath,
+        ),
       },
     },
   }

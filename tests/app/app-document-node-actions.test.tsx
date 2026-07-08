@@ -299,4 +299,52 @@ describe('App document node actions', () => {
     })
     expect(screen.getAllByText('已新建文件夹：docs/新目录').length).toBeGreaterThan(0)
   })
+
+  it('publishes unified status and toast feedback after a file-tree reorder succeeds', async () => {
+    const dragStore = new Map<string, string>()
+    const dataTransfer = {
+      effectAllowed: 'all',
+      dropEffect: 'none',
+      setData: vi.fn((type: string, value: string) => {
+        dragStore.set(type, value)
+      }),
+      getData: vi.fn((type: string) => dragStore.get(type) ?? ''),
+    }
+
+    render(<App />)
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'guide.md' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'guide-副本.md' })).toBeInTheDocument()
+    })
+
+    const guideButton = screen.getByRole('button', { name: 'guide.md' })
+    const duplicateRow = screen.getByRole('button', { name: 'guide-副本.md' }).closest('.file-tree__row')
+
+    expect(duplicateRow).not.toBeNull()
+
+    Object.defineProperty(duplicateRow as HTMLDivElement, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({ top: 100, height: 40 }),
+    })
+
+    fireEvent.dragStart(guideButton, { dataTransfer })
+    const reorderOverEvent = new Event('dragover', { bubbles: true, cancelable: true })
+    Object.defineProperties(reorderOverEvent, {
+      clientY: { value: 120 },
+      dataTransfer: { value: dataTransfer },
+    })
+    fireEvent(duplicateRow as HTMLDivElement, reorderOverEvent)
+
+    const reorderDropEvent = new Event('drop', { bubbles: true, cancelable: true })
+    Object.defineProperties(reorderDropEvent, {
+      clientY: { value: 120 },
+      dataTransfer: { value: dataTransfer },
+    })
+    fireEvent(duplicateRow as HTMLDivElement, reorderDropEvent)
+
+    await waitFor(() => {
+      expect(screen.getAllByText('已调整顺序：docs/guide.md 已排到 docs/guide-副本.md 之后').length).toBeGreaterThan(0)
+    })
+  })
 })

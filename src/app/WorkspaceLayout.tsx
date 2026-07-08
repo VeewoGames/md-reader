@@ -156,6 +156,7 @@ interface WorkspaceLayoutProps {
   onRenameDocument?: (path: string, nextName: string) => void | boolean | Promise<void | boolean>
   onDeleteDocument?: (path: string) => void | Promise<void>
   onMoveDocument?: (sourcePath: string, targetDirectoryPath: string) => void | Promise<void>
+  onReorderFileTreeNode?: (payload: FileTreeReorderPayload) => void | Promise<void>
   favoritePaths?: string[]
   showFavoritesOnly?: boolean
   showHiddenItems?: boolean
@@ -177,6 +178,14 @@ export interface WorkspaceActionToast {
   id: number
   message: string
   tone: 'success' | 'error' | 'info'
+}
+
+export interface FileTreeReorderPayload {
+  sourcePath: string
+  sourceParentPath: string | null
+  targetPath: string | null
+  targetParentPath: string | null
+  position: 'before' | 'after' | 'tail'
 }
 
 type FileTreeNameActionState = {
@@ -205,6 +214,13 @@ const CONTEXT_MENU_WIDTH = 196
 const CONTEXT_MENU_GAP = 8
 const EMPTY_PATHS: string[] = []
 const DOCUMENT_DRAG_MIME = 'application/x-md-reader-document-path'
+const TREE_NODE_DRAG_MIME = 'application/x-md-reader-tree-node-path'
+
+type FileTreeReorderDropTarget = {
+  targetPath: string | null
+  targetParentPath: string | null
+  position: 'before' | 'after' | 'tail'
+}
 
 function listDragTypes(dataTransfer: DataTransfer | null): string[] {
   if (!dataTransfer?.types) {
@@ -214,10 +230,38 @@ function listDragTypes(dataTransfer: DataTransfer | null): string[] {
   return Array.from(dataTransfer.types)
 }
 
+function resolveRowReorderPositionWithCenterBand(
+  event: React.DragEvent<HTMLElement>,
+  centerBandRatio: number,
+) {
+  const rect = event.currentTarget.getBoundingClientRect()
+  if (!Number.isFinite(event.clientY) || event.clientY <= 0) {
+    return null
+  }
+
+  const ratio = (event.clientY - rect.top) / Math.max(rect.height, 1)
+  const safeCenterBandRatio = Math.min(Math.max(centerBandRatio, 0), 0.48)
+  const beforeThreshold = 0.5 - safeCenterBandRatio / 2
+  const afterThreshold = 0.5 + safeCenterBandRatio / 2
+
+  if (ratio < beforeThreshold) {
+    return 'before'
+  }
+  if (ratio > afterThreshold) {
+    return 'after'
+  }
+  if (safeCenterBandRatio === 0) {
+    return ratio < 0.5 ? 'before' : 'after'
+  }
+  return null
+}
+
 export function WorkspaceFileTree({
   nodes,
   level,
+  parentPath,
   searchActive,
+  reorderEnabled,
   currentDocumentPath,
   expandedDirectories,
   onToggleDirectory,
@@ -243,17 +287,24 @@ export function WorkspaceFileTree({
   onNameActionSubmit,
   onNameActionCancel,
   onNameActionBlur,
-  dragDocumentPath,
+  dragNodePath,
   dropDirectoryPath,
-  onDocumentDragStart,
-  onDocumentDragEnd,
+  reorderDropTarget,
+  onTreeNodeDragStart,
+  onTreeNodeDragEnd,
+  onTreeNodeDragOver,
+  onTreeNodeDrop,
+  onTailDragOver,
+  onTailDrop,
   onDirectoryDragOver,
   onDirectoryDragLeave,
   onDirectoryDrop,
 }: {
   nodes: VisibleFileTreeNode[]
   level: number
+  parentPath: string | null
   searchActive: boolean
+  reorderEnabled: boolean
   currentDocumentPath: string | null
   expandedDirectories: Set<string>
   onToggleDirectory: (path: string) => void
@@ -279,10 +330,30 @@ export function WorkspaceFileTree({
   onNameActionSubmit: () => Promise<void>
   onNameActionCancel: () => void
   onNameActionBlur: () => void
-  dragDocumentPath: string | null
+  dragNodePath: string | null
   dropDirectoryPath: string | null
-  onDocumentDragStart: (documentPath: string, event: React.DragEvent<HTMLElement>) => void
-  onDocumentDragEnd: () => void
+  reorderDropTarget: FileTreeReorderDropTarget | null
+  onTreeNodeDragStart: (
+    nodePath: string,
+    nodeKind: VisibleFileTreeNode['kind'],
+    parentPath: string | null,
+    event: React.DragEvent<HTMLElement>,
+  ) => void
+  onTreeNodeDragEnd: () => void
+  onTreeNodeDragOver: (
+    nodePath: string,
+    nodeKind: VisibleFileTreeNode['kind'],
+    parentPath: string | null,
+    event: React.DragEvent<HTMLElement>,
+  ) => void
+  onTreeNodeDrop: (
+    nodePath: string,
+    nodeKind: VisibleFileTreeNode['kind'],
+    parentPath: string | null,
+    event: React.DragEvent<HTMLElement>,
+  ) => void
+  onTailDragOver: (parentPath: string | null, event: React.DragEvent<HTMLUListElement>) => void
+  onTailDrop: (parentPath: string | null, event: React.DragEvent<HTMLUListElement>) => void
   onDirectoryDragOver: (directoryPath: string, event: React.DragEvent<HTMLElement>) => void
   onDirectoryDragLeave: (directoryPath: string, event?: React.DragEvent<HTMLElement>) => void
   onDirectoryDrop: (directoryPath: string, event: React.DragEvent<HTMLElement>) => void
@@ -291,7 +362,14 @@ export function WorkspaceFileTree({
     <ul
       className="file-tree"
       data-level={level}
-      data-drag-active={dragDocumentPath != null ? 'true' : undefined}
+      data-drag-active={dragNodePath != null ? 'true' : undefined}
+      data-reorder-tail={
+        reorderDropTarget?.position === 'tail' && reorderDropTarget.targetParentPath === parentPath
+          ? 'true'
+          : undefined
+      }
+      onDragOver={(event) => onTailDragOver(parentPath, event)}
+      onDrop={(event) => onTailDrop(parentPath, event)}
     >
       {nodes.map((node) => (
         <li key={node.id} className="file-tree__item">
@@ -311,6 +389,10 @@ export function WorkspaceFileTree({
                     className="file-tree__row"
                     data-hidden={isHidden ? 'true' : undefined}
                     data-drop-target={dropDirectoryPath === node.path ? 'true' : undefined}
+                    data-reorder-target={
+                      reorderDropTarget?.targetPath === node.path ? reorderDropTarget.position : undefined
+                    }
+                    draggable={reorderEnabled}
                     onContextMenu={(event) => {
                       event.preventDefault()
                       onOpenContextMenu({
@@ -321,10 +403,12 @@ export function WorkspaceFileTree({
                         y: event.clientY,
                       })
                     }}
-                    onDragEnter={(event) => onDirectoryDragOver(node.path, event)}
-                    onDragOver={(event) => onDirectoryDragOver(node.path, event)}
+                    onDragStart={(event) => onTreeNodeDragStart(node.path, node.kind, parentPath, event)}
+                    onDragEnd={onTreeNodeDragEnd}
+                    onDragEnter={(event) => onTreeNodeDragOver(node.path, node.kind, parentPath, event)}
+                    onDragOver={(event) => onTreeNodeDragOver(node.path, node.kind, parentPath, event)}
+                    onDrop={(event) => void onTreeNodeDrop(node.path, node.kind, parentPath, event)}
                     onDragLeave={(event) => onDirectoryDragLeave(node.path, event)}
-                    onDrop={(event) => onDirectoryDrop(node.path, event)}
                   >
                     <button
                       type="button"
@@ -362,10 +446,12 @@ export function WorkspaceFileTree({
 
                   {isExpanded ? (
                     <div className="file-tree__children">
-                      <WorkspaceFileTree
+                        <WorkspaceFileTree
                         nodes={node.children}
                         level={level + 1}
+                        parentPath={node.path}
                         searchActive={searchActive}
+                        reorderEnabled={reorderEnabled}
                         currentDocumentPath={currentDocumentPath}
                         expandedDirectories={expandedDirectories}
                         onToggleDirectory={onToggleDirectory}
@@ -391,10 +477,15 @@ export function WorkspaceFileTree({
                         onNameActionSubmit={onNameActionSubmit}
                         onNameActionCancel={onNameActionCancel}
                         onNameActionBlur={onNameActionBlur}
-                        dragDocumentPath={dragDocumentPath}
+                        dragNodePath={dragNodePath}
                         dropDirectoryPath={dropDirectoryPath}
-                        onDocumentDragStart={onDocumentDragStart}
-                        onDocumentDragEnd={onDocumentDragEnd}
+                        reorderDropTarget={reorderDropTarget}
+                        onTreeNodeDragStart={onTreeNodeDragStart}
+                        onTreeNodeDragEnd={onTreeNodeDragEnd}
+                        onTreeNodeDragOver={onTreeNodeDragOver}
+                        onTreeNodeDrop={onTreeNodeDrop}
+                        onTailDragOver={onTailDragOver}
+                        onTailDrop={onTailDrop}
                         onDirectoryDragOver={onDirectoryDragOver}
                         onDirectoryDragLeave={onDirectoryDragLeave}
                         onDirectoryDrop={onDirectoryDrop}
@@ -418,6 +509,10 @@ export function WorkspaceFileTree({
                 className="file-tree__row"
                 data-hidden={isHidden ? 'true' : undefined}
                 data-renaming={isNaming ? 'true' : undefined}
+                data-reorder-target={
+                  reorderDropTarget?.targetPath === node.path ? reorderDropTarget.position : undefined
+                }
+                draggable={reorderEnabled && !isNaming}
                 onContextMenu={(event) => {
                   event.preventDefault()
                   onOpenContextMenu({
@@ -428,6 +523,11 @@ export function WorkspaceFileTree({
                     y: event.clientY,
                   })
                 }}
+                onDragStart={(event) => onTreeNodeDragStart(node.path, node.kind, parentPath, event)}
+                onDragEnd={onTreeNodeDragEnd}
+                onDragEnter={(event) => onTreeNodeDragOver(node.path, node.kind, parentPath, event)}
+                onDragOver={(event) => onTreeNodeDragOver(node.path, node.kind, parentPath, event)}
+                onDrop={(event) => onTreeNodeDrop(node.path, node.kind, parentPath, event)}
               >
                 {isNaming ? (
                   <div
@@ -465,12 +565,9 @@ export function WorkspaceFileTree({
                     type="button"
                     className="file-tree__file"
                     data-favorited={isFavorited ? 'true' : undefined}
-                    data-dragging={dragDocumentPath === node.path ? 'true' : undefined}
+                    data-dragging={dragNodePath === node.path ? 'true' : undefined}
                     aria-current={currentDocumentPath === node.path ? 'page' : undefined}
                     onClick={() => onDocumentSelect(node.path)}
-                    draggable
-                    onDragStart={(event) => onDocumentDragStart(node.path, event)}
-                    onDragEnd={onDocumentDragEnd}
                   >
                     <span className="file-tree__file-icon" aria-hidden="true">
                       <FileText />
@@ -547,6 +644,7 @@ export function WorkspaceLayout({
   onRenameDocument = async () => true,
   onDeleteDocument = () => {},
   onMoveDocument = () => {},
+  onReorderFileTreeNode = () => {},
   favoritePaths = [],
   showFavoritesOnly = false,
   showHiddenItems = false,
@@ -572,10 +670,13 @@ export function WorkspaceLayout({
   const [activeHeadingId, setActiveHeadingId] = useState<string | null>(null)
   const [contextMenuState, setContextMenuState] = useState<FileTreeContextMenuState | null>(null)
   const [nameActionState, setNameActionState] = useState<FileTreeNameActionState | null>(null)
-  const [dragDocumentPath, setDragDocumentPath] = useState<string | null>(null)
+  const [dragNodePath, setDragNodePath] = useState<string | null>(null)
   const [dropDirectoryPath, setDropDirectoryPath] = useState<string | null>(null)
+  const [reorderDropTarget, setReorderDropTarget] = useState<FileTreeReorderDropTarget | null>(null)
   const renameInputRef = useRef<HTMLInputElement | null>(null)
-  const dragDocumentPathRef = useRef<string | null>(null)
+  const dragNodePathRef = useRef<string | null>(null)
+  const dragNodeParentPathRef = useRef<string | null>(null)
+  const dragNodeKindRef = useRef<VisibleFileTreeNode['kind'] | null>(null)
   const documentRef = useRef<HTMLElement | null>(null)
   const canvasRef = useRef<HTMLDivElement | null>(null)
   const outlineRef = useRef<HTMLDivElement | null>(null)
@@ -586,6 +687,7 @@ export function WorkspaceLayout({
   const maxOutlineWidth = 420
   const deferredFileSearchQuery = useDeferredValue(fileSearchQuery)
   const isFilteringFiles = deferredFileSearchQuery.trim().length > 0
+  const reorderEnabled = !isFilteringFiles && !showFavoritesOnly
   const visibleFileTree = filterFileTree(
     fileTree,
     deferredFileSearchQuery,
@@ -887,19 +989,37 @@ export function WorkspaceLayout({
     }, 0)
   }
 
-  function handleDocumentDragStart(documentPath: string, event: React.DragEvent<HTMLElement>) {
+  function handleTreeNodeDragStart(
+    nodePath: string,
+    nodeKind: VisibleFileTreeNode['kind'],
+    parentPath: string | null,
+    event: React.DragEvent<HTMLElement>,
+  ) {
+    if (!reorderEnabled) {
+      event.preventDefault()
+      return
+    }
+
     setContextMenuState(null)
-    dragDocumentPathRef.current = documentPath
-    setDragDocumentPath(documentPath)
+    dragNodePathRef.current = nodePath
+    dragNodeParentPathRef.current = parentPath
+    dragNodeKindRef.current = nodeKind
+    setDragNodePath(nodePath)
     event.dataTransfer.effectAllowed = 'move'
-    event.dataTransfer.setData(DOCUMENT_DRAG_MIME, documentPath)
-    event.dataTransfer.setData('text/plain', documentPath)
+    event.dataTransfer.setData(TREE_NODE_DRAG_MIME, nodePath)
+    if (nodeKind === 'file') {
+      event.dataTransfer.setData(DOCUMENT_DRAG_MIME, nodePath)
+      event.dataTransfer.setData('text/plain', nodePath)
+    }
   }
 
-  function handleDocumentDragEnd() {
-    dragDocumentPathRef.current = null
-    setDragDocumentPath(null)
+  function handleTreeNodeDragEnd() {
+    dragNodePathRef.current = null
+    dragNodeParentPathRef.current = null
+    dragNodeKindRef.current = null
+    setDragNodePath(null)
     setDropDirectoryPath(null)
+    setReorderDropTarget(null)
   }
 
   function handleDirectoryDragOver(directoryPath: string, event: React.DragEvent<HTMLElement>) {
@@ -907,7 +1027,7 @@ export function WorkspaceLayout({
     const hasDraggedDocument =
       dragTypes.includes(DOCUMENT_DRAG_MIME) ||
       dragTypes.includes('text/plain') ||
-      dragDocumentPathRef.current != null
+      (dragNodePathRef.current != null && dragNodeKindRef.current === 'file')
 
     if (!hasDraggedDocument) {
       return
@@ -916,6 +1036,7 @@ export function WorkspaceLayout({
     event.preventDefault()
     event.stopPropagation()
     event.dataTransfer.dropEffect = 'move'
+    setReorderDropTarget(null)
     setDropDirectoryPath(directoryPath)
   }
 
@@ -934,17 +1055,153 @@ export function WorkspaceLayout({
     const sourcePath =
       event.dataTransfer.getData(DOCUMENT_DRAG_MIME) ||
       event.dataTransfer.getData('text/plain') ||
-      dragDocumentPathRef.current
+      (dragNodeKindRef.current === 'file' ? dragNodePathRef.current : null)
     if (!sourcePath) {
       return
     }
 
     event.preventDefault()
     event.stopPropagation()
-    dragDocumentPathRef.current = null
-    setDragDocumentPath(null)
+    dragNodePathRef.current = null
+    dragNodeParentPathRef.current = null
+    dragNodeKindRef.current = null
+    setDragNodePath(null)
     setDropDirectoryPath(null)
+    setReorderDropTarget(null)
     await onMoveDocument(sourcePath, directoryPath)
+  }
+
+  function handleTreeNodeDragOver(
+    nodePath: string,
+    nodeKind: VisibleFileTreeNode['kind'],
+    parentPath: string | null,
+    event: React.DragEvent<HTMLElement>,
+  ) {
+    const draggedPath = event.dataTransfer.getData(TREE_NODE_DRAG_MIME) || dragNodePathRef.current
+    const draggedParentPath = dragNodeParentPathRef.current
+    const draggedKind = dragNodeKindRef.current
+
+    if (!draggedPath || draggedKind == null) {
+      return
+    }
+
+    if (
+      reorderEnabled &&
+      draggedPath !== nodePath &&
+      draggedParentPath === parentPath
+    ) {
+      const position = resolveRowReorderPositionWithCenterBand(
+        event,
+        draggedKind === 'file' && nodeKind === 'directory' ? 0.12 : 0,
+      )
+      if (position) {
+        event.preventDefault()
+        event.stopPropagation()
+        event.dataTransfer.dropEffect = 'move'
+        setDropDirectoryPath(null)
+        setReorderDropTarget({
+          targetPath: nodePath,
+          targetParentPath: parentPath,
+          position,
+        })
+        return
+      }
+    }
+
+    if (
+      draggedKind === 'file' &&
+      nodeKind === 'directory' &&
+      draggedPath !== nodePath
+    ) {
+      handleDirectoryDragOver(nodePath, event)
+    }
+  }
+
+  async function handleTreeNodeDrop(
+    nodePath: string,
+    nodeKind: VisibleFileTreeNode['kind'],
+    parentPath: string | null,
+    event: React.DragEvent<HTMLElement>,
+  ) {
+    const draggedPath = event.dataTransfer.getData(TREE_NODE_DRAG_MIME) || dragNodePathRef.current
+
+    if (!draggedPath) {
+      return
+    }
+
+    const sourceParentPath = dragNodeParentPathRef.current
+    const directDropPosition =
+      reorderEnabled && sourceParentPath === parentPath && draggedPath !== nodePath
+        ? resolveRowReorderPositionWithCenterBand(
+            event,
+            dragNodeKindRef.current === 'file' && nodeKind === 'directory' ? 0.12 : 0,
+          )
+        : null
+
+    if (directDropPosition) {
+      event.preventDefault()
+      event.stopPropagation()
+      handleTreeNodeDragEnd()
+      await onReorderFileTreeNode({
+        sourcePath: draggedPath,
+        sourceParentPath,
+        targetPath: nodePath,
+        targetParentPath: parentPath,
+        position: directDropPosition,
+      })
+      return
+    }
+
+    if (nodeKind === 'directory') {
+      await handleDirectoryDrop(nodePath, event)
+    }
+  }
+
+  function handleTailDragOver(parentPath: string | null, event: React.DragEvent<HTMLUListElement>) {
+    if (event.target !== event.currentTarget) {
+      return
+    }
+
+    if (!reorderEnabled || dragNodePathRef.current == null || dragNodeParentPathRef.current !== parentPath) {
+      return
+    }
+
+    event.preventDefault()
+    event.stopPropagation()
+    event.dataTransfer.dropEffect = 'move'
+    setDropDirectoryPath(null)
+    setReorderDropTarget({
+      targetPath: null,
+      targetParentPath: parentPath,
+      position: 'tail',
+    })
+  }
+
+  async function handleTailDrop(parentPath: string | null, event: React.DragEvent<HTMLUListElement>) {
+    if (event.target !== event.currentTarget) {
+      return
+    }
+
+    if (
+      reorderDropTarget?.position !== 'tail' ||
+      reorderDropTarget.targetParentPath !== parentPath ||
+      dragNodePathRef.current == null
+    ) {
+      return
+    }
+
+    event.preventDefault()
+    event.stopPropagation()
+    const sourcePath = dragNodePathRef.current
+    const sourceParentPath = dragNodeParentPathRef.current
+    handleTreeNodeDragEnd()
+    await onReorderFileTreeNode({
+      sourcePath,
+      sourceParentPath,
+      targetPath: null,
+      targetParentPath: parentPath,
+      position: 'tail',
+    })
   }
 
   function handleHeadingSelect(headingId: string) {
@@ -1190,7 +1447,9 @@ export function WorkspaceLayout({
               <WorkspaceFileTree
                 nodes={visibleFileTree}
                 level={0}
+                parentPath={null}
                 searchActive={isFilteringFiles}
+                reorderEnabled={reorderEnabled}
                 currentDocumentPath={currentDocumentPath}
                 expandedDirectories={expandedDirectories}
                 onToggleDirectory={handleToggleDirectory}
@@ -1216,10 +1475,15 @@ export function WorkspaceLayout({
                 onNameActionSubmit={onNameActionSubmit}
                 onNameActionCancel={onNameActionCancel}
                 onNameActionBlur={handleNameActionBlur}
-                dragDocumentPath={dragDocumentPath}
+                dragNodePath={dragNodePath}
                 dropDirectoryPath={dropDirectoryPath}
-                onDocumentDragStart={handleDocumentDragStart}
-                onDocumentDragEnd={handleDocumentDragEnd}
+                reorderDropTarget={reorderDropTarget}
+                onTreeNodeDragStart={handleTreeNodeDragStart}
+                onTreeNodeDragEnd={handleTreeNodeDragEnd}
+                onTreeNodeDragOver={handleTreeNodeDragOver}
+                onTreeNodeDrop={handleTreeNodeDrop}
+                onTailDragOver={handleTailDragOver}
+                onTailDrop={handleTailDrop}
                 onDirectoryDragOver={handleDirectoryDragOver}
                 onDirectoryDragLeave={handleDirectoryDragLeave}
                 onDirectoryDrop={handleDirectoryDrop}

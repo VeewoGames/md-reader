@@ -171,6 +171,7 @@ describe('App session restore', () => {
         expandedHeadingNodes: {},
         hiddenPaths: [],
         favoritePaths: [],
+        manualNodeOrderByParent: {},
       },
     })
     bridgeMocks.saveProfileToBridge.mockImplementation(async (_projectId, profile) => profile)
@@ -241,6 +242,7 @@ describe('App session restore', () => {
         expandedHeadingNodes: {},
         hiddenPaths: [],
         favoritePaths: [],
+        manualNodeOrderByParent: {},
       },
     })
 
@@ -252,6 +254,55 @@ describe('App session restore', () => {
 
     expect(screen.queryByRole('button', { name: 'guide.md' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'next.md' })).not.toBeInTheDocument()
+  })
+
+  it('applies the saved manual root order when rebuilding the file tree', async () => {
+    localState.openDocumentPaths = ['docs/guide.md']
+    localState.activeDocumentPath = 'docs/guide.md'
+    localState.tabStateByDocument = {
+      'docs/guide.md': { lastKnownScrollTop: 128 },
+    }
+    localState.readingProgressByDocument = {
+      'docs/guide.md': 128,
+    }
+    bridgeMocks.getFileTreePathsFromBridge.mockResolvedValue(['docs/guide.md', 'notes/todo.md'])
+    bridgeMocks.getProfileFromBridge.mockResolvedValueOnce({
+      id: 'default',
+      appearance: {
+        theme: 'system',
+        fontSize: 16,
+        pageWidth: 'narrow',
+      },
+      layout: {
+        sidebarWidth: 280,
+        outlineWidth: 320,
+        sidebarCollapsed: false,
+        outlineCollapsed: false,
+      },
+      navigation: {
+        expandedFileNodes: ['notes', 'docs'],
+        expandedFileNodesInitialized: true,
+        expandedHeadingNodes: {},
+        hiddenPaths: [],
+        favoritePaths: [],
+        manualNodeOrderByParent: {
+          __root__: ['notes', 'docs'],
+        },
+      },
+    })
+
+    const { container } = render(<App />)
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'notes' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'docs' })).toBeInTheDocument()
+    })
+
+    const rootDirectoryNames = Array.from(container.querySelectorAll('.file-tree__directory-name'))
+      .map((node) => node.textContent)
+      .slice(0, 2)
+
+    expect(rootDirectoryNames).toEqual(['notes', 'docs'])
   })
 
   it('prunes missing restored documents before attempting to reload them', async () => {

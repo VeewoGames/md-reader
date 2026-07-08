@@ -69,6 +69,10 @@ describe('document path mutation', () => {
         expandedHeadingNodes: {},
         hiddenPaths: ['docs/guide.md'],
         favoritePaths: ['docs/guide.md', 'docs/other.md'],
+        manualNodeOrderByParent: {
+          docs: ['docs/guide.md', 'docs/archive'],
+          'docs/archive': ['docs/archive/legacy.md'],
+        },
       },
     }
 
@@ -91,6 +95,10 @@ describe('document path mutation', () => {
     })
     expect(next.profile.navigation.hiddenPaths).toEqual(['docs/archive/guide.md'])
     expect(next.profile.navigation.favoritePaths).toEqual(['docs/archive/guide.md', 'docs/other.md'])
+    expect(next.profile.navigation.manualNodeOrderByParent).toEqual({
+      docs: ['docs/archive/guide.md', 'docs/archive'],
+      'docs/archive': ['docs/archive/legacy.md'],
+    })
   })
 
   it('removes deleted document paths from local and profile collections', () => {
@@ -126,6 +134,10 @@ describe('document path mutation', () => {
         expandedHeadingNodes: {},
         hiddenPaths: ['docs/guide.md'],
         favoritePaths: ['docs/guide.md', 'docs/other.md'],
+        manualNodeOrderByParent: {
+          docs: ['docs/guide.md', 'docs/archive'],
+          'docs/archive': ['docs/archive/legacy.md'],
+        },
       },
     }
 
@@ -145,6 +157,10 @@ describe('document path mutation', () => {
     })
     expect(next.profile.navigation.hiddenPaths).toEqual([])
     expect(next.profile.navigation.favoritePaths).toEqual(['docs/other.md'])
+    expect(next.profile.navigation.manualNodeOrderByParent).toEqual({
+      docs: ['docs/archive'],
+      'docs/archive': ['docs/archive/legacy.md'],
+    })
   })
 
   it('falls back to empty collections when profile navigation arrays are missing', () => {
@@ -176,6 +192,7 @@ describe('document path mutation', () => {
       navigation: {
         expandedFileNodes: ['docs'],
         expandedHeadingNodes: {},
+        manualNodeOrderByParent: {},
       },
     } as WorkspaceProfile
 
@@ -189,5 +206,6 @@ describe('document path mutation', () => {
     expect(next.profile.navigation.hiddenPaths).toEqual([])
     expect(next.profile.navigation.favoritePaths).toEqual([])
     expect(next.localState.openDocumentPaths).toEqual(['docs/archive/guide.md'])
+    expect(next.profile.navigation.manualNodeOrderByParent).toEqual({})
   })
 })

@@ -32,6 +32,7 @@ describe('project profiles', () => {
     expect(payload.profiles.Lans.id).toBe('Lans')
     expect(payload.profiles.default.navigation.hiddenPaths).toEqual([])
     expect(payload.profiles.default.navigation.favoritePaths).toEqual([])
+    expect(payload.profiles.default.navigation.manualNodeOrderByParent).toEqual({})
   })
 
   it('saves and reloads a named repo profile', async () => {
@@ -57,6 +58,9 @@ describe('project profiles', () => {
         expandedHeadingNodes: {},
         hiddenPaths: [],
         favoritePaths: ['docs/guide.md'],
+        manualNodeOrderByParent: {
+          __root__: ['notes', 'docs'],
+        },
       },
     })
 
@@ -68,5 +72,8 @@ describe('project profiles', () => {
     expect(profile.layout.sidebarWidth).toBe(300)
     expect(profile.navigation.expandedFileNodes).toEqual(['docs'])
     expect(profile.navigation.favoritePaths).toEqual(['docs/guide.md'])
+    expect(profile.navigation.manualNodeOrderByParent).toEqual({
+      __root__: ['notes', 'docs'],
+    })
   })
 })

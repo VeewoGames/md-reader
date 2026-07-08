@@ -25,6 +25,7 @@ export interface WorkspaceProfile {
     expandedHeadingNodes: Record<string, string[]>
     hiddenPaths: string[]
     favoritePaths: string[]
+    manualNodeOrderByParent: Record<string, string[]>
   }
 }
 
@@ -49,6 +50,7 @@ export function createDefaultProfile(profileId = 'default'): WorkspaceProfile {
       expandedHeadingNodes: {},
       hiddenPaths: [],
       favoritePaths: [],
+      manualNodeOrderByParent: {},
     },
   }
 }

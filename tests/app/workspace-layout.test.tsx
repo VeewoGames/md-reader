@@ -1,5 +1,5 @@
 import { StrictMode, useEffect, useState } from 'react'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { createEvent, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -851,6 +851,345 @@ describe('WorkspaceLayout outline navigation', () => {
     expect(onMoveDocument).toHaveBeenCalledTimes(1)
     expect(archiveRow).not.toHaveAttribute('data-drop-target')
     expect(fileTreeRoot).not.toHaveAttribute('data-drag-active')
+  })
+
+  it('reorders sibling files when dragging over the upper half of a row', async () => {
+    const onReorderFileTreeNode = vi.fn()
+    const dragStore = new Map<string, string>()
+    const dataTransfer = {
+      effectAllowed: 'all',
+      dropEffect: 'none',
+      setData: vi.fn((type: string, value: string) => {
+        dragStore.set(type, value)
+      }),
+      getData: vi.fn((type: string) => dragStore.get(type) ?? ''),
+    }
+
+    render(
+      <WorkspaceLayout
+        mode="regular"
+        regularViewState="locked"
+        fileTree={createVisibleTree(['docs/guide.md', 'docs/reference.md'])}
+        currentDocumentPath="docs/guide.md"
+        currentDocumentContent={'# 标题\n\n正文'}
+        statusMessage="当前项目：Notes"
+        sidebarWidth={280}
+        outlineWidth={320}
+        hasProjects
+        onDocumentSelect={() => {}}
+        onReorderFileTreeNode={onReorderFileTreeNode}
+        onSidebarWidthChange={() => {}}
+        onSidebarWidthCommit={() => {}}
+        onOutlineWidthChange={() => {}}
+        onOutlineWidthCommit={() => {}}
+      />,
+    )
+
+    const guideButton = screen.getByRole('button', { name: 'guide.md' })
+    const referenceRow = screen.getByRole('button', { name: 'reference.md' }).closest('.file-tree__row')
+
+    expect(referenceRow).not.toBeNull()
+
+    Object.defineProperty(referenceRow as HTMLDivElement, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({ top: 100, height: 40 }),
+    })
+
+    fireEvent.dragStart(guideButton, { dataTransfer })
+    const reorderOverEvent = createEvent.dragOver(referenceRow as HTMLDivElement)
+    Object.defineProperties(reorderOverEvent, {
+      clientY: { value: 108 },
+      dataTransfer: { value: dataTransfer },
+    })
+    fireEvent(referenceRow as HTMLDivElement, reorderOverEvent)
+    expect(referenceRow).toHaveAttribute('data-reorder-target', 'before')
+
+    const reorderDropEvent = createEvent.drop(referenceRow as HTMLDivElement)
+    Object.defineProperties(reorderDropEvent, {
+      clientY: { value: 108 },
+      dataTransfer: { value: dataTransfer },
+    })
+    fireEvent(referenceRow as HTMLDivElement, reorderDropEvent)
+
+    await waitFor(() => {
+      expect(onReorderFileTreeNode).toHaveBeenCalledWith({
+        sourcePath: 'docs/guide.md',
+        sourceParentPath: 'docs',
+        targetPath: 'docs/reference.md',
+        targetParentPath: 'docs',
+        position: 'before',
+      })
+    })
+  })
+
+  it('treats the full file row as a sortable insert target instead of requiring a narrow edge band', async () => {
+    const onReorderFileTreeNode = vi.fn()
+    const dragStore = new Map<string, string>()
+    const dataTransfer = {
+      effectAllowed: 'all',
+      dropEffect: 'none',
+      setData: vi.fn((type: string, value: string) => {
+        dragStore.set(type, value)
+      }),
+      getData: vi.fn((type: string) => dragStore.get(type) ?? ''),
+    }
+
+    render(
+      <WorkspaceLayout
+        mode="regular"
+        regularViewState="locked"
+        fileTree={createVisibleTree(['docs/guide.md', 'docs/reference.md'])}
+        currentDocumentPath="docs/guide.md"
+        currentDocumentContent={'# 标题\n\n正文'}
+        statusMessage="当前项目：Notes"
+        sidebarWidth={280}
+        outlineWidth={320}
+        hasProjects
+        onDocumentSelect={() => {}}
+        onReorderFileTreeNode={onReorderFileTreeNode}
+        onSidebarWidthChange={() => {}}
+        onSidebarWidthCommit={() => {}}
+        onOutlineWidthChange={() => {}}
+        onOutlineWidthCommit={() => {}}
+      />,
+    )
+
+    const guideButton = screen.getByRole('button', { name: 'guide.md' })
+    const referenceRow = screen.getByRole('button', { name: 'reference.md' }).closest('.file-tree__row')
+
+    expect(referenceRow).not.toBeNull()
+
+    Object.defineProperty(referenceRow as HTMLDivElement, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({ top: 100, height: 40 }),
+    })
+
+    fireEvent.dragStart(guideButton, { dataTransfer })
+    const reorderOverEvent = createEvent.dragOver(referenceRow as HTMLDivElement)
+    Object.defineProperties(reorderOverEvent, {
+      clientY: { value: 120 },
+      dataTransfer: { value: dataTransfer },
+    })
+    fireEvent(referenceRow as HTMLDivElement, reorderOverEvent)
+
+    expect(referenceRow).toHaveAttribute('data-reorder-target', 'after')
+
+    const reorderDropEvent = createEvent.drop(referenceRow as HTMLDivElement)
+    Object.defineProperties(reorderDropEvent, {
+      clientY: { value: 120 },
+      dataTransfer: { value: dataTransfer },
+    })
+    fireEvent(referenceRow as HTMLDivElement, reorderDropEvent)
+
+    await waitFor(() => {
+      expect(onReorderFileTreeNode).toHaveBeenCalledWith({
+        sourcePath: 'docs/guide.md',
+        sourceParentPath: 'docs',
+        targetPath: 'docs/reference.md',
+        targetParentPath: 'docs',
+        position: 'after',
+      })
+    })
+  })
+
+  it('reorders root directories and supports full-row drag for folders', async () => {
+    const onReorderFileTreeNode = vi.fn()
+    const dragStore = new Map<string, string>()
+    const dataTransfer = {
+      effectAllowed: 'all',
+      dropEffect: 'none',
+      setData: vi.fn((type: string, value: string) => {
+        dragStore.set(type, value)
+      }),
+      getData: vi.fn((type: string) => dragStore.get(type) ?? ''),
+    }
+
+    render(
+      <WorkspaceLayout
+        mode="regular"
+        regularViewState="locked"
+        fileTree={createVisibleTree(['docs/guide.md', 'notes/todo.md'])}
+        currentDocumentPath="docs/guide.md"
+        currentDocumentContent={'# 标题\n\n正文'}
+        statusMessage="当前项目：Notes"
+        sidebarWidth={280}
+        outlineWidth={320}
+        hasProjects
+        onDocumentSelect={() => {}}
+        onReorderFileTreeNode={onReorderFileTreeNode}
+        onSidebarWidthChange={() => {}}
+        onSidebarWidthCommit={() => {}}
+        onOutlineWidthChange={() => {}}
+        onOutlineWidthCommit={() => {}}
+      />,
+    )
+
+    const docsRow = screen.getByRole('button', { name: 'docs' }).closest('.file-tree__row')
+    const notesRow = screen.getByRole('button', { name: 'notes' }).closest('.file-tree__row')
+
+    expect(docsRow).not.toBeNull()
+    expect(notesRow).not.toBeNull()
+
+    Object.defineProperty(notesRow as HTMLDivElement, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({ top: 200, height: 40 }),
+    })
+
+    fireEvent.dragStart(docsRow as HTMLDivElement, { dataTransfer })
+    const directoryReorderOverEvent = createEvent.dragOver(notesRow as HTMLDivElement)
+    Object.defineProperties(directoryReorderOverEvent, {
+      clientY: { value: 232 },
+      dataTransfer: { value: dataTransfer },
+    })
+    fireEvent(notesRow as HTMLDivElement, directoryReorderOverEvent)
+
+    const directoryReorderDropEvent = createEvent.drop(notesRow as HTMLDivElement)
+    Object.defineProperties(directoryReorderDropEvent, {
+      clientY: { value: 232 },
+      dataTransfer: { value: dataTransfer },
+    })
+    fireEvent(notesRow as HTMLDivElement, directoryReorderDropEvent)
+
+    await waitFor(() => {
+      expect(onReorderFileTreeNode).toHaveBeenCalledWith({
+        sourcePath: 'docs',
+        sourceParentPath: null,
+        targetPath: 'notes',
+        targetParentPath: null,
+        position: 'after',
+      })
+    })
+  })
+
+  it('keeps a narrow center band on same-parent directories for real move-to-folder drops', async () => {
+    const onMoveDocument = vi.fn()
+    const onReorderFileTreeNode = vi.fn()
+    const dragStore = new Map<string, string>()
+    const dataTransfer = {
+      effectAllowed: 'all',
+      dropEffect: 'none',
+      setData: vi.fn((type: string, value: string) => {
+        dragStore.set(type, value)
+      }),
+      getData: vi.fn((type: string) => dragStore.get(type) ?? ''),
+      types: [
+        'application/x-md-reader-document-path',
+        'application/x-md-reader-tree-node-path',
+        'text/plain',
+      ],
+    }
+
+    render(
+      <WorkspaceLayout
+        mode="regular"
+        regularViewState="locked"
+        fileTree={createVisibleTree(['docs/guide.md', 'docs/archive/index.md'])}
+        currentDocumentPath="docs/guide.md"
+        currentDocumentContent={'# 标题\n\n正文'}
+        statusMessage="当前项目：Notes"
+        sidebarWidth={280}
+        outlineWidth={320}
+        hasProjects
+        onDocumentSelect={() => {}}
+        onMoveDocument={onMoveDocument}
+        onReorderFileTreeNode={onReorderFileTreeNode}
+        onSidebarWidthChange={() => {}}
+        onSidebarWidthCommit={() => {}}
+        onOutlineWidthChange={() => {}}
+        onOutlineWidthCommit={() => {}}
+      />,
+    )
+
+    const guideButton = screen.getByRole('button', { name: 'guide.md' })
+    const archiveRow = screen.getByRole('button', { name: 'archive' }).closest('.file-tree__row')
+
+    expect(archiveRow).not.toBeNull()
+
+    Object.defineProperty(archiveRow as HTMLDivElement, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({ top: 100, height: 40 }),
+    })
+
+    fireEvent.dragStart(guideButton, { dataTransfer })
+    const moveOverEvent = createEvent.dragOver(archiveRow as HTMLDivElement)
+    Object.defineProperties(moveOverEvent, {
+      clientY: { value: 120 },
+      dataTransfer: { value: dataTransfer },
+    })
+    fireEvent(archiveRow as HTMLDivElement, moveOverEvent)
+
+    expect(archiveRow).toHaveAttribute('data-drop-target', 'true')
+    expect(archiveRow).not.toHaveAttribute('data-reorder-target')
+
+    const moveDropEvent = createEvent.drop(archiveRow as HTMLDivElement)
+    Object.defineProperties(moveDropEvent, {
+      clientY: { value: 120 },
+      dataTransfer: { value: dataTransfer },
+    })
+    fireEvent(archiveRow as HTMLDivElement, moveDropEvent)
+
+    await waitFor(() => {
+      expect(onMoveDocument).toHaveBeenCalledWith('docs/guide.md', 'docs/archive')
+    })
+    expect(onReorderFileTreeNode).not.toHaveBeenCalled()
+  })
+
+  it('disables tree drag when sidebar filtering is active', async () => {
+    const user = userEvent.setup()
+    const onReorderFileTreeNode = vi.fn()
+
+    render(
+      <WorkspaceLayout
+        mode="regular"
+        regularViewState="locked"
+        fileTree={createVisibleTree(['docs/guide.md', 'docs/reference.md'])}
+        currentDocumentPath="docs/guide.md"
+        currentDocumentContent={'# 标题\n\n正文'}
+        statusMessage="当前项目：Notes"
+        sidebarWidth={280}
+        outlineWidth={320}
+        hasProjects
+        onDocumentSelect={() => {}}
+        onReorderFileTreeNode={onReorderFileTreeNode}
+        onSidebarWidthChange={() => {}}
+        onSidebarWidthCommit={() => {}}
+        onOutlineWidthChange={() => {}}
+        onOutlineWidthCommit={() => {}}
+      />,
+    )
+
+    await user.type(screen.getByRole('searchbox', { name: '搜索文件' }), 'ref')
+
+    const referenceButton = screen.getByRole('button', { name: 'reference.md' }) as HTMLButtonElement
+
+    expect(referenceButton.draggable).toBe(false)
+  })
+
+  it('disables tree drag when favorites-only mode is active', () => {
+    render(
+      <WorkspaceLayout
+        mode="regular"
+        regularViewState="locked"
+        fileTree={createVisibleTree(['docs/guide.md', 'docs/reference.md'])}
+        currentDocumentPath="docs/guide.md"
+        currentDocumentContent={'# 标题\n\n正文'}
+        statusMessage="当前项目：Notes"
+        sidebarWidth={280}
+        outlineWidth={320}
+        hasProjects
+        favoritePaths={['docs/reference.md']}
+        showFavoritesOnly
+        onDocumentSelect={() => {}}
+        onSidebarWidthChange={() => {}}
+        onSidebarWidthCommit={() => {}}
+        onOutlineWidthChange={() => {}}
+        onOutlineWidthCommit={() => {}}
+      />,
+    )
+
+    const referenceButton = screen.getByRole('button', { name: 'reference.md' }) as HTMLButtonElement
+
+    expect(referenceButton.draggable).toBe(false)
   })
 
   it('renders an action toast for immediate file-tree feedback', () => {
