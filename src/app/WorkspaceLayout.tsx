@@ -33,6 +33,8 @@ import type { VisibleFileTreeNode } from '../workspace/file-tree-types'
 import { filterFileTree } from '../workspace/file-tree'
 import type { RegularViewState, WorkspaceMode } from './TopBar'
 
+const HEADING_SELECTOR = 'h1, h2, h3, h4, h5, h6'
+
 export function createDefaultExpandedDirectories(
   availableDirectoryPaths: string[],
   currentDocumentPath: string | null,
@@ -147,6 +149,7 @@ interface WorkspaceLayoutProps {
   persistedExpandedDirectories?: string[]
   hasPersistedExpandedDirectories?: boolean
   hasProjects: boolean
+  isWorkspaceBootstrapping?: boolean
   onDocumentSelect: (path: string) => void
   onCreateDocument?: (directoryPath?: string) => void | Promise<void>
   onCreateDirectory?: (directoryPath?: string) => void | Promise<void>
@@ -220,6 +223,15 @@ type FileTreeReorderDropTarget = {
   targetPath: string | null
   targetParentPath: string | null
   position: 'before' | 'after' | 'tail'
+}
+
+function collectHeadingTargets(root: ParentNode | null, documentHeadings: MarkdownHeading[]): HeadingTarget[] {
+  return Array.from(root?.querySelectorAll<HTMLElement>(HEADING_SELECTOR) ?? [])
+    .map((element, index) => {
+      const id = documentHeadings[index]?.id || element.dataset.headingId || element.id
+      return id ? { element, id } : null
+    })
+    .filter((target): target is HeadingTarget => target != null)
 }
 
 function listDragTypes(dataTransfer: DataTransfer | null): string[] {
@@ -635,6 +647,7 @@ export function WorkspaceLayout({
   hasPersistedExpandedDirectories = false,
   availableDirectoryPaths = EMPTY_PATHS,
   hasProjects,
+  isWorkspaceBootstrapping = false,
   onDocumentSelect,
   onCreateDocument = () => {},
   onCreateDirectory = () => {},
@@ -723,14 +736,7 @@ export function WorkspaceLayout({
 
   useEffect(() => {
     function syncActiveHeadingSnapshot() {
-      const headingTargets = Array.from(
-        documentRef.current?.querySelectorAll<HTMLElement>('[data-heading-id]') ?? [],
-      )
-        .map((element) => {
-          const id = element.dataset.headingId
-          return id ? { element, id } : null
-        })
-        .filter((target): target is HeadingTarget => target != null)
+      const headingTargets = collectHeadingTargets(documentRef.current, documentHeadings)
 
       if (headingTargets.length === 0) {
         setActiveHeadingId(documentHeadings[0]?.id ?? null)
@@ -744,7 +750,7 @@ export function WorkspaceLayout({
 
     function applyHeadingIds() {
       const headingElements = Array.from(
-        documentRef.current?.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6') ?? [],
+        documentRef.current?.querySelectorAll<HTMLElement>(HEADING_SELECTOR) ?? [],
       )
 
       headingElements.forEach((element, index) => {
@@ -760,8 +766,10 @@ export function WorkspaceLayout({
       })
     }
 
-    applyHeadingIds()
-    syncActiveHeadingSnapshot()
+    function runHeadingSync() {
+      applyHeadingIds()
+      syncActiveHeadingSnapshot()
+    }
 
     const root = documentRef.current
 
@@ -769,36 +777,48 @@ export function WorkspaceLayout({
       return
     }
 
+    let frameId = 0
+    let hasScheduledSync = false
+
+    const scheduleHeadingSync = () => {
+      if (hasScheduledSync) {
+        return
+      }
+
+      hasScheduledSync = true
+      frameId = window.requestAnimationFrame(() => {
+        frameId = 0
+        hasScheduledSync = false
+        runHeadingSync()
+      })
+    }
+
+    runHeadingSync()
+
     if (mode === 'regular') {
-      let frameId = 0
       let attempts = 0
 
       const resyncEditHeadings = () => {
         frameId = 0
+        hasScheduledSync = false
         attempts += 1
-        applyHeadingIds()
-        syncActiveHeadingSnapshot()
+        runHeadingSync()
 
         const headingCount =
           documentRef.current?.querySelectorAll<HTMLElement>('[data-heading-id]').length ?? 0
 
         if (headingCount === 0 && attempts < 12) {
+          hasScheduledSync = true
           frameId = window.requestAnimationFrame(resyncEditHeadings)
         }
       }
 
+      hasScheduledSync = true
       frameId = window.requestAnimationFrame(resyncEditHeadings)
-
-      return () => {
-        if (frameId !== 0) {
-          window.cancelAnimationFrame(frameId)
-        }
-      }
     }
 
     const observer = new MutationObserver(() => {
-      applyHeadingIds()
-      syncActiveHeadingSnapshot()
+      scheduleHeadingSync()
     })
 
     observer.observe(root, {
@@ -807,19 +827,15 @@ export function WorkspaceLayout({
     })
 
     return () => {
+      if (frameId !== 0) {
+        window.cancelAnimationFrame(frameId)
+      }
       observer.disconnect()
     }
   }, [documentHeadings, mode, activeDocumentContent])
 
   function getHeadingTargets(): HeadingTarget[] {
-    return Array.from(
-      documentRef.current?.querySelectorAll<HTMLElement>('[data-heading-id]') ?? [],
-    )
-      .map((element) => {
-        const id = element.dataset.headingId
-        return id ? { element, id } : null
-      })
-      .filter((target): target is HeadingTarget => target != null)
+    return collectHeadingTargets(documentRef.current, documentHeadings)
   }
 
   const syncActiveHeading = useEffectEvent(() => {
@@ -1206,9 +1222,26 @@ export function WorkspaceLayout({
 
   function handleHeadingSelect(headingId: string) {
     setActiveHeadingId(headingId)
-    getHeadingTargets()
-      .find((target) => target.id === headingId)
-      ?.element.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
+    const target = getHeadingTargets().find((headingTarget) => headingTarget.id === headingId)
+
+    if (!target) {
+      return
+    }
+
+    const canvas = canvasRef.current
+    if (!canvas) {
+      target.element.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
+      return
+    }
+
+    const anchorTop = canvas.getBoundingClientRect().top + 24
+    const targetTop = target.element.getBoundingClientRect().top
+    const nextScrollTop = Math.max(0, canvas.scrollTop + targetTop - anchorTop)
+
+    canvas.scrollTo?.({
+      top: nextScrollTop,
+      behavior: 'smooth',
+    })
   }
 
   function clampSidebarWidth(nextWidth: number) {
@@ -1314,10 +1347,10 @@ export function WorkspaceLayout({
     if (mode === 'regular') {
       return (
         <div className="workspace__document-workarea">
-          <div
-            ref={(node) => {
-              documentRef.current = node
-            }}
+            <div
+              ref={(node) => {
+                documentRef.current = node
+              }}
             className="workspace__editor-pane"
           >
             <VisualMarkdownEditor
@@ -1492,6 +1525,8 @@ export function WorkspaceLayout({
               <p className="panel__empty">没有匹配的文件</p>
             ) : showFavoritesOnly && !hasFavorites ? (
               <p className="panel__empty">当前还没有收藏文档</p>
+            ) : isWorkspaceBootstrapping ? (
+              <p className="panel__empty">正在恢复工作区…</p>
             ) : (
               <p className="panel__empty">
                 {hasProjects ? '当前项目还没有可用的 Markdown 文件' : '还没有接入任何 Markdown 项目'}
@@ -1648,7 +1683,9 @@ export function WorkspaceLayout({
         <div id="workspace-outline" ref={outlineRef} className="panel panel--outline">
           <div className="panel__content panel__content--outline">
             {!currentDocumentPath ? (
-              <p className="panel__empty">打开 Markdown 文档后，这里会基于标题节点生成快捷导航。</p>
+              <p className="panel__empty">
+                {isWorkspaceBootstrapping ? '正在恢复标题导航…' : '打开 Markdown 文档后，这里会基于标题节点生成快捷导航。'}
+              </p>
             ) : isDocumentLoading ? (
               <p className="panel__empty">正在生成标题导航…</p>
             ) : documentHeadings.length > 0 ? (

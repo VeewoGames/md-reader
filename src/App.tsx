@@ -358,6 +358,7 @@ function App() {
   const [documentFontSize, setDocumentFontSize] = useState(16)
   const [documentPageWidth, setDocumentPageWidth] = useState<PageWidthMode>('narrow')
   const [documentLineHeight, setDocumentLineHeight] = useState<DocumentLineHeight>(1.6)
+  const [isWorkspaceBootstrapping, setIsWorkspaceBootstrapping] = useState(true)
   const activeTab = getActiveTab(session)
   const mode = session.mode
   const regularViewState = session.regularViewState
@@ -565,6 +566,7 @@ function App() {
           snapshot.projects,
           restoredActiveProfileId,
         )
+        setIsWorkspaceBootstrapping(false)
         return
       }
 
@@ -573,6 +575,7 @@ function App() {
       setFileTree([])
       resetSessionState()
       setStatusMessage('本地服务不可用')
+      setIsWorkspaceBootstrapping(false)
     })()
   }, [])
 
@@ -2372,6 +2375,7 @@ function App() {
         documentFontSize={documentFontSize}
         documentPageWidth={documentPageWidth}
         documentLineHeight={documentLineHeight}
+        isWorkspaceBootstrapping={isWorkspaceBootstrapping}
         onConnectProject={handleConnectProject}
         onProjectChange={handleProjectChange}
         onProfileChange={handleProfileChange}

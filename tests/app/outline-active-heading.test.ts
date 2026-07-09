@@ -34,4 +34,14 @@ describe('findActiveHeadingId', () => {
 
     expect(findActiveHeadingId(headingTargets, 200)).toBe('overview')
   })
+
+  it('treats a heading that lands within a subpixel tolerance of the anchor as active', () => {
+    const headingTargets = [
+      createHeadingTarget('overview', 80),
+      createHeadingTarget('details', 125.76),
+      createHeadingTarget('appendix', 360),
+    ]
+
+    expect(findActiveHeadingId(headingTargets, 125.63)).toBe('details')
+  })
 })

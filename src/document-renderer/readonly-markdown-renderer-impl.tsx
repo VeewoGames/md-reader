@@ -1,6 +1,7 @@
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 
+import { remarkHeadingIds } from '../markdown/heading-outline'
 import { applyMarkdownTransforms } from '../markdown/markdown-transform'
 
 interface ReadonlyMarkdownRendererImplProps {
@@ -16,7 +17,7 @@ export function ReadonlyMarkdownRendererImpl({ value }: ReadonlyMarkdownRenderer
       role="group"
       aria-label="只读 Markdown 渲染器"
     >
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{transformedValue}</ReactMarkdown>
+      <ReactMarkdown remarkPlugins={[remarkGfm, remarkHeadingIds]}>{transformedValue}</ReactMarkdown>
     </div>
   )
 }

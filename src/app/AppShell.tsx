@@ -24,6 +24,7 @@ interface AppShellProps {
   activeTabId: string | null
   canManageService?: boolean
   isServiceActionPending?: boolean
+  isWorkspaceBootstrapping?: boolean
   mode: WorkspaceMode
   regularViewState: RegularViewState
   fileTree: VisibleFileTreeNode[]
@@ -155,6 +156,7 @@ export function AppShell(props: AppShellProps) {
         persistedExpandedDirectories={props.expandedFileNodes}
         hasPersistedExpandedDirectories={props.hasPersistedExpandedFileNodes}
         hasProjects={props.projects.length > 0}
+        isWorkspaceBootstrapping={props.isWorkspaceBootstrapping}
         onDocumentSelect={props.onDocumentSelect}
         onCreateDocument={props.onCreateDocument}
         onCreateDirectory={props.onCreateDirectory}

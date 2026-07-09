@@ -17,6 +17,27 @@ describe('ReadonlyMarkdownRendererImpl', () => {
     expect(screen.getByText('词缀系统是夜曲装备系统的核心数值层。').tagName).toBe('P')
   })
 
+  it('adds stable data-heading-id attributes for outline navigation', () => {
+    render(
+      <ReadonlyMarkdownRendererImpl
+        value={'# 词缀系统\n\n## 概述\n\n### 设计目标\n\n正文'}
+      />,
+    )
+
+    expect(screen.getByRole('heading', { level: 1, name: '词缀系统' })).toHaveAttribute(
+      'data-heading-id',
+      '词缀系统',
+    )
+    expect(screen.getByRole('heading', { level: 2, name: '概述' })).toHaveAttribute(
+      'data-heading-id',
+      '概述',
+    )
+    expect(screen.getByRole('heading', { level: 3, name: '设计目标' })).toHaveAttribute(
+      'data-heading-id',
+      '设计目标',
+    )
+  })
+
   it('supports gfm links in readonly preview', () => {
     render(<ReadonlyMarkdownRendererImpl value={'[Notion 文档](https://example.com)'} />)
 

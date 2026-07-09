@@ -89,7 +89,7 @@ describe('WorkspaceLayout outline navigation', () => {
     vi.unstubAllGlobals()
   })
 
-  it('clicks outline items to scroll to the matching heading', async () => {
+  it('aligns outline navigation clicks to the document anchor in locked mode', async () => {
     const user = userEvent.setup()
 
     render(
@@ -113,20 +113,98 @@ describe('WorkspaceLayout outline navigation', () => {
 
     await screen.findByLabelText('可视 Markdown 编辑器')
     const heading = screen.getByRole('heading', { name: '提交信息格式' })
-    const scrollIntoView = vi.fn()
+    const canvasPanel = document.querySelector('.panel__content--canvas') as HTMLDivElement | null
+    const scrollTo = vi.fn()
 
-    Object.defineProperty(heading, 'scrollIntoView', {
+    expect(canvasPanel).not.toBeNull()
+
+    Object.defineProperty(canvasPanel as HTMLDivElement, 'scrollTop', {
       configurable: true,
-      value: scrollIntoView,
+      value: 180,
+      writable: true,
+    })
+    Object.defineProperty(canvasPanel as HTMLDivElement, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({ top: 100 }),
+    })
+    Object.defineProperty(canvasPanel as HTMLDivElement, 'scrollTo', {
+      configurable: true,
+      value: scrollTo,
+    })
+    Object.defineProperty(heading, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({ top: 356 }),
     })
 
     await user.click(screen.getByRole('button', { name: '提交信息格式' }))
 
-    expect(scrollIntoView).toHaveBeenCalled()
-    expect(screen.getByRole('button', { name: '提交信息格式' })).toHaveAttribute(
-      'aria-current',
-      'location',
+    expect(scrollTo).toHaveBeenCalledWith({ behavior: 'smooth', top: 412 })
+  })
+
+  it('reapplies heading targets after a late regular-mode DOM replacement', async () => {
+    const user = userEvent.setup()
+
+    render(
+      <WorkspaceLayout
+        mode="regular"
+        regularViewState="locked"
+        fileTree={[]}
+        currentDocumentPath="docs/guide.md"
+        currentDocumentContent={'# 总览\n\n## 提交信息格式\n\n内容'}
+        statusMessage="当前项目：Notes"
+        sidebarWidth={280}
+        outlineWidth={320}
+        hasProjects
+        onDocumentSelect={() => {}}
+        onSidebarWidthChange={() => {}}
+        onSidebarWidthCommit={() => {}}
+        onOutlineWidthChange={() => {}}
+        onOutlineWidthCommit={() => {}}
+      />,
     )
+
+    await screen.findByLabelText('可视 Markdown 编辑器')
+    const canvasPanel = document.querySelector('.panel__content--canvas') as HTMLDivElement | null
+    const scrollTo = vi.fn()
+
+    expect(canvasPanel).not.toBeNull()
+
+    const originalHeading = await screen.findByRole('heading', { name: '提交信息格式' })
+
+    await waitFor(() => {
+      expect(originalHeading).toHaveAttribute('data-heading-id', '提交信息格式')
+    })
+
+    const replacementHeading = originalHeading.cloneNode(true) as HTMLElement
+    replacementHeading.removeAttribute('data-heading-id')
+    replacementHeading.removeAttribute('id')
+    originalHeading.replaceWith(replacementHeading)
+
+    Object.defineProperty(canvasPanel as HTMLDivElement, 'scrollTop', {
+      configurable: true,
+      value: 180,
+      writable: true,
+    })
+    Object.defineProperty(canvasPanel as HTMLDivElement, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({ top: 100 }),
+    })
+    Object.defineProperty(canvasPanel as HTMLDivElement, 'scrollTo', {
+      configurable: true,
+      value: scrollTo,
+    })
+    Object.defineProperty(replacementHeading, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({ top: 356 }),
+    })
+
+    await waitFor(() => {
+      expect(replacementHeading).toHaveAttribute('data-heading-id', '提交信息格式')
+    })
+
+    await user.click(screen.getByRole('button', { name: '提交信息格式' }))
+
+    expect(scrollTo).toHaveBeenCalledWith({ behavior: 'smooth', top: 412 })
   })
 
   it('updates the active outline item when the document scroll position changes', async () => {
@@ -300,7 +378,7 @@ describe('WorkspaceLayout outline navigation', () => {
     expect(container.querySelector('.workspace__editor-pane')).not.toBeNull()
   })
 
-  it('clicks outline items to scroll to the matching heading in regular editable mode', async () => {
+  it('aligns outline navigation clicks to the document anchor in regular editable mode', async () => {
     const user = userEvent.setup()
 
     render(
@@ -326,20 +404,36 @@ describe('WorkspaceLayout outline navigation', () => {
 
     await screen.findByLabelText('可视 Markdown 编辑器')
     const heading = screen.getByRole('heading', { name: '提交信息格式' })
-    const scrollIntoView = vi.fn()
+    const canvasPanel = document.querySelector('.panel__content--canvas') as HTMLDivElement | null
+    const scrollTo = vi.fn()
 
-    Object.defineProperty(heading, 'scrollIntoView', {
+    expect(canvasPanel).not.toBeNull()
+
+    await waitFor(() => {
+      expect(heading).toHaveAttribute('data-heading-id', '提交信息格式')
+    })
+
+    Object.defineProperty(canvasPanel as HTMLDivElement, 'scrollTop', {
       configurable: true,
-      value: scrollIntoView,
+      value: 240,
+      writable: true,
+    })
+    Object.defineProperty(canvasPanel as HTMLDivElement, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({ top: 120 }),
+    })
+    Object.defineProperty(canvasPanel as HTMLDivElement, 'scrollTo', {
+      configurable: true,
+      value: scrollTo,
+    })
+    Object.defineProperty(heading, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({ top: 402 }),
     })
 
     await user.click(screen.getByRole('button', { name: '提交信息格式' }))
 
-    expect(scrollIntoView).toHaveBeenCalled()
-    expect(screen.getByRole('button', { name: '提交信息格式' })).toHaveAttribute(
-      'aria-current',
-      'location',
-    )
+    expect(scrollTo).toHaveBeenCalledWith({ behavior: 'smooth', top: 498 })
   })
 
   it('injects data-heading-id onto regular mode headings for unified outline targeting', async () => {
@@ -490,7 +584,7 @@ describe('WorkspaceLayout outline navigation', () => {
     expect(screen.getByRole('heading', { name: '下一节' })).toBeInTheDocument()
   })
 
-  it('does not attach a mutation observer to the editor pane in regular mode', async () => {
+  it('attaches a mutation observer to the editor pane in regular mode', async () => {
     const observe = vi.fn()
     const disconnect = vi.fn()
 
@@ -529,7 +623,108 @@ describe('WorkspaceLayout outline navigation', () => {
     const editorPane = document.querySelector('.workspace__editor-pane')
     const observedEditorPane = observe.mock.calls.some(([target]) => target === editorPane)
 
-    expect(observedEditorPane).toBe(false)
+    expect(observedEditorPane).toBe(true)
+  })
+
+  it('reapplies heading targets when a later non-heading mutation leaves headings without ids', async () => {
+    render(
+      <WorkspaceLayout
+        mode="regular"
+        regularViewState="editable"
+        fileTree={[]}
+        currentDocumentPath="docs/guide.md"
+        currentDocumentContent={'# 总览\n\n## 提交信息格式\n\n内容'}
+        editingDocumentContent={'# 总览\n\n## 提交信息格式\n\n内容'}
+        statusMessage="当前项目：Notes"
+        sidebarWidth={280}
+        outlineWidth={320}
+        hasProjects
+        onDocumentSelect={() => {}}
+        onSidebarWidthChange={() => {}}
+        onSidebarWidthCommit={() => {}}
+        onOutlineWidthChange={() => {}}
+        onOutlineWidthCommit={() => {}}
+        onEditingDocumentContentChange={() => {}}
+      />,
+    )
+
+    await screen.findByLabelText('可视 Markdown 编辑器')
+
+    const heading = await screen.findByRole('heading', { name: '提交信息格式' })
+    const paragraph = screen.getByText('内容')
+
+    await waitFor(() => {
+      expect(heading).toHaveAttribute('data-heading-id', '提交信息格式')
+    })
+
+    heading.removeAttribute('data-heading-id')
+    heading.removeAttribute('id')
+    paragraph.textContent = '内容更新'
+
+    await waitFor(() => {
+      expect(heading).toHaveAttribute('data-heading-id', '提交信息格式')
+    })
+  })
+
+  it('keeps outline targeting stable when the editor rewrites heading ids', async () => {
+    const user = userEvent.setup()
+
+    render(
+      <WorkspaceLayout
+        mode="regular"
+        regularViewState="editable"
+        fileTree={[]}
+        currentDocumentPath="docs/guide.md"
+        currentDocumentContent={'# 总览\n\n## 提交信息格式\n\n内容'}
+        editingDocumentContent={'# 总览\n\n## 提交信息格式\n\n内容'}
+        statusMessage="当前项目：Notes"
+        sidebarWidth={280}
+        outlineWidth={320}
+        hasProjects
+        onDocumentSelect={() => {}}
+        onSidebarWidthChange={() => {}}
+        onSidebarWidthCommit={() => {}}
+        onOutlineWidthChange={() => {}}
+        onOutlineWidthCommit={() => {}}
+        onEditingDocumentContentChange={() => {}}
+      />,
+    )
+
+    await screen.findByLabelText('可视 Markdown 编辑器')
+    const heading = screen.getByRole('heading', { name: '提交信息格式' })
+    const canvasPanel = document.querySelector('.panel__content--canvas') as HTMLDivElement | null
+    const scrollTo = vi.fn()
+
+    expect(canvasPanel).not.toBeNull()
+
+    await waitFor(() => {
+      expect(heading).toHaveAttribute('data-heading-id', '提交信息格式')
+    })
+
+    heading.removeAttribute('data-heading-id')
+    heading.id = '编辑器自己的标题-id'
+
+    Object.defineProperty(canvasPanel as HTMLDivElement, 'scrollTop', {
+      configurable: true,
+      value: 240,
+      writable: true,
+    })
+    Object.defineProperty(canvasPanel as HTMLDivElement, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({ top: 120 }),
+    })
+    Object.defineProperty(canvasPanel as HTMLDivElement, 'scrollTo', {
+      configurable: true,
+      value: scrollTo,
+    })
+    Object.defineProperty(heading, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({ top: 402 }),
+    })
+
+    await user.click(screen.getByRole('button', { name: '提交信息格式' }))
+
+    expect(scrollTo).toHaveBeenCalledWith({ behavior: 'smooth', top: 498 })
   })
 
   it('filters file tree entries from the sidebar search box and still opens matched files', async () => {
