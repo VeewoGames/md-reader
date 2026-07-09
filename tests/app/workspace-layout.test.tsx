@@ -2,6 +2,7 @@ import { StrictMode, useEffect, useState } from 'react'
 import { createEvent, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { EDITOR_STRUCTURE_UPDATED_EVENT } from '../../src/editor/editor-structure-events'
 
 vi.mock('../../src/editor/visual-markdown-editor', () => ({
   VisualMarkdownEditor: ({ value, readonly }: { value: string; readonly?: boolean }) => {
@@ -200,7 +201,7 @@ describe('WorkspaceLayout outline navigation', () => {
 
     await user.click(screen.getByRole('button', { name: '提交信息格式' }))
 
-    expect(scrollTo).toHaveBeenCalledWith({ behavior: 'smooth', top: 412 })
+    expect(scrollTo).toHaveBeenCalledWith({ behavior: 'auto', top: 412 })
   })
 
   it('reapplies heading targets after a late regular-mode DOM replacement', async () => {
@@ -241,6 +242,11 @@ describe('WorkspaceLayout outline navigation', () => {
     replacementHeading.removeAttribute('data-heading-id')
     replacementHeading.removeAttribute('id')
     originalHeading.replaceWith(replacementHeading)
+    replacementHeading.dispatchEvent(
+      new CustomEvent(EDITOR_STRUCTURE_UPDATED_EVENT, {
+        bubbles: true,
+      }),
+    )
 
     Object.defineProperty(canvasPanel as HTMLDivElement, 'scrollTop', {
       configurable: true,
@@ -266,7 +272,73 @@ describe('WorkspaceLayout outline navigation', () => {
 
     await user.click(screen.getByRole('button', { name: '提交信息格式' }))
 
-    expect(scrollTo).toHaveBeenCalledWith({ behavior: 'smooth', top: 412 })
+    expect(scrollTo).toHaveBeenCalledWith({ behavior: 'auto', top: 412 })
+  })
+
+  it('ignores non-heading regular-mode DOM mutations when syncing outline state', async () => {
+    render(
+      <WorkspaceLayout
+        mode="regular"
+        regularViewState="editable"
+        fileTree={[]}
+        currentDocumentPath="docs/guide.md"
+        currentDocumentContent={'# 总览\n\n## 第二节\n\n正文'}
+        editingDocumentContent={'# 总览\n\n## 第二节\n\n正文'}
+        statusMessage="当前项目：Notes"
+        sidebarWidth={280}
+        outlineWidth={320}
+        hasProjects
+        onDocumentSelect={() => {}}
+        onSidebarWidthChange={() => {}}
+        onSidebarWidthCommit={() => {}}
+        onOutlineWidthChange={() => {}}
+        onOutlineWidthCommit={() => {}}
+        onEditingDocumentContentChange={() => {}}
+      />,
+    )
+
+    await screen.findByLabelText('可视 Markdown 编辑器')
+    const canvasPanel = document.querySelector('.panel__content--canvas') as HTMLDivElement | null
+    const headingElements = await screen.findAllByRole('heading')
+
+    expect(canvasPanel).not.toBeNull()
+
+    const canvasRect = vi.fn(() => ({ top: 260 }))
+    const firstHeadingRect = vi.fn(() => ({ top: 210 }))
+    const secondHeadingRect = vi.fn(() => ({ top: 320 }))
+
+    Object.defineProperty(canvasPanel as HTMLDivElement, 'getBoundingClientRect', {
+      configurable: true,
+      value: canvasRect,
+    })
+    Object.defineProperty(headingElements[0], 'getBoundingClientRect', {
+      configurable: true,
+      value: firstHeadingRect,
+    })
+    Object.defineProperty(headingElements[1], 'getBoundingClientRect', {
+      configurable: true,
+      value: secondHeadingRect,
+    })
+
+    canvasPanel?.dispatchEvent(new Event('scroll'))
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '总览' })).toHaveAttribute('aria-current', 'location')
+    })
+
+    const initialCanvasCalls = canvasRect.mock.calls.length
+    const initialFirstHeadingCalls = firstHeadingRect.mock.calls.length
+    const initialSecondHeadingCalls = secondHeadingRect.mock.calls.length
+    const editorRoot = screen.getByLabelText('可视 Markdown 编辑器')
+    const extraParagraph = document.createElement('p')
+    extraParagraph.textContent = '稍后插入的普通段落'
+    editorRoot.appendChild(extraParagraph)
+
+    await new Promise((resolve) => window.setTimeout(resolve, 40))
+
+    expect(canvasRect).toHaveBeenCalledTimes(initialCanvasCalls)
+    expect(firstHeadingRect).toHaveBeenCalledTimes(initialFirstHeadingCalls)
+    expect(secondHeadingRect).toHaveBeenCalledTimes(initialSecondHeadingCalls)
   })
 
   it('updates the active outline item when the document scroll position changes', async () => {
@@ -495,7 +567,7 @@ describe('WorkspaceLayout outline navigation', () => {
 
     await user.click(screen.getByRole('button', { name: '提交信息格式' }))
 
-    expect(scrollTo).toHaveBeenCalledWith({ behavior: 'smooth', top: 498 })
+    expect(scrollTo).toHaveBeenCalledWith({ behavior: 'auto', top: 498 })
   })
 
   it('injects data-heading-id onto regular mode headings for unified outline targeting', async () => {
@@ -646,7 +718,7 @@ describe('WorkspaceLayout outline navigation', () => {
     expect(screen.getByRole('heading', { name: '下一节' })).toBeInTheDocument()
   })
 
-  it('attaches a mutation observer to the editor pane in regular mode', async () => {
+  it('does not attach a mutation observer to the editor pane in regular mode', async () => {
     const observe = vi.fn()
     const disconnect = vi.fn()
 
@@ -685,7 +757,7 @@ describe('WorkspaceLayout outline navigation', () => {
     const editorPane = document.querySelector('.workspace__editor-pane')
     const observedEditorPane = observe.mock.calls.some(([target]) => target === editorPane)
 
-    expect(observedEditorPane).toBe(true)
+    expect(observedEditorPane).toBe(false)
   })
 
   it('reapplies heading targets when a later non-heading mutation leaves headings without ids', async () => {
@@ -722,6 +794,11 @@ describe('WorkspaceLayout outline navigation', () => {
     heading.removeAttribute('data-heading-id')
     heading.removeAttribute('id')
     paragraph.textContent = '内容更新'
+    heading.dispatchEvent(
+      new CustomEvent(EDITOR_STRUCTURE_UPDATED_EVENT, {
+        bubbles: true,
+      }),
+    )
 
     await waitFor(() => {
       expect(heading).toHaveAttribute('data-heading-id', '提交信息格式')
@@ -786,7 +863,7 @@ describe('WorkspaceLayout outline navigation', () => {
 
     await user.click(screen.getByRole('button', { name: '提交信息格式' }))
 
-    expect(scrollTo).toHaveBeenCalledWith({ behavior: 'smooth', top: 498 })
+    expect(scrollTo).toHaveBeenCalledWith({ behavior: 'auto', top: 498 })
   })
 
   it('filters file tree entries from the sidebar search box and still opens matched files', async () => {

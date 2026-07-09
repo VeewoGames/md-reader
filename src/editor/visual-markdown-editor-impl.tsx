@@ -1,8 +1,16 @@
 import { useEffect, useRef, useState } from 'react'
 import { Milkdown, MilkdownProvider, useEditor } from '@milkdown/react'
-import { Crepe, CrepeFeature } from '@milkdown/crepe'
+import { Editor, defaultValueCtx, editorViewOptionsCtx, rootCtx } from '@milkdown/kit/core'
+import { clipboard } from '@milkdown/kit/plugin/clipboard'
+import { history } from '@milkdown/kit/plugin/history'
+import { listener, listenerCtx } from '@milkdown/kit/plugin/listener'
+import { trailing } from '@milkdown/kit/plugin/trailing'
+import { commonmark } from '@milkdown/kit/preset/commonmark'
+import { gfm } from '@milkdown/kit/preset/gfm'
 
 import '@milkdown/crepe/theme/classic.css'
+import { dispatchEditorStructureUpdated } from './editor-structure-events'
+import { syncStrongOnlyParagraphClasses } from '../markdown/strong-only-paragraph'
 import { installSlashMenuFeature } from './slash-menu-feature'
 
 interface VisualMarkdownEditorImplProps {
@@ -23,50 +31,84 @@ function VisualMarkdownEditorContent({
   onLocalMarkdownChange,
 }: VisualMarkdownEditorImplProps & { resetKey: number; onLocalMarkdownChange: (nextValue: string) => void }) {
   const latestMarkdownRef = useRef(value)
+  const paragraphClassSyncFrameRef = useRef(0)
 
   useEffect(() => {
     latestMarkdownRef.current = value
   }, [value])
 
+  useEffect(() => {
+    return () => {
+      if (paragraphClassSyncFrameRef.current !== 0) {
+        window.cancelAnimationFrame(paragraphClassSyncFrameRef.current)
+        paragraphClassSyncFrameRef.current = 0
+      }
+    }
+  }, [])
+
   useEditor(
     (root) => {
-      const crepe = new Crepe({
-        root,
-        defaultValue: value,
-        features: {
-          [CrepeFeature.Cursor]: false,
-          [CrepeFeature.CodeMirror]: false,
-          [CrepeFeature.ListItem]: false,
-          [CrepeFeature.LinkTooltip]: false,
-          [CrepeFeature.ImageBlock]: false,
-          [CrepeFeature.BlockEdit]: false,
-          [CrepeFeature.Toolbar]: false,
-          [CrepeFeature.Table]: false,
-          [CrepeFeature.Latex]: false,
-          [CrepeFeature.AI]: false,
-          [CrepeFeature.TopBar]: false,
-        },
-      })
+      const scheduleParagraphClassSync = () => {
+        if (paragraphClassSyncFrameRef.current !== 0) {
+          return
+        }
 
-      installSlashMenuFeature(crepe.editor)
-
-      crepe.setReadonly(readonly)
-
-      return crepe.on((listener) => {
-        listener.markdownUpdated((_ctx, markdown) => {
-          if (readonly) {
-            return
-          }
-
-          if (markdown === latestMarkdownRef.current) {
-            return
-          }
-
-          latestMarkdownRef.current = markdown
-          onLocalMarkdownChange(markdown)
-          onChange(markdown)
+        paragraphClassSyncFrameRef.current = window.requestAnimationFrame(() => {
+          paragraphClassSyncFrameRef.current = 0
+          syncStrongOnlyParagraphClasses(root)
+          dispatchEditorStructureUpdated(root)
         })
-      })
+      }
+
+      const editor = Editor.make()
+        .config((ctx) => {
+          ctx.set(rootCtx, root)
+          ctx.set(defaultValueCtx, value)
+          ctx.set(editorViewOptionsCtx, {
+            attributes: {
+              autocapitalize: 'off',
+              autocomplete: 'off',
+              autocorrect: 'off',
+              spellcheck: 'false',
+            },
+            editable: () => !readonly,
+          })
+        })
+        .use(commonmark)
+        .use(listener)
+        .use(history)
+        .use(trailing)
+        .use(clipboard)
+        .use(gfm)
+        .config((ctx) => {
+          const listenerManager = ctx.get(listenerCtx)
+
+          listenerManager.mounted(() => {
+            scheduleParagraphClassSync()
+          })
+
+          listenerManager.updated(() => {
+            scheduleParagraphClassSync()
+          })
+
+          listenerManager.markdownUpdated((_ctx, markdown) => {
+            if (readonly) {
+              return
+            }
+
+            if (markdown === latestMarkdownRef.current) {
+              return
+            }
+
+            latestMarkdownRef.current = markdown
+            onLocalMarkdownChange(markdown)
+            onChange(markdown)
+          })
+        })
+
+      installSlashMenuFeature(editor)
+
+      return editor
     },
     [resetKey, readonly],
   )

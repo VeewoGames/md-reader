@@ -29,6 +29,36 @@ const hookState = vi.hoisted(() => {
   }
 })
 
+const milkdownState = vi.hoisted(() => {
+  const use = vi.fn()
+  const config = vi.fn()
+  const create = vi.fn(() => Promise.resolve(undefined))
+  const destroy = vi.fn(() => Promise.resolve(undefined))
+
+  return {
+    use,
+    config,
+    create,
+    destroy,
+    reset() {
+      use.mockClear()
+      config.mockClear()
+      create.mockClear()
+      destroy.mockClear()
+    },
+    buildEditor() {
+      const editor = {
+        use: use.mockImplementation(() => editor),
+        config: config.mockImplementation(() => editor),
+        create,
+        destroy,
+      }
+
+      return editor
+    },
+  }
+})
+
 vi.mock('@milkdown/react', () => ({
   MilkdownProvider: ({ children }: { children: React.ReactNode }) => children,
   Milkdown: () => <div data-testid="milkdown-root" />,
@@ -42,54 +72,47 @@ vi.mock('@milkdown/react', () => ({
   },
 }))
 
-vi.mock('@milkdown/crepe', () => {
-  class MockCrepe {
-    static instances: MockCrepe[] = []
-
-    config: Record<string, unknown>
-    editor = {}
-    setReadonly = vi.fn()
-    listenerFn: ((listener: { markdownUpdated: (fn: (ctx: unknown, markdown: string) => void) => void }) => void) | null =
-      null
-
-    constructor(config: Record<string, unknown>) {
-      this.config = config
-      MockCrepe.instances.push(this)
-    }
-
-    create() {
-      return Promise.resolve(undefined)
-    }
-
-    destroy() {
-      return Promise.resolve(undefined)
-    }
-
-    on(
-      listenerFn: (listener: {
-        markdownUpdated: (fn: (ctx: unknown, markdown: string) => void) => void
-      }) => void,
-    ) {
-      this.listenerFn = listenerFn
-      return this
-    }
-  }
+vi.mock('@milkdown/kit/core', () => {
+  const rootCtx = Symbol('rootCtx')
+  const defaultValueCtx = Symbol('defaultValueCtx')
+  const editorViewOptionsCtx = Symbol('editorViewOptionsCtx')
 
   return {
-    Crepe: MockCrepe,
-    CrepeFeature: {
-      Cursor: 'cursor',
-      CodeMirror: 'code-mirror',
-      ListItem: 'list-item',
-      LinkTooltip: 'link-tooltip',
-      ImageBlock: 'image-block',
-      Table: 'table',
-      Latex: 'latex',
-      AI: 'ai',
-      TopBar: 'top-bar',
-      BlockEdit: 'block-edit',
-      Toolbar: 'toolbar',
+    Editor: {
+      make: vi.fn(() => milkdownState.buildEditor()),
     },
+    rootCtx,
+    defaultValueCtx,
+    editorViewOptionsCtx,
+  }
+})
+
+vi.mock('@milkdown/kit/plugin/clipboard', () => ({
+  clipboard: Symbol('clipboard'),
+}))
+
+vi.mock('@milkdown/kit/plugin/history', () => ({
+  history: Symbol('history'),
+}))
+
+vi.mock('@milkdown/kit/plugin/trailing', () => ({
+  trailing: Symbol('trailing'),
+}))
+
+vi.mock('@milkdown/kit/preset/commonmark', () => ({
+  commonmark: Symbol('commonmark'),
+}))
+
+vi.mock('@milkdown/kit/preset/gfm', () => ({
+  gfm: Symbol('gfm'),
+}))
+
+vi.mock('@milkdown/kit/plugin/listener', () => {
+  const listenerCtx = Symbol('listenerCtx')
+
+  return {
+    listener: Symbol('listener'),
+    listenerCtx,
   }
 })
 
@@ -97,14 +120,22 @@ vi.mock('../../src/editor/slash-menu-feature', () => ({
   installSlashMenuFeature: slashMenuFeatureState.install,
 }))
 
+import { defaultValueCtx, Editor, editorViewOptionsCtx, rootCtx } from '@milkdown/kit/core'
+import { clipboard } from '@milkdown/kit/plugin/clipboard'
+import { history } from '@milkdown/kit/plugin/history'
+import { listener, listenerCtx } from '@milkdown/kit/plugin/listener'
+import { trailing } from '@milkdown/kit/plugin/trailing'
+import { commonmark } from '@milkdown/kit/preset/commonmark'
+import { gfm } from '@milkdown/kit/preset/gfm'
 import { VisualMarkdownEditorImpl } from '../../src/editor/visual-markdown-editor-impl'
 
 describe('VisualMarkdownEditorImpl', () => {
   afterEach(() => {
     hookState.reset()
+    milkdownState.reset()
   })
 
-  it('creates a milkdown editor factory with the current markdown value', () => {
+  it('creates a milkdown editor factory with the minimal plugin chain', () => {
     render(<VisualMarkdownEditorImpl value={'# 标题\n\n正文'} onChange={() => {}} />)
 
     expect(screen.getByLabelText('可视 Markdown 编辑器')).toBeInTheDocument()
@@ -114,39 +145,65 @@ describe('VisualMarkdownEditorImpl', () => {
 
     expect(factory).not.toBeNull()
 
-    const crepe = factory!(document.createElement('div')) as {
-      config: Record<string, unknown>
-      editor: unknown
+    const root = document.createElement('div')
+    const editor = factory!(root) as {
+      use: ReturnType<typeof vi.fn>
+      config: ReturnType<typeof vi.fn>
     }
-    const features = crepe.config.features as Record<string, boolean>
 
-    expect(features.cursor).toBe(false)
-    expect(features['code-mirror']).toBe(false)
-    expect(features['list-item']).toBe(false)
-    expect(features['link-tooltip']).toBe(false)
-    expect(features['image-block']).toBe(false)
-    expect(features['block-edit']).toBe(false)
-    expect(features.toolbar).toBe(false)
-    expect(features.table).toBe(false)
-    expect(features.latex).toBe(false)
-    expect(features.ai).toBe(false)
-    expect(features['top-bar']).toBe(false)
-    expect(slashMenuFeatureState.install).toHaveBeenCalledWith(crepe.editor)
-    expect((crepe as { setReadonly: ReturnType<typeof vi.fn> }).setReadonly).toHaveBeenCalledWith(false)
+    expect(Editor.make).toHaveBeenCalledTimes(1)
+    expect(editor.use).toHaveBeenNthCalledWith(1, commonmark)
+    expect(editor.use).toHaveBeenNthCalledWith(2, listener)
+    expect(editor.use).toHaveBeenNthCalledWith(3, history)
+    expect(editor.use).toHaveBeenNthCalledWith(4, trailing)
+    expect(editor.use).toHaveBeenNthCalledWith(5, clipboard)
+    expect(editor.use).toHaveBeenNthCalledWith(6, gfm)
+    expect(slashMenuFeatureState.install).toHaveBeenCalledWith(editor)
+
+    const configCalls = editor.config.mock.calls.map(([callback]) => callback as (ctx: any) => void)
+    const baseSet = vi.fn()
+    configCalls[0]({
+      set: baseSet,
+    })
+
+    expect(baseSet).toHaveBeenCalledWith(rootCtx, root)
+    expect(baseSet).toHaveBeenCalledWith(defaultValueCtx, '# 标题\n\n正文')
+    expect(baseSet).toHaveBeenCalledWith(
+      editorViewOptionsCtx,
+      expect.objectContaining({
+        attributes: {
+          autocapitalize: 'off',
+          autocomplete: 'off',
+          autocorrect: 'off',
+          spellcheck: 'false',
+        },
+        editable: expect.any(Function),
+      }),
+    )
   })
 
-  it('sets the editor to readonly when readonly prop is true', () => {
+  it('sets the editor to readonly through editorViewOptionsCtx when readonly prop is true', () => {
     render(<VisualMarkdownEditorImpl value={'# 只读内容'} readonly onChange={() => {}} />)
 
     const factory = hookState.getFactory()
 
     expect(factory).not.toBeNull()
 
-    const crepe = factory!(document.createElement('div')) as {
-      setReadonly: ReturnType<typeof vi.fn>
+    const root = document.createElement('div')
+    const editor = factory!(root) as {
+      config: ReturnType<typeof vi.fn>
     }
 
-    expect(crepe.setReadonly).toHaveBeenCalledWith(true)
+    const configCalls = editor.config.mock.calls.map(([callback]) => callback as (ctx: any) => void)
+    const baseSet = vi.fn()
+    configCalls[0]({
+      set: baseSet,
+    })
+
+    const optionsCall = baseSet.mock.calls.find(([slice]) => slice === editorViewOptionsCtx)
+    const options = optionsCall?.[1] as { editable: () => boolean } | undefined
+
+    expect(options?.editable()).toBe(false)
   })
 
   it('forwards markdownUpdated events to onChange', () => {
@@ -158,15 +215,31 @@ describe('VisualMarkdownEditorImpl', () => {
 
     expect(factory).not.toBeNull()
 
-    const crepe = factory!(document.createElement('div')) as {
-      listenerFn: ((listener: { markdownUpdated: (fn: (ctx: unknown, markdown: string) => void) => void }) => void) | null
+    const editor = factory!(document.createElement('div')) as {
+      config: ReturnType<typeof vi.fn>
     }
 
+    const configCalls = editor.config.mock.calls.map(([callback]) => callback as (ctx: any) => void)
     let onUpdated: ((ctx: unknown, markdown: string) => void) | null = null
 
-    crepe.listenerFn?.({
-      markdownUpdated: (callback) => {
-        onUpdated = callback
+    configCalls[1]({
+      get: (slice: symbol) => {
+        if (slice === listenerCtx) {
+          return {
+            mounted() {
+              return this
+            },
+            updated() {
+              return this
+            },
+            markdownUpdated(callback: (ctx: unknown, markdown: string) => void) {
+              onUpdated = callback
+              return this
+            },
+          }
+        }
+
+        return null
       },
     })
 
@@ -184,16 +257,26 @@ describe('VisualMarkdownEditorImpl', () => {
 
     expect(factory).not.toBeNull()
 
-    const crepe = factory!(document.createElement('div')) as {
-      listenerFn: ((listener: { markdownUpdated: (fn: (ctx: unknown, markdown: string) => void) => void }) => void) | null
+    const editor = factory!(document.createElement('div')) as {
+      config: ReturnType<typeof vi.fn>
     }
 
+    const configCalls = editor.config.mock.calls.map(([callback]) => callback as (ctx: any) => void)
     let onUpdated: ((ctx: unknown, markdown: string) => void) | null = null
 
-    crepe.listenerFn?.({
-      markdownUpdated: (callback) => {
-        onUpdated = callback
-      },
+    configCalls[1]({
+      get: () => ({
+        mounted() {
+          return this
+        },
+        updated() {
+          return this
+        },
+        markdownUpdated(callback: (ctx: unknown, markdown: string) => void) {
+          onUpdated = callback
+          return this
+        },
+      }),
     })
 
     onUpdated?.({}, '# 初始内容')
@@ -210,16 +293,26 @@ describe('VisualMarkdownEditorImpl', () => {
 
     expect(factory).not.toBeNull()
 
-    const crepe = factory!(document.createElement('div')) as {
-      listenerFn: ((listener: { markdownUpdated: (fn: (ctx: unknown, markdown: string) => void) => void }) => void) | null
+    const editor = factory!(document.createElement('div')) as {
+      config: ReturnType<typeof vi.fn>
     }
 
+    const configCalls = editor.config.mock.calls.map(([callback]) => callback as (ctx: any) => void)
     let onUpdated: ((ctx: unknown, markdown: string) => void) | null = null
 
-    crepe.listenerFn?.({
-      markdownUpdated: (callback) => {
-        onUpdated = callback
-      },
+    configCalls[1]({
+      get: () => ({
+        mounted() {
+          return this
+        },
+        updated() {
+          return this
+        },
+        markdownUpdated(callback: (ctx: unknown, markdown: string) => void) {
+          onUpdated = callback
+          return this
+        },
+      }),
     })
 
     onUpdated?.({}, '# 只读态输入')
@@ -235,16 +328,26 @@ describe('VisualMarkdownEditorImpl', () => {
 
     expect(factory).not.toBeNull()
 
-    const crepe = factory!(document.createElement('div')) as {
-      listenerFn: ((listener: { markdownUpdated: (fn: (ctx: unknown, markdown: string) => void) => void }) => void) | null
+    const editor = factory!(document.createElement('div')) as {
+      config: ReturnType<typeof vi.fn>
     }
 
+    const configCalls = editor.config.mock.calls.map(([callback]) => callback as (ctx: any) => void)
     let onUpdated: ((ctx: unknown, markdown: string) => void) | null = null
 
-    crepe.listenerFn?.({
-      markdownUpdated: (callback) => {
-        onUpdated = callback
-      },
+    configCalls[1]({
+      get: () => ({
+        mounted() {
+          return this
+        },
+        updated() {
+          return this
+        },
+        markdownUpdated(callback: (ctx: unknown, markdown: string) => void) {
+          onUpdated = callback
+          return this
+        },
+      }),
     })
 
     onUpdated?.({}, '# 用户输入的新内容')

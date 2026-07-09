@@ -25,6 +25,7 @@ import {
 
 import { findActiveHeadingId, type HeadingTarget } from './outline-active-heading'
 import { VisualMarkdownEditor } from '../editor/visual-markdown-editor'
+import { EDITOR_STRUCTURE_UPDATED_EVENT } from '../editor/editor-structure-events'
 import { ReadonlyMarkdownRenderer } from '../document-renderer/readonly-markdown-renderer'
 import {
   extractMarkdownHeadings,
@@ -35,6 +36,24 @@ import { filterFileTree } from '../workspace/file-tree'
 import type { RegularViewState, WorkspaceMode } from './TopBar'
 
 const HEADING_SELECTOR = 'h1, h2, h3, h4, h5, h6'
+
+function isOutlinePerfEnabled(): boolean {
+  if (typeof window === 'undefined') {
+    return false
+  }
+
+  if (new URLSearchParams(window.location.search).get('perf') === 'outline') {
+    return true
+  }
+
+  try {
+    return window.localStorage.getItem('mdReaderOutlinePerf') === '1'
+  } catch {
+    return false
+  }
+}
+
+const OUTLINE_PERF_ENABLED = isOutlinePerfEnabled()
 
 export function createDefaultExpandedDirectories(
   availableDirectoryPaths: string[],
@@ -267,6 +286,60 @@ function collectHeadingTargets(
     .filter((target): target is HeadingTarget => target != null)
 }
 
+function nodeTouchesHeadings(node: Node): boolean {
+  if (node instanceof HTMLElement && node.matches(HEADING_SELECTOR)) {
+    return true
+  }
+
+  if (!(node instanceof Element)) {
+    return false
+  }
+
+  return node.querySelector(HEADING_SELECTOR) != null
+}
+
+function mutationRequiresHeadingResync(
+  records: MutationRecord[],
+  activeHeadingElement: HTMLElement | null,
+  root: ParentNode | null,
+  documentHeadings: MarkdownHeading[],
+): boolean {
+  if (activeHeadingElement != null && !activeHeadingElement.isConnected) {
+    return true
+  }
+
+  const headingElements = Array.from(root?.querySelectorAll<HTMLElement>(HEADING_SELECTOR) ?? [])
+
+  const hasHeadingIdMismatch = headingElements.some((element, index) => {
+    const expectedId = documentHeadings[index]?.id
+    return expectedId != null && (element.dataset.headingId !== expectedId || element.id !== expectedId)
+  })
+
+  if (hasHeadingIdMismatch) {
+    return true
+  }
+
+  return records.some((record) => {
+    if (record.target instanceof HTMLElement && record.target.matches(HEADING_SELECTOR)) {
+      return true
+    }
+
+    return [...record.addedNodes, ...record.removedNodes].some((node) => nodeTouchesHeadings(node))
+  })
+}
+
+function collectOutlinePerfSnapshot(root: ParentNode | null) {
+  return {
+    editorNodes: root?.querySelectorAll('*').length ?? 0,
+    headings: root?.querySelectorAll(HEADING_SELECTOR).length ?? 0,
+    inlineCode: root?.querySelectorAll('code').length ?? 0,
+    links: root?.querySelectorAll('a').length ?? 0,
+    tables: root?.querySelectorAll('table').length ?? 0,
+  }
+}
+
+type OutlinePerfSnapshot = ReturnType<typeof collectOutlinePerfSnapshot>
+
 export const WorkspaceSidebarPane = memo(function WorkspaceSidebarPane({
   fileTree,
   availableDirectoryPaths = EMPTY_PATHS,
@@ -309,6 +382,7 @@ export const WorkspaceSidebarPane = memo(function WorkspaceSidebarPane({
   const dragNodeParentPathRef = useRef<string | null>(null)
   const dragNodeKindRef = useRef<VisibleFileTreeNode['kind'] | null>(null)
   const fileTreePanelRef = useRef<HTMLDivElement | null>(null)
+  const fileTreeHoverLayerRef = useRef<HTMLDivElement | null>(null)
   const deferredFileSearchQuery = useDeferredValue(fileSearchQuery)
   const isFilteringFiles = deferredFileSearchQuery.trim().length > 0
   const reorderEnabled = !isFilteringFiles && !showFavoritesOnly
@@ -318,6 +392,52 @@ export const WorkspaceSidebarPane = memo(function WorkspaceSidebarPane({
   ) as VisibleFileTreeNode[]
   const allDocumentPaths = collectDocumentPaths(fileTree)
   const hasFavorites = favoritePaths.length > 0
+
+  useEffect(() => {
+    const panel = fileTreePanelRef.current
+
+    if (!panel) {
+      return
+    }
+
+    const hideHoverLayer = () => {
+      const layer = fileTreeHoverLayerRef.current
+
+      if (layer) {
+        layer.style.opacity = '0'
+      }
+    }
+
+    const moveHoverLayer = (event: PointerEvent) => {
+      const target = event.target instanceof Element ? event.target.closest<HTMLElement>('.file-tree__row') : null
+      const layer = fileTreeHoverLayerRef.current
+
+      if (!target || !layer || target.dataset.renaming === 'true') {
+        hideHoverLayer()
+        return
+      }
+
+      const panelRect = panel.getBoundingClientRect()
+      const targetRect = target.getBoundingClientRect()
+
+      layer.style.width = `${targetRect.width}px`
+      layer.style.height = `${targetRect.height}px`
+      layer.style.transform = `translate3d(${targetRect.left - panelRect.left}px, ${
+        targetRect.top - panelRect.top + panel.scrollTop
+      }px, 0)`
+      layer.style.opacity = '1'
+    }
+
+    panel.addEventListener('pointerover', moveHoverLayer, { passive: true })
+    panel.addEventListener('pointerleave', hideHoverLayer, { passive: true })
+    panel.addEventListener('scroll', hideHoverLayer, { passive: true })
+
+    return () => {
+      panel.removeEventListener('pointerover', moveHoverLayer)
+      panel.removeEventListener('pointerleave', hideHoverLayer)
+      panel.removeEventListener('scroll', hideHoverLayer)
+    }
+  }, [])
 
   useEffect(() => {
     const input = fileSearchInputRef.current
@@ -737,6 +857,7 @@ export const WorkspaceSidebarPane = memo(function WorkspaceSidebarPane({
           ref={fileTreePanelRef}
           className="panel__content panel__content--tree"
         >
+          <div ref={fileTreeHoverLayerRef} className="file-tree__hover-layer" aria-hidden="true" />
           {fileTree.length > 0 && visibleFileTree.length > 0 ? (
             <WorkspaceFileTree
               nodes={visibleFileTree}
@@ -1342,26 +1463,230 @@ export function WorkspaceLayout({
   const documentRef = useRef<HTMLElement | null>(null)
   const canvasRef = useRef<HTMLDivElement | null>(null)
   const outlineRef = useRef<HTMLDivElement | null>(null)
+  const outlinePerfItemRef = useRef<HTMLSpanElement | null>(null)
+  const outlinePerfFrameRef = useRef<HTMLSpanElement | null>(null)
+  const outlinePerfTotalRef = useRef<HTMLSpanElement | null>(null)
+  const outlinePerfStatsRef = useRef<HTMLSpanElement | null>(null)
+  const outlinePerfFrameHealthRef = useRef<HTMLSpanElement | null>(null)
+  const outlinePerfLongTaskRef = useRef<HTMLSpanElement | null>(null)
+  const outlineHoverLayerRef = useRef<HTMLDivElement | null>(null)
+  const outlinePerfSnapshotRef = useRef<OutlinePerfSnapshot>({
+    editorNodes: 0,
+    headings: 0,
+    inlineCode: 0,
+    links: 0,
+    tables: 0,
+  })
+  const headingTargetsRef = useRef<HeadingTarget[]>([])
+  const activeHeadingIdRef = useRef<string | null>(null)
   const minSidebarWidth = 220
   const maxSidebarWidth = 520
   const minOutlineWidth = 220
   const maxOutlineWidth = 420
 
+  const refreshOutlinePerfSnapshot = useEffectEvent(() => {
+    if (!OUTLINE_PERF_ENABLED) {
+      return
+    }
+
+    const snapshot = collectOutlinePerfSnapshot(documentRef.current)
+    outlinePerfSnapshotRef.current = snapshot
+
+    if (outlinePerfStatsRef.current) {
+      outlinePerfStatsRef.current.textContent = `nodes: ${snapshot.editorNodes}, links: ${snapshot.links}, code: ${snapshot.inlineCode}`
+    }
+  })
+
+  useEffect(() => {
+    activeHeadingIdRef.current = activeHeadingId
+  }, [activeHeadingId])
+
+  useEffect(() => {
+    if (!OUTLINE_PERF_ENABLED) {
+      return
+    }
+
+    const outline = outlineRef.current
+
+    if (!outline) {
+      return
+    }
+
+    const recordOutlinePerfEvent = (event: MouseEvent) => {
+      const target = event.target instanceof Element ? event.target.closest<HTMLElement>('.outline-nav__item') : null
+
+      if (!target) {
+        return
+      }
+
+      if (event.relatedTarget instanceof Node && target.contains(event.relatedTarget)) {
+        return
+      }
+
+      const eventAt = performance.now()
+      const item = target.textContent?.trim() ?? '(untitled)'
+
+      window.requestAnimationFrame(() => {
+        const frameAt = performance.now()
+        const frameDelayMs = Math.round((frameAt - eventAt) * 10) / 10
+
+        if (outlinePerfItemRef.current) {
+          outlinePerfItemRef.current.textContent = `item: ${item}`
+        }
+
+        if (outlinePerfFrameRef.current) {
+          outlinePerfFrameRef.current.textContent = `frame: ${frameDelayMs}ms`
+        }
+
+        if (outlinePerfTotalRef.current) {
+          outlinePerfTotalRef.current.textContent = `total: ${frameDelayMs}ms`
+        }
+      })
+    }
+
+    outline.addEventListener('mouseover', recordOutlinePerfEvent)
+    outline.addEventListener('click', recordOutlinePerfEvent)
+
+    return () => {
+      outline.removeEventListener('mouseover', recordOutlinePerfEvent)
+      outline.removeEventListener('click', recordOutlinePerfEvent)
+    }
+  }, [])
+
+  useEffect(() => {
+    const outline = outlineRef.current
+
+    if (!outline) {
+      return
+    }
+
+    const hideHoverLayer = () => {
+      const layer = outlineHoverLayerRef.current
+
+      if (layer) {
+        layer.style.opacity = '0'
+      }
+    }
+
+    const moveHoverLayer = (event: PointerEvent) => {
+      const target = event.target instanceof Element ? event.target.closest<HTMLElement>('.outline-nav__item') : null
+      const layer = outlineHoverLayerRef.current
+
+      if (!target || !layer) {
+        return
+      }
+
+      layer.style.height = `${target.offsetHeight}px`
+      layer.style.transform = `translate3d(0, ${target.offsetTop}px, 0)`
+      layer.style.opacity = '1'
+    }
+
+    outline.addEventListener('pointerover', moveHoverLayer, { passive: true })
+    outline.addEventListener('pointerleave', hideHoverLayer, { passive: true })
+
+    return () => {
+      outline.removeEventListener('pointerover', moveHoverLayer)
+      outline.removeEventListener('pointerleave', hideHoverLayer)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!OUTLINE_PERF_ENABLED) {
+      return
+    }
+
+    let frameId = 0
+    let previousFrameAt = performance.now()
+    let latestFrameGapMs = 0
+    let maxFrameGapMs = 0
+    let recentFrameGaps: Array<{ at: number; gap: number }> = []
+    let recentLongTasks: Array<{ at: number; duration: number }> = []
+    let observer: PerformanceObserver | null = null
+    let latestPanelRenderAt = 0
+
+    const renderFrameHealth = (force = false) => {
+      const now = performance.now()
+      if (!force && now - latestPanelRenderAt < 250) {
+        return
+      }
+
+      latestPanelRenderAt = now
+      recentFrameGaps = recentFrameGaps.filter((entry) => now - entry.at <= 2000)
+      recentLongTasks = recentLongTasks.filter((entry) => now - entry.at <= 2000)
+      const recentMaxFrameGapMs = recentFrameGaps.reduce((max, entry) => Math.max(max, entry.gap), 0)
+      const lastLongTaskMs = recentLongTasks.at(-1)?.duration ?? 0
+
+      if (outlinePerfFrameHealthRef.current) {
+        outlinePerfFrameHealthRef.current.textContent = `frame health: last ${latestFrameGapMs}ms, recent max ${recentMaxFrameGapMs}ms, all max ${maxFrameGapMs}ms`
+      }
+
+      if (outlinePerfLongTaskRef.current) {
+        outlinePerfLongTaskRef.current.textContent = `long tasks 2s: ${recentLongTasks.length}, last ${lastLongTaskMs}ms`
+      }
+    }
+
+    const tick = (frameAt: number) => {
+      latestFrameGapMs = Math.round((frameAt - previousFrameAt) * 10) / 10
+      maxFrameGapMs = Math.max(maxFrameGapMs, latestFrameGapMs)
+      recentFrameGaps.push({ at: frameAt, gap: latestFrameGapMs })
+      previousFrameAt = frameAt
+      renderFrameHealth()
+      frameId = window.requestAnimationFrame(tick)
+    }
+
+    if ('PerformanceObserver' in window) {
+      try {
+        observer = new PerformanceObserver((list) => {
+          const entries = list.getEntries()
+          for (const entry of entries) {
+            recentLongTasks.push({
+              at: entry.startTime + entry.duration,
+              duration: Math.round(entry.duration * 10) / 10,
+            })
+          }
+          renderFrameHealth(true)
+        })
+        observer.observe({ entryTypes: ['longtask'] })
+      } catch {
+        observer = null
+      }
+    }
+
+    frameId = window.requestAnimationFrame(tick)
+
+    return () => {
+      if (frameId !== 0) {
+        window.cancelAnimationFrame(frameId)
+      }
+      observer?.disconnect()
+    }
+  }, [])
+
   useEffect(() => {
     if (!activeDocumentContent) {
       setDocumentHeadings([])
       setActiveHeadingId(null)
+      headingTargetsRef.current = []
+      refreshOutlinePerfSnapshot()
       return
     }
 
     const nextHeadings = extractMarkdownHeadings(activeDocumentContent)
     setDocumentHeadings(nextHeadings)
     setActiveHeadingId(nextHeadings[0]?.id ?? null)
+    refreshOutlinePerfSnapshot()
   }, [activeDocumentContent])
 
   useEffect(() => {
-    function syncActiveHeadingSnapshot() {
-      const headingTargets = collectHeadingTargets(documentRef.current, documentHeadings)
+    function updateHeadingTargets() {
+      const nextTargets = collectHeadingTargets(documentRef.current, documentHeadings)
+      headingTargetsRef.current = nextTargets
+      return nextTargets
+    }
+
+    function syncActiveHeadingSnapshot(headingTargets: HeadingTarget[]) {
+      activeHeadingIdRef.current =
+        headingTargets.find((target) => target.id === activeHeadingIdRef.current)?.id ?? null
 
       if (headingTargets.length === 0) {
         setActiveHeadingId(documentHeadings[0]?.id ?? null)
@@ -1393,7 +1718,8 @@ export function WorkspaceLayout({
 
     function runHeadingSync() {
       applyHeadingIds()
-      syncActiveHeadingSnapshot()
+      syncActiveHeadingSnapshot(updateHeadingTargets())
+      refreshOutlinePerfSnapshot()
     }
 
     const root = documentRef.current
@@ -1429,8 +1755,7 @@ export function WorkspaceLayout({
         attempts += 1
         runHeadingSync()
 
-        const headingCount =
-          documentRef.current?.querySelectorAll<HTMLElement>('[data-heading-id]').length ?? 0
+        const headingCount = headingTargetsRef.current.length
 
         if (headingCount === 0 && attempts < 12) {
           hasScheduledSync = true
@@ -1442,7 +1767,32 @@ export function WorkspaceLayout({
       frameId = window.requestAnimationFrame(resyncEditHeadings)
     }
 
-    const observer = new MutationObserver(() => {
+    if (mode === 'regular') {
+      const handleStructureUpdated = () => {
+        scheduleHeadingSync()
+      }
+
+      root.addEventListener(EDITOR_STRUCTURE_UPDATED_EVENT, handleStructureUpdated)
+
+      return () => {
+        if (frameId !== 0) {
+          window.cancelAnimationFrame(frameId)
+        }
+        root.removeEventListener(EDITOR_STRUCTURE_UPDATED_EVENT, handleStructureUpdated)
+      }
+    }
+
+    const observer = new MutationObserver((records) => {
+      const activeHeadingElement =
+        activeHeadingIdRef.current == null
+          ? null
+          : headingTargetsRef.current.find((target) => target.id === activeHeadingIdRef.current)?.element ??
+            null
+
+      if (!mutationRequiresHeadingResync(records, activeHeadingElement, documentRef.current, documentHeadings)) {
+        return
+      }
+
       scheduleHeadingSync()
     })
 
@@ -1460,7 +1810,13 @@ export function WorkspaceLayout({
   }, [documentHeadings, mode, activeDocumentContent])
 
   function getHeadingTargets(): HeadingTarget[] {
-    return collectHeadingTargets(documentRef.current, documentHeadings)
+    if (headingTargetsRef.current.length > 0) {
+      return headingTargetsRef.current
+    }
+
+    const nextTargets = collectHeadingTargets(documentRef.current, documentHeadings)
+    headingTargetsRef.current = nextTargets
+    return nextTargets
   }
 
   const syncActiveHeading = useEffectEvent(() => {
@@ -1482,15 +1838,26 @@ export function WorkspaceLayout({
     }
 
     syncActiveHeading()
+    let frameId = 0
 
     function handleScroll() {
-      syncActiveHeading()
+      if (frameId !== 0) {
+        return
+      }
+
+      frameId = window.requestAnimationFrame(() => {
+        frameId = 0
+        syncActiveHeading()
+      })
     }
 
     canvasRef.current?.addEventListener('scroll', handleScroll, { passive: true })
     window.addEventListener('resize', handleScroll)
 
     return () => {
+      if (frameId !== 0) {
+        window.cancelAnimationFrame(frameId)
+      }
       canvasRef.current?.removeEventListener('scroll', handleScroll)
       window.removeEventListener('resize', handleScroll)
     }
@@ -1526,7 +1893,7 @@ export function WorkspaceLayout({
 
     canvas.scrollTo?.({
       top: nextScrollTop,
-      behavior: 'smooth',
+      behavior: 'auto',
     })
   }
 
@@ -1804,6 +2171,7 @@ export function WorkspaceLayout({
               <p className="panel__empty">正在生成标题导航…</p>
             ) : documentHeadings.length > 0 ? (
               <nav className="outline-nav" aria-label="文档标题导航">
+                <div ref={outlineHoverLayerRef} className="outline-nav__hover-layer" aria-hidden="true" />
                 {documentHeadings.map((heading) => (
                   <button
                     key={heading.id}
@@ -1824,6 +2192,17 @@ export function WorkspaceLayout({
           </div>
         </div>
       </aside>
+      {OUTLINE_PERF_ENABLED ? (
+        <div className="outline-perf-panel" role="status" aria-live="polite">
+          <strong>outline perf</strong>
+          <span ref={outlinePerfItemRef}>item: waiting for outline event</span>
+          <span ref={outlinePerfFrameRef}>frame: waiting</span>
+          <span ref={outlinePerfTotalRef}>total: waiting</span>
+          <span ref={outlinePerfStatsRef}>nodes: 0, links: 0, code: 0</span>
+          <span ref={outlinePerfFrameHealthRef}>frame health: waiting</span>
+          <span ref={outlinePerfLongTaskRef}>long tasks: waiting</span>
+        </div>
+      ) : null}
       {renderActionToast()}
     </main>
   )

@@ -17,6 +17,10 @@ describe('document typography tokens', () => {
             </li>
           </ul>
           <h4>四级标题</h4>
+          <p className="md-strong-only-paragraph">
+            <strong>小节标题</strong>
+          </p>
+          <p>紧随小节标题的正文</p>
           <p>正文段落</p>
           <ul>
             <li>
@@ -67,6 +71,10 @@ describe('document typography tokens', () => {
               </li>
             </ul>
             <h4>四级标题</h4>
+            <p className="md-strong-only-paragraph">
+              <strong>小节标题</strong>
+            </p>
+            <p>紧随小节标题的正文</p>
             <p>正文段落</p>
             <pre>
               <code>const sample = true</code>
@@ -100,6 +108,10 @@ describe('document typography tokens', () => {
     const readonlyH2 = container.querySelector('.markdown-document h2')
     const readonlyH3 = container.querySelector('.markdown-document h3')
     const readonlyH4 = container.querySelector('.markdown-document h4')
+    const readonlyStrongOnlyParagraph = container.querySelector(
+      '.markdown-document p.md-strong-only-paragraph',
+    )
+    const readonlyStrongOnlyParagraphNext = readonlyStrongOnlyParagraph?.nextElementSibling ?? null
     const readonlyLists = container.querySelectorAll('.markdown-document ul')
     const readonlyH3AdjacentList = readonlyLists[0] ?? null
     const readonlyUl = readonlyLists[1] ?? null
@@ -123,6 +135,8 @@ describe('document typography tokens', () => {
     expect(readonlyH2).not.toBeNull()
     expect(readonlyH3).not.toBeNull()
     expect(readonlyH4).not.toBeNull()
+    expect(readonlyStrongOnlyParagraph).not.toBeNull()
+    expect(readonlyStrongOnlyParagraphNext).not.toBeNull()
     expect(readonlyH3AdjacentList).not.toBeNull()
     expect(readonlyUl).not.toBeNull()
     expect(readonlyFirstListItem).not.toBeNull()
@@ -145,6 +159,12 @@ describe('document typography tokens', () => {
     const readonlyH2Style = getComputedStyle(readonlyH2 as HTMLElement)
     const readonlyH3Style = getComputedStyle(readonlyH3 as HTMLElement)
     const readonlyH4Style = getComputedStyle(readonlyH4 as HTMLElement)
+    const readonlyStrongOnlyParagraphStyle = getComputedStyle(
+      readonlyStrongOnlyParagraph as HTMLElement,
+    )
+    const readonlyStrongOnlyParagraphNextStyle = getComputedStyle(
+      readonlyStrongOnlyParagraphNext as HTMLElement,
+    )
     const readonlyH3AdjacentListStyle = getComputedStyle(readonlyH3AdjacentList as HTMLElement)
     const readonlyUlStyle = getComputedStyle(readonlyUl as HTMLElement)
     const readonlyFirstListItemStyle = getComputedStyle(readonlyFirstListItem as HTMLElement)
@@ -179,6 +199,8 @@ describe('document typography tokens', () => {
     expect(readonlyH3Style.marginTop).toBe('1.85rem')
     expect(readonlyH4Style.marginTop).toBe('1.45rem')
     expect(readonlyH4Style.marginBottom).toBe('0.7rem')
+    expect(readonlyStrongOnlyParagraphStyle.marginBottom).toBe('0.8rem')
+    expect(readonlyStrongOnlyParagraphNextStyle.marginTop).toBe('0px')
     expect(readonlyH3AdjacentListStyle.marginTop).toBe('1rem')
     expect(readonlyUlStyle.paddingLeft).toBe('0px')
     expect(readonlyFirstListItemStyle.paddingLeft).toBe('26px')
