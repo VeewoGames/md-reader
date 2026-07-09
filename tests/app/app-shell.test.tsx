@@ -83,13 +83,13 @@ function renderMockMarkdown(lines: string[], attachHeadingIds = false) {
 }
 
 describe('App', () => {
-  it('renders an empty workspace state before any project is connected', () => {
+  it('renders a workspace recovery state before startup finishes', () => {
     render(<App />)
 
     expect(screen.getByRole('combobox', { name: '项目切换' })).toHaveTextContent('选择项目')
     expect(screen.getByRole('button', { name: '接入项目' })).toBeInTheDocument()
     expect(screen.getByRole('group', { name: '模式切换' })).toBeInTheDocument()
-    expect(screen.getAllByText('还没有接入任何 Markdown 项目').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('正在恢复工作区…').length).toBeGreaterThan(0)
   })
 })
 

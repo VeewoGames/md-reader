@@ -1,0 +1,27 @@
+[
+  {
+    "title": "补齐文件树手工排序纯逻辑与测试",
+    "detail": "新增 `src/workspace/file-tree-order.ts` 和 `tests/workspace/file-tree-order.test.ts`，实现同父级手工顺序模型、normalize、apply、reorder、append、rename/delete 修正，并跑通纯逻辑测试。",
+    "status": "pending"
+  },
+  {
+    "title": "补齐 profile 持久化与路径修正",
+    "detail": "修改 `src/workspace/profile-store.ts`、`server/project-profiles.mjs`、`src/workspace/document-path-mutation.ts` 及对应测试，新增 `navigation.manualNodeOrderByParent` 默认值、服务端归一化和 rename/delete 修正。",
+    "status": "pending"
+  },
+  {
+    "title": "在 App 构树链路接入手工顺序",
+    "detail": "修改 `src/App.tsx`，在 `buildFileTree(markdownPaths)` 后统一调用排序 helper，并在新建、删除、重命名、真实移动后维护 `manualNodeOrderByParent`，通过 profile navigation 保存。",
+    "status": "pending"
+  },
+  {
+    "title": "补齐 WorkspaceLayout 同级拖拽排序交互",
+    "detail": "修改 `src/app/WorkspaceLayout.tsx` 与 `tests/app/workspace-layout.test.tsx`，增加整行拖拽排序、同父级 before/after/tail 命中、过滤态禁拖，以及排序提交回调。",
+    "status": "pending"
+  },
+  {
+    "title": "完成回归测试与浏览器验证",
+    "detail": "运行 workspace/server/app 相关测试集，并在本地浏览器实测根层排序、同目录排序、刷新恢复、profile 隔离和过滤态禁拖。",
+    "status": "pending"
+  }
+]

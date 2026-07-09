@@ -1,0 +1,152 @@
+{
+  "version": 1,
+  "profiles": {
+    "default": {
+      "id": "default",
+      "appearance": {
+        "theme": "system",
+        "fontSize": 16,
+        "pageWidth": "narrow",
+        "lineHeight": 1.6
+      },
+      "layout": {
+        "sidebarWidth": 446,
+        "outlineWidth": 320,
+        "sidebarCollapsed": false,
+        "outlineCollapsed": false
+      },
+      "navigation": {
+        "expandedFileNodes": [
+          ".claw",
+          "docs",
+          "docs/方案"
+        ],
+        "expandedFileNodesInitialized": true,
+        "expandedHeadingNodes": {},
+        "hiddenPaths": [],
+        "favoritePaths": [],
+        "manualNodeOrderByParent": {
+          "__root__": [
+            "docs",
+            ".claw"
+          ],
+          "docs": [
+            "docs/方案"
+          ],
+          "docs/方案": [
+            "docs/方案/2026-06-13-md-reader-MVP实施计划.md",
+            "docs/方案/2026-06-13-左侧文件树-Codex风格方案.md",
+            "docs/方案/2026-06-13-md-reader-本地服务编辑保存实施计划.md",
+            "docs/方案/2026-06-13-md-reader-本地服务模式编辑保存方案.md",
+            "docs/方案/2026-06-13-md-reader-本地服务优先重构方案.md",
+            "docs/方案/2026-06-13-md-reader-完整方案.md",
+            "docs/方案/2026-06-13-左侧文件树-Codex风格实施计划.md",
+            "docs/方案/2026-06-14-md-reader-编辑期保存与冲突恢复完整方案.md",
+            "docs/方案/2026-06-14-md-reader-编辑态同构与按需加载执行计划.md",
+            "docs/方案/2026-06-14-md-reader-编辑态与阅读态同构及编辑器按需加载方案.md",
+            "docs/方案/2026-06-14-md-reader-单内核渲染收敛第二阶段执行计划.md",
+            "docs/方案/2026-06-14-md-reader-单内核渲染收敛方案.md",
+            "docs/方案/2026-06-14-md-reader-第一阶段自动保存与分栏编辑执行计划.md",
+            "docs/方案/2026-06-14-md-reader-多标签工作区完整模型设计方案.md",
+            "docs/方案/2026-06-14-md-reader-多标签工作区执行方案.md",
+            "docs/方案/2026-06-14-md-reader-三模式自动保存可视编辑实施计划.md",
+            "docs/方案/2026-06-14-md-reader-移除阅读层与锁定态主编辑方案.md",
+            "docs/方案/2026-06-14-md-reader-移除阅读层与锁定态主编辑实施计划.md",
+            "docs/方案/2026-06-14-md-reader-只读-Milkdown-技术探针实施计划.md",
+            "docs/方案/2026-06-14-md-reader-Notion-like-可视编辑体验需求方案.md",
+            "docs/方案/2026-06-18-md-reader-顶部标签页拖拽交互方案.md",
+            "docs/方案/2026-06-18-md-reader-顶部标签页拖拽交互实施计划.md",
+            "docs/方案/2026-06-20-md-reader-文件夹与文档隐藏显示方案.md",
+            "docs/方案/2026-06-20-md-reader-文件夹与文档隐藏显示实施计划.md",
+            "docs/方案/2026-06-24-md-reader-文档收藏与收藏过滤方案.md",
+            "docs/方案/2026-06-24-md-reader-文档收藏与收藏过滤实施计划.md",
+            "docs/方案/2026-07-07-md-reader-文件树文件操作与拖拽重组方案.md",
+            "docs/方案/2026-07-07-md-reader-文件树文件操作与拖拽重组实施计划.md",
+            "docs/方案/2026-07-08-md-reader-文件树自由排序实施计划.md",
+            "docs/方案/2026-07-08-md-reader-文件树自由排序与持久化方案.md"
+          ],
+          ".claw": [
+            ".claw/memory.md",
+            ".claw/truth"
+          ],
+          ".claw/truth": [
+            ".claw/truth/PROJECT-TRUTH.md",
+            ".claw/truth/SUMMARY.md",
+            ".claw/truth/adr",
+            ".claw/truth/features"
+          ],
+          ".claw/truth/adr": [
+            ".claw/truth/adr/0001-markdown-first-sidecar-notion-like.md",
+            ".claw/truth/adr/0002-topbar-compact-toolbar-warm-yellow-base.md",
+            ".claw/truth/adr/0003-local-service-first-stage1-readonly-foundation.md",
+            ".claw/truth/adr/0004-file-tree-codex-style-light-nav-component-state.md",
+            ".claw/truth/adr/0005-edit-split-workspace-stretch-container-chain-for-editor.md",
+            ".claw/truth/adr/0006-markdown-first-visual-editor-and-mode-role-rebalance.md",
+            ".claw/truth/adr/0007-md-reader-save-interaction-uses-data-editor-style-autosave.md",
+            ".claw/truth/adr/0008-edit-read-visual-isomorphism-second-round-typography-detail-convergence.md",
+            ".claw/truth/adr/0009-md-reader-stage1-save-conflict-recovery-foundation.md",
+            ".claw/truth/adr/001-md-reader-markdown-first-sidecar-metadata-notion-like.md",
+            ".claw/truth/adr/0010-md-reader-edit-save-conflict-recovery-complete-scheme.md",
+            ".claw/truth/adr/0011-md-reader-list-nodeview-flat-css-integration-boundary.md",
+            ".claw/truth/adr/0012-md-reader-read-edit-split-preview-share-single-milkdown-render-kernel.md",
+            ".claw/truth/adr/0013-md-reader-readonly-milkdown-phase1-probe-facts.md",
+            ".claw/truth/adr/0014-md-reader-heading-target-single-path-mutation-observer.md",
+            ".claw/truth/adr/0015-md-reader-read-edit-freeze-investigation-boundary.md",
+            ".claw/truth/adr/0016-md-reader-edit-mode-no-continuous-editor-root-observation-minimal-fix.md",
+            ".claw/truth/adr/0017-md-reader-single-kernel-phase2-crepe-retention-and-six-node-acceptance-boundary.md",
+            ".claw/truth/adr/0018-md-reader-notion-body-typography-observed-baseline-and-shared-token.md",
+            ".claw/truth/adr/0019-md-reader-project-owned-slash-menu-trigger-and-query-parsing.md",
+            ".claw/truth/adr/0020-md-reader-synced-block-default-hide-shared-transform-primary-and-css-fallback.md",
+            ".claw/truth/adr/0021-md-reader-reading-options-entry-exposes-appearance-font-size-and-page-width-settings.md",
+            ".claw/truth/adr/0022-md-reader-repo-tracked-lans-profile-config-and-runtime-registry-split.md",
+            ".claw/truth/adr/0023-md-reader-runtime-profile-browser-persistence-before-list-projects-restore.md",
+            ".claw/truth/adr/0024-md-reader-markdown-table-shared-content-css-notion-compact-style.md",
+            ".claw/truth/adr/0025-md-reader-left-sidebar-file-search-and-filter-local-filetree-with-directory-context.md",
+            ".claw/truth/adr/0026-md-reader-topbar-tab-drag-means-intra-strip-reorder-system.md",
+            ".claw/truth/adr/0027-md-reader-topbar-tab-drag-implementation-layer-split-and-persistence.md",
+            ".claw/truth/adr/0028-md-reader-file-tree-hidden-paths-visible-tree-split-and-show-hidden-items-session-state.md",
+            ".claw/truth/adr/0029-md-reader-document-favorites-persisted-in-profile-navigation-and-show-favorites-only-session-state.md",
+            ".claw/truth/adr/0030-md-reader-file-tree-file-operations-real-move-and-bridge-mutations.md",
+            ".claw/truth/adr/0031-md-reader-file-tree-drag-feedback-uses-status-message-plus-short-toast-and-full-row-hit-highlight.md",
+            ".claw/truth/adr/0032-md-reader-file-tree-inline-rename-uses-in-place-editor-and-app-owned-commit-boundary.md",
+            ".claw/truth/adr/0033-md-reader-file-tree-inline-duplicate-reuses-rename-editor-and-app-owned-open-toast-boundary.md",
+            ".claw/truth/adr/0034-md-reader-regular-split-workspace-lock-state-shares-visual-markdown-editor-and-global-workspace-state.md",
+            ".claw/truth/adr/0035-md-reader-file-tree-manual-order-persisted-in-profile-navigation-and-post-build-projection.md",
+            ".claw/truth/adr/SUMMARY.md"
+          ],
+          ".claw/truth/features": [
+            ".claw/truth/features/md-reader-document-favorites-and-filter-boundary.md",
+            ".claw/truth/features/md-reader-file-tree-document-move-and-path-mutation-boundary.md",
+            ".claw/truth/features/md-reader-file-tree-hidden-items-boundary.md",
+            ".claw/truth/features/md-reader-session-restore-and-missing-document-self-heal-boundary.md",
+            ".claw/truth/features/md-reader-topbar-tab-drag-boundary.md",
+            ".claw/truth/features/SUMMARY.md"
+          ]
+        }
+      }
+    },
+    "Lans": {
+      "id": "Lans",
+      "appearance": {
+        "theme": "system",
+        "fontSize": 16,
+        "pageWidth": "narrow",
+        "lineHeight": 1.6
+      },
+      "layout": {
+        "sidebarWidth": 280,
+        "outlineWidth": 320,
+        "sidebarCollapsed": false,
+        "outlineCollapsed": false
+      },
+      "navigation": {
+        "expandedFileNodes": [],
+        "expandedFileNodesInitialized": false,
+        "expandedHeadingNodes": {},
+        "hiddenPaths": [],
+        "favoritePaths": [],
+        "manualNodeOrderByParent": {}
+      }
+    }
+  }
+}

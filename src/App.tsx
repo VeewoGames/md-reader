@@ -349,7 +349,7 @@ function App() {
     useState<PendingDeleteDocumentAction | null>(null)
   const [pendingCreateNodeAction, setPendingCreateNodeAction] = useState<PendingCreateNodeAction | null>(null)
   const [pendingCreateNodeName, setPendingCreateNodeName] = useState('')
-  const [statusMessage, setStatusMessage] = useState<string | null>('还没有接入任何 Markdown 项目')
+  const [statusMessage, setStatusMessage] = useState<string | null>('正在恢复工作区…')
   const [actionToast, setActionToast] = useState<WorkspaceActionToast | null>(null)
   const [sidebarWidth, setSidebarWidth] = useState(280)
   const [outlineWidth, setOutlineWidth] = useState(320)
