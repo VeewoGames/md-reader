@@ -46,7 +46,7 @@ vi.mock('../../src/document-renderer/readonly-markdown-renderer', () => ({
   },
 }))
 
-import { WorkspaceLayout } from '../../src/app/WorkspaceLayout'
+import { WorkspaceLayout, WorkspaceSidebarPane } from '../../src/app/WorkspaceLayout'
 import { buildFileTree, createVisibleFileTree } from '../../src/workspace/file-tree'
 
 function createVisibleTree(paths: string[], hiddenPaths: string[] = [], showHiddenItems = false) {
@@ -87,6 +87,68 @@ function renderMockMarkdown(lines: string[], attachHeadingIds = false) {
 describe('WorkspaceLayout outline navigation', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
+  })
+
+  it('does not recommit the sidebar when only parent-local unrelated state changes', async () => {
+    const user = userEvent.setup()
+    let sidebarCommitCount = 0
+
+    const fileTree = createVisibleTree(['docs/guide.md', 'docs/reference.md'])
+    const favoritePaths: string[] = []
+    const availableDirectoryPaths = ['docs']
+    const persistedExpandedDirectories = ['docs']
+    const noop = () => {}
+    const asyncTrue = async () => true
+    const countSidebarRender = () => {
+      sidebarCommitCount += 1
+    }
+
+    function SidebarHarness() {
+      const [tick, setTick] = useState(0)
+
+      return (
+        <>
+          <button type="button" onClick={() => setTick((current) => current + 1)}>
+            rerender {tick}
+          </button>
+          <WorkspaceSidebarPane
+            fileTree={fileTree}
+            availableDirectoryPaths={availableDirectoryPaths}
+            currentDocumentPath="docs/guide.md"
+            persistedExpandedDirectories={persistedExpandedDirectories}
+            hasPersistedExpandedDirectories
+            hasProjects
+            favoritePaths={favoritePaths}
+            showFavoritesOnly={false}
+            showHiddenItems={false}
+            onDocumentSelect={noop}
+            onCreateDocument={noop}
+            onCreateDirectory={noop}
+            onCopyDocumentLink={noop}
+            onCopyDirectoryPath={noop}
+            onDuplicateDocument={asyncTrue}
+            onRenameDocument={asyncTrue}
+            onDeleteDocument={noop}
+            onMoveDocument={noop}
+            onReorderFileTreeNode={noop}
+            onToggleFavoriteDocument={noop}
+            onToggleShowFavoritesOnly={noop}
+            onHidePath={noop}
+            onUnhidePath={noop}
+            onExpandedDirectoriesChange={noop}
+            onRender={countSidebarRender}
+          />
+        </>
+      )
+    }
+
+    render(<SidebarHarness />)
+
+    const initialCommitCount = sidebarCommitCount
+
+    await user.click(screen.getByRole('button', { name: /rerender/i }))
+
+    expect(sidebarCommitCount).toBe(initialCommitCount)
   })
 
   it('aligns outline navigation clicks to the document anchor in locked mode', async () => {

@@ -1,4 +1,5 @@
 import {
+  memo,
   useDeferredValue,
   useEffect,
   useEffectEvent,
@@ -225,7 +226,39 @@ type FileTreeReorderDropTarget = {
   position: 'before' | 'after' | 'tail'
 }
 
-function collectHeadingTargets(root: ParentNode | null, documentHeadings: MarkdownHeading[]): HeadingTarget[] {
+export interface WorkspaceSidebarPaneProps {
+  fileTree: VisibleFileTreeNode[]
+  availableDirectoryPaths?: string[]
+  currentDocumentPath: string | null
+  persistedExpandedDirectories?: string[]
+  hasPersistedExpandedDirectories?: boolean
+  hasProjects: boolean
+  isWorkspaceBootstrapping?: boolean
+  favoritePaths?: string[]
+  showFavoritesOnly?: boolean
+  showHiddenItems?: boolean
+  onDocumentSelect: (path: string) => void
+  onCreateDocument?: (directoryPath?: string) => void | Promise<void>
+  onCreateDirectory?: (directoryPath?: string) => void | Promise<void>
+  onCopyDocumentLink?: (path: string) => void | Promise<void>
+  onCopyDirectoryPath?: (path: string) => void | Promise<void>
+  onDuplicateDocument?: (path: string, nextName: string) => void | boolean | Promise<void | boolean>
+  onRenameDocument?: (path: string, nextName: string) => void | boolean | Promise<void | boolean>
+  onDeleteDocument?: (path: string) => void | Promise<void>
+  onMoveDocument?: (sourcePath: string, targetDirectoryPath: string) => void | Promise<void>
+  onReorderFileTreeNode?: (payload: FileTreeReorderPayload) => void | Promise<void>
+  onToggleFavoriteDocument?: (path: string) => void
+  onToggleShowFavoritesOnly?: () => void
+  onHidePath?: (path: string) => void
+  onUnhidePath?: (path: string) => void
+  onExpandedDirectoriesChange?: (paths: string[]) => void | Promise<void>
+  onRender?: () => void
+}
+
+function collectHeadingTargets(
+  root: ParentNode | null,
+  documentHeadings: MarkdownHeading[],
+): HeadingTarget[] {
   return Array.from(root?.querySelectorAll<HTMLElement>(HEADING_SELECTOR) ?? [])
     .map((element, index) => {
       const id = documentHeadings[index]?.id || element.dataset.headingId || element.id
@@ -233,6 +266,633 @@ function collectHeadingTargets(root: ParentNode | null, documentHeadings: Markdo
     })
     .filter((target): target is HeadingTarget => target != null)
 }
+
+export const WorkspaceSidebarPane = memo(function WorkspaceSidebarPane({
+  fileTree,
+  availableDirectoryPaths = EMPTY_PATHS,
+  currentDocumentPath,
+  persistedExpandedDirectories = EMPTY_PATHS,
+  hasPersistedExpandedDirectories = false,
+  hasProjects,
+  isWorkspaceBootstrapping = false,
+  favoritePaths = EMPTY_PATHS,
+  showFavoritesOnly = false,
+  showHiddenItems = false,
+  onDocumentSelect,
+  onCreateDocument = () => {},
+  onCreateDirectory = () => {},
+  onCopyDocumentLink = () => {},
+  onCopyDirectoryPath = () => {},
+  onDuplicateDocument = async () => true,
+  onRenameDocument = async () => true,
+  onDeleteDocument = () => {},
+  onMoveDocument = () => {},
+  onReorderFileTreeNode = () => {},
+  onToggleFavoriteDocument = () => {},
+  onToggleShowFavoritesOnly = () => {},
+  onHidePath = () => {},
+  onUnhidePath = () => {},
+  onExpandedDirectoriesChange,
+  onRender,
+}: WorkspaceSidebarPaneProps) {
+  onRender?.()
+  const [expandedDirectories, setExpandedDirectories] = useState<Set<string>>(new Set())
+  const [fileSearchQuery, setFileSearchQuery] = useState('')
+  const [contextMenuState, setContextMenuState] = useState<FileTreeContextMenuState | null>(null)
+  const [nameActionState, setNameActionState] = useState<FileTreeNameActionState | null>(null)
+  const [dragNodePath, setDragNodePath] = useState<string | null>(null)
+  const [dropDirectoryPath, setDropDirectoryPath] = useState<string | null>(null)
+  const [reorderDropTarget, setReorderDropTarget] = useState<FileTreeReorderDropTarget | null>(null)
+  const renameInputRef = useRef<HTMLInputElement | null>(null)
+  const fileSearchInputRef = useRef<HTMLInputElement | null>(null)
+  const dragNodePathRef = useRef<string | null>(null)
+  const dragNodeParentPathRef = useRef<string | null>(null)
+  const dragNodeKindRef = useRef<VisibleFileTreeNode['kind'] | null>(null)
+  const fileTreePanelRef = useRef<HTMLDivElement | null>(null)
+  const deferredFileSearchQuery = useDeferredValue(fileSearchQuery)
+  const isFilteringFiles = deferredFileSearchQuery.trim().length > 0
+  const reorderEnabled = !isFilteringFiles && !showFavoritesOnly
+  const visibleFileTree = filterFileTree(
+    fileTree,
+    deferredFileSearchQuery,
+  ) as VisibleFileTreeNode[]
+  const allDocumentPaths = collectDocumentPaths(fileTree)
+  const hasFavorites = favoritePaths.length > 0
+
+  useEffect(() => {
+    const input = fileSearchInputRef.current
+
+    if (!input) {
+      return
+    }
+
+    const syncNativeSearchValue = () => {
+      setFileSearchQuery(input.value)
+    }
+
+    input.addEventListener('search', syncNativeSearchValue)
+
+    return () => {
+      input.removeEventListener('search', syncNativeSearchValue)
+    }
+  }, [])
+
+  useEffect(() => {
+    const nextAvailableDirectoryPaths =
+      availableDirectoryPaths.length > 0 ? availableDirectoryPaths : collectDirectoryPaths(fileTree)
+
+    setExpandedDirectories(
+      createInitialExpandedDirectories(
+        nextAvailableDirectoryPaths,
+        currentDocumentPath,
+        persistedExpandedDirectories,
+        hasPersistedExpandedDirectories,
+      ),
+    )
+  }, [availableDirectoryPaths, currentDocumentPath, fileTree, hasPersistedExpandedDirectories, persistedExpandedDirectories])
+
+  useEffect(() => {
+    if (!contextMenuState) {
+      return
+    }
+
+    const handlePointerDown = () => {
+      setContextMenuState(null)
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setContextMenuState(null)
+      }
+    }
+
+    window.addEventListener('pointerdown', handlePointerDown)
+    window.addEventListener('keydown', handleKeyDown)
+
+    return () => {
+      window.removeEventListener('pointerdown', handlePointerDown)
+      window.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [contextMenuState])
+
+  useEffect(() => {
+    if (!nameActionState) {
+      return
+    }
+
+    renameInputRef.current?.focus()
+    renameInputRef.current?.select()
+  }, [nameActionState])
+
+  function handleToggleDirectory(path: string) {
+    setExpandedDirectories((previous) => {
+      const next = new Set(previous)
+
+      if (next.has(path)) {
+        next.delete(path)
+      } else {
+        next.add(path)
+      }
+
+      void onExpandedDirectoriesChange?.([...next].sort())
+      return next
+    })
+  }
+
+  function handleOpenContextMenu(state: FileTreeContextMenuState) {
+    const container = fileTreePanelRef.current
+    if (!container) {
+      setContextMenuState(state)
+      return
+    }
+
+    const rect = container.getBoundingClientRect()
+    const maxX = Math.max(CONTEXT_MENU_GAP, rect.width - CONTEXT_MENU_WIDTH - CONTEXT_MENU_GAP)
+    const maxY = Math.max(CONTEXT_MENU_GAP, rect.height - CONTEXT_MENU_GAP)
+    const localX = Math.min(Math.max(state.x - rect.left, CONTEXT_MENU_GAP), maxX)
+    const localY = Math.min(Math.max(state.y - rect.top, CONTEXT_MENU_GAP), maxY)
+
+    setContextMenuState({
+      ...state,
+      x: localX,
+      y: localY,
+    })
+  }
+
+  async function handleContextMenuAction(action: () => void | Promise<void>) {
+    setContextMenuState(null)
+    await action()
+  }
+
+  function handleRenameStart(path: string, currentName: string) {
+    setContextMenuState(null)
+    setNameActionState({
+      path,
+      sourceName: currentName,
+      value: currentName,
+    })
+  }
+
+  async function handleImmediateDuplicate(path: string) {
+    const nextName = createDefaultDuplicateName(path, allDocumentPaths)
+    await onDuplicateDocument(path, nextName)
+  }
+
+  function onNameActionValueChange(nextValue: string) {
+    setNameActionState((current) => (current ? { ...current, value: nextValue } : current))
+  }
+
+  function onNameActionCancel() {
+    setNameActionState(null)
+  }
+
+  async function onNameActionSubmit() {
+    const current = nameActionState
+    if (!current) {
+      return
+    }
+
+    const nextName = current.value.trim()
+    const currentName = current.sourceName
+
+    if (!nextName || nextName === currentName) {
+      setNameActionState(null)
+      return
+    }
+
+    const isSuccess = await onRenameDocument(current.path, nextName)
+    if (isSuccess !== false) {
+      setNameActionState(null)
+    }
+  }
+
+  function handleNameActionBlur() {
+    window.setTimeout(() => {
+      const activeElement = document.activeElement
+      if (activeElement === renameInputRef.current) {
+        return
+      }
+      setNameActionState(null)
+    }, 0)
+  }
+
+  function handleTreeNodeDragStart(
+    nodePath: string,
+    nodeKind: VisibleFileTreeNode['kind'],
+    parentPath: string | null,
+    event: React.DragEvent<HTMLElement>,
+  ) {
+    if (!reorderEnabled) {
+      event.preventDefault()
+      return
+    }
+
+    setContextMenuState(null)
+    dragNodePathRef.current = nodePath
+    dragNodeParentPathRef.current = parentPath
+    dragNodeKindRef.current = nodeKind
+    setDragNodePath(nodePath)
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData(TREE_NODE_DRAG_MIME, nodePath)
+    if (nodeKind === 'file') {
+      event.dataTransfer.setData(DOCUMENT_DRAG_MIME, nodePath)
+      event.dataTransfer.setData('text/plain', nodePath)
+    }
+  }
+
+  function handleTreeNodeDragEnd() {
+    dragNodePathRef.current = null
+    dragNodeParentPathRef.current = null
+    dragNodeKindRef.current = null
+    setDragNodePath(null)
+    setDropDirectoryPath(null)
+    setReorderDropTarget(null)
+  }
+
+  function handleDirectoryDragOver(directoryPath: string, event: React.DragEvent<HTMLElement>) {
+    const dragTypes = listDragTypes(event.dataTransfer)
+    const hasDraggedDocument =
+      dragTypes.includes(DOCUMENT_DRAG_MIME) ||
+      dragTypes.includes('text/plain') ||
+      (dragNodePathRef.current != null && dragNodeKindRef.current === 'file')
+
+    if (!hasDraggedDocument) {
+      return
+    }
+
+    event.preventDefault()
+    event.stopPropagation()
+    event.dataTransfer.dropEffect = 'move'
+    setReorderDropTarget(null)
+    setDropDirectoryPath(directoryPath)
+  }
+
+  function handleDirectoryDragLeave(directoryPath: string, event?: React.DragEvent<HTMLElement>) {
+    if (event) {
+      event.stopPropagation()
+      const nextTarget = event.relatedTarget
+      if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) {
+        return
+      }
+    }
+    setDropDirectoryPath((current) => (current === directoryPath ? null : current))
+  }
+
+  async function handleDirectoryDrop(directoryPath: string, event: React.DragEvent<HTMLElement>) {
+    const sourcePath =
+      event.dataTransfer.getData(DOCUMENT_DRAG_MIME) ||
+      event.dataTransfer.getData('text/plain') ||
+      (dragNodeKindRef.current === 'file' ? dragNodePathRef.current : null)
+    if (!sourcePath) {
+      return
+    }
+
+    event.preventDefault()
+    event.stopPropagation()
+    dragNodePathRef.current = null
+    dragNodeParentPathRef.current = null
+    dragNodeKindRef.current = null
+    setDragNodePath(null)
+    setDropDirectoryPath(null)
+    setReorderDropTarget(null)
+    await onMoveDocument(sourcePath, directoryPath)
+  }
+
+  function handleTreeNodeDragOver(
+    nodePath: string,
+    nodeKind: VisibleFileTreeNode['kind'],
+    parentPath: string | null,
+    event: React.DragEvent<HTMLElement>,
+  ) {
+    const draggedPath = event.dataTransfer.getData(TREE_NODE_DRAG_MIME) || dragNodePathRef.current
+    const draggedParentPath = dragNodeParentPathRef.current
+    const draggedKind = dragNodeKindRef.current
+
+    if (!draggedPath || draggedKind == null) {
+      return
+    }
+
+    if (
+      reorderEnabled &&
+      draggedPath !== nodePath &&
+      draggedParentPath === parentPath
+    ) {
+      const position = resolveRowReorderPositionWithCenterBand(
+        event,
+        draggedKind === 'file' && nodeKind === 'directory' ? 0.12 : 0,
+      )
+      if (position) {
+        event.preventDefault()
+        event.stopPropagation()
+        event.dataTransfer.dropEffect = 'move'
+        setDropDirectoryPath(null)
+        setReorderDropTarget({
+          targetPath: nodePath,
+          targetParentPath: parentPath,
+          position,
+        })
+        return
+      }
+    }
+
+    if (
+      draggedKind === 'file' &&
+      nodeKind === 'directory' &&
+      draggedPath !== nodePath
+    ) {
+      handleDirectoryDragOver(nodePath, event)
+    }
+  }
+
+  async function handleTreeNodeDrop(
+    nodePath: string,
+    nodeKind: VisibleFileTreeNode['kind'],
+    parentPath: string | null,
+    event: React.DragEvent<HTMLElement>,
+  ) {
+    const draggedPath = event.dataTransfer.getData(TREE_NODE_DRAG_MIME) || dragNodePathRef.current
+
+    if (!draggedPath) {
+      return
+    }
+
+    const sourceParentPath = dragNodeParentPathRef.current
+    const directDropPosition =
+      reorderEnabled && sourceParentPath === parentPath && draggedPath !== nodePath
+        ? resolveRowReorderPositionWithCenterBand(
+            event,
+            dragNodeKindRef.current === 'file' && nodeKind === 'directory' ? 0.12 : 0,
+          )
+        : null
+
+    if (directDropPosition) {
+      event.preventDefault()
+      event.stopPropagation()
+      handleTreeNodeDragEnd()
+      await onReorderFileTreeNode({
+        sourcePath: draggedPath,
+        sourceParentPath,
+        targetPath: nodePath,
+        targetParentPath: parentPath,
+        position: directDropPosition,
+      })
+      return
+    }
+
+    if (nodeKind === 'directory') {
+      await handleDirectoryDrop(nodePath, event)
+    }
+  }
+
+  function handleTailDragOver(parentPath: string | null, event: React.DragEvent<HTMLUListElement>) {
+    if (event.target !== event.currentTarget) {
+      return
+    }
+
+    if (!reorderEnabled || dragNodePathRef.current == null || dragNodeParentPathRef.current !== parentPath) {
+      return
+    }
+
+    event.preventDefault()
+    event.stopPropagation()
+    event.dataTransfer.dropEffect = 'move'
+    setDropDirectoryPath(null)
+    setReorderDropTarget({
+      targetPath: null,
+      targetParentPath: parentPath,
+      position: 'tail',
+    })
+  }
+
+  async function handleTailDrop(parentPath: string | null, event: React.DragEvent<HTMLUListElement>) {
+    if (event.target !== event.currentTarget) {
+      return
+    }
+
+    if (
+      reorderDropTarget?.position !== 'tail' ||
+      reorderDropTarget.targetParentPath !== parentPath ||
+      dragNodePathRef.current == null
+    ) {
+      return
+    }
+
+    event.preventDefault()
+    event.stopPropagation()
+    const sourcePath = dragNodePathRef.current
+    const sourceParentPath = dragNodeParentPathRef.current
+    handleTreeNodeDragEnd()
+    await onReorderFileTreeNode({
+      sourcePath,
+      sourceParentPath,
+      targetPath: null,
+      targetParentPath: parentPath,
+      position: 'tail',
+    })
+  }
+
+  return (
+    <aside className="workspace__sidebar workspace__sidebar--left">
+      <div id="workspace-file-tree" className="panel panel--sidebar">
+        <div className="panel__search panel__search--with-favorites">
+          <button
+            type="button"
+            className="panel__favorite-toggle"
+            aria-label="只看收藏文档"
+            aria-pressed={showFavoritesOnly}
+            onClick={onToggleShowFavoritesOnly}
+            >
+              <Star fill={showFavoritesOnly ? 'currentColor' : 'none'} />
+            </button>
+            <input
+              ref={fileSearchInputRef}
+              type="search"
+              className="panel__search-input"
+            aria-label="搜索文件"
+            placeholder="搜索文件"
+            value={fileSearchQuery}
+            onChange={(event) => setFileSearchQuery(event.target.value)}
+            autoComplete="off"
+            spellCheck={false}
+          />
+          <button
+            type="button"
+            className="panel__create-button"
+            aria-label="新建文档"
+            title="新建文档"
+            onClick={() => void onCreateDocument()}
+          >
+            <FilePlus2 />
+          </button>
+          <button
+            type="button"
+            className="panel__create-button"
+            aria-label="新建文件夹"
+            title="新建文件夹"
+            onClick={() => void onCreateDirectory()}
+          >
+            <FolderPlus />
+          </button>
+        </div>
+        <div
+          ref={fileTreePanelRef}
+          className="panel__content panel__content--tree"
+        >
+          {fileTree.length > 0 && visibleFileTree.length > 0 ? (
+            <WorkspaceFileTree
+              nodes={visibleFileTree}
+              level={0}
+              parentPath={null}
+              searchActive={isFilteringFiles}
+              reorderEnabled={reorderEnabled}
+              currentDocumentPath={currentDocumentPath}
+              expandedDirectories={expandedDirectories}
+              onToggleDirectory={handleToggleDirectory}
+              onDocumentSelect={onDocumentSelect}
+              onCreateDocument={onCreateDocument}
+              onCreateDirectory={onCreateDirectory}
+              onCopyDocumentLink={onCopyDocumentLink}
+              onCopyDirectoryPath={onCopyDirectoryPath}
+              onDuplicateDocument={onDuplicateDocument}
+              onRenameDocument={onRenameDocument}
+              onDeleteDocument={onDeleteDocument}
+              onMoveDocument={onMoveDocument}
+              favoritePaths={favoritePaths}
+              showHiddenItems={showHiddenItems}
+              onToggleFavoriteDocument={onToggleFavoriteDocument}
+              onHidePath={onHidePath}
+              onUnhidePath={onUnhidePath}
+              onOpenContextMenu={handleOpenContextMenu}
+              nameActionState={nameActionState}
+              renameInputRef={renameInputRef}
+              onRenameStart={handleRenameStart}
+              onNameActionValueChange={onNameActionValueChange}
+              onNameActionSubmit={onNameActionSubmit}
+              onNameActionCancel={onNameActionCancel}
+              onNameActionBlur={handleNameActionBlur}
+              dragNodePath={dragNodePath}
+              dropDirectoryPath={dropDirectoryPath}
+              reorderDropTarget={reorderDropTarget}
+              onTreeNodeDragStart={handleTreeNodeDragStart}
+              onTreeNodeDragEnd={handleTreeNodeDragEnd}
+              onTreeNodeDragOver={handleTreeNodeDragOver}
+              onTreeNodeDrop={handleTreeNodeDrop}
+              onTailDragOver={handleTailDragOver}
+              onTailDrop={handleTailDrop}
+              onDirectoryDragOver={handleDirectoryDragOver}
+              onDirectoryDragLeave={handleDirectoryDragLeave}
+              onDirectoryDrop={handleDirectoryDrop}
+            />
+          ) : isFilteringFiles ? (
+            <p className="panel__empty">没有匹配的文件</p>
+          ) : showFavoritesOnly && !hasFavorites ? (
+            <p className="panel__empty">当前还没有收藏文档</p>
+          ) : isWorkspaceBootstrapping ? (
+            <p className="panel__empty">正在恢复工作区…</p>
+          ) : (
+            <p className="panel__empty">
+              {hasProjects ? '当前项目还没有可用的 Markdown 文件' : '还没有接入任何 Markdown 项目'}
+            </p>
+          )}
+          {contextMenuState ? (
+            <div
+              role="menu"
+              className="file-tree__context-menu"
+              style={{
+                left: contextMenuState.x,
+                top: contextMenuState.y,
+                position: 'absolute',
+                width: `${CONTEXT_MENU_WIDTH}px`,
+              }}
+              onPointerDown={(event) => event.stopPropagation()}
+            >
+              {contextMenuState.kind === 'file' ? (
+                <>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() =>
+                      void handleContextMenuAction(() => onCopyDocumentLink(contextMenuState.path))
+                    }
+                  >
+                    <Link2 aria-hidden="true" />
+                    <span>拷贝链接</span>
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() =>
+                      void handleContextMenuAction(() =>
+                        handleImmediateDuplicate(contextMenuState.path),
+                      )
+                    }
+                  >
+                    <Copy aria-hidden="true" />
+                    <span>创建副本</span>
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() =>
+                      void handleContextMenuAction(() =>
+                        handleRenameStart(contextMenuState.path, contextMenuState.name),
+                      )
+                    }
+                  >
+                    <Pencil aria-hidden="true" />
+                    <span>重命名</span>
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() =>
+                      void handleContextMenuAction(() => onDeleteDocument(contextMenuState.path))
+                    }
+                  >
+                    <Trash2 aria-hidden="true" />
+                    <span>删除文档</span>
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() =>
+                      void handleContextMenuAction(() => onCreateDocument(contextMenuState.path))
+                    }
+                  >
+                    <FilePlus2 aria-hidden="true" />
+                    <span>新建文档</span>
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() =>
+                      void handleContextMenuAction(() => onCreateDirectory(contextMenuState.path))
+                    }
+                  >
+                    <FolderPlus aria-hidden="true" />
+                    <span>新建文件夹</span>
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() =>
+                      void handleContextMenuAction(() => onCopyDirectoryPath(contextMenuState.path))
+                    }
+                  >
+                    <Link2 aria-hidden="true" />
+                    <span>拷贝目录路径</span>
+                  </button>
+                </>
+              )}
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </aside>
+  )
+})
 
 function listDragTypes(dataTransfer: DataTransfer | null): string[] {
   if (!dataTransfer?.types) {
@@ -677,69 +1337,15 @@ export function WorkspaceLayout({
   const documentTitle = currentDocumentPath?.split('/').at(-1) ?? null
   const activeDocumentContent =
     mode === 'split' ? (editingDocumentContent ?? currentDocumentContent) : currentDocumentContent
-  const [expandedDirectories, setExpandedDirectories] = useState<Set<string>>(new Set())
-  const [fileSearchQuery, setFileSearchQuery] = useState('')
   const [documentHeadings, setDocumentHeadings] = useState<MarkdownHeading[]>([])
   const [activeHeadingId, setActiveHeadingId] = useState<string | null>(null)
-  const [contextMenuState, setContextMenuState] = useState<FileTreeContextMenuState | null>(null)
-  const [nameActionState, setNameActionState] = useState<FileTreeNameActionState | null>(null)
-  const [dragNodePath, setDragNodePath] = useState<string | null>(null)
-  const [dropDirectoryPath, setDropDirectoryPath] = useState<string | null>(null)
-  const [reorderDropTarget, setReorderDropTarget] = useState<FileTreeReorderDropTarget | null>(null)
-  const renameInputRef = useRef<HTMLInputElement | null>(null)
-  const fileSearchInputRef = useRef<HTMLInputElement | null>(null)
-  const dragNodePathRef = useRef<string | null>(null)
-  const dragNodeParentPathRef = useRef<string | null>(null)
-  const dragNodeKindRef = useRef<VisibleFileTreeNode['kind'] | null>(null)
   const documentRef = useRef<HTMLElement | null>(null)
   const canvasRef = useRef<HTMLDivElement | null>(null)
   const outlineRef = useRef<HTMLDivElement | null>(null)
-  const fileTreePanelRef = useRef<HTMLDivElement | null>(null)
   const minSidebarWidth = 220
   const maxSidebarWidth = 520
   const minOutlineWidth = 220
   const maxOutlineWidth = 420
-  const deferredFileSearchQuery = useDeferredValue(fileSearchQuery)
-  const isFilteringFiles = deferredFileSearchQuery.trim().length > 0
-  const reorderEnabled = !isFilteringFiles && !showFavoritesOnly
-  const visibleFileTree = filterFileTree(
-    fileTree,
-    deferredFileSearchQuery,
-  ) as VisibleFileTreeNode[]
-  const allDocumentPaths = collectDocumentPaths(fileTree)
-  const hasFavorites = favoritePaths.length > 0
-
-  useEffect(() => {
-    const input = fileSearchInputRef.current
-
-    if (!input) {
-      return
-    }
-
-    const syncNativeSearchValue = () => {
-      setFileSearchQuery(input.value)
-    }
-
-    input.addEventListener('search', syncNativeSearchValue)
-
-    return () => {
-      input.removeEventListener('search', syncNativeSearchValue)
-    }
-  }, [])
-
-  useEffect(() => {
-    const nextAvailableDirectoryPaths =
-      availableDirectoryPaths.length > 0 ? availableDirectoryPaths : collectDirectoryPaths(fileTree)
-
-    setExpandedDirectories(
-      createInitialExpandedDirectories(
-        nextAvailableDirectoryPaths,
-        currentDocumentPath,
-        persistedExpandedDirectories,
-        hasPersistedExpandedDirectories,
-      ),
-    )
-  }, [availableDirectoryPaths, fileTree, currentDocumentPath, persistedExpandedDirectories, hasPersistedExpandedDirectories])
 
   useEffect(() => {
     if (!activeDocumentContent) {
@@ -900,345 +1506,6 @@ export function WorkspaceLayout({
       ?.scrollIntoView?.({ block: 'nearest' })
   }, [activeHeadingId])
 
-  useEffect(() => {
-    if (!contextMenuState) {
-      return
-    }
-
-    const handlePointerDown = () => {
-      setContextMenuState(null)
-    }
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setContextMenuState(null)
-      }
-    }
-
-    window.addEventListener('pointerdown', handlePointerDown)
-    window.addEventListener('keydown', handleKeyDown)
-
-    return () => {
-      window.removeEventListener('pointerdown', handlePointerDown)
-      window.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [contextMenuState])
-
-  useEffect(() => {
-    if (!nameActionState) {
-      return
-    }
-
-    renameInputRef.current?.focus()
-    renameInputRef.current?.select()
-  }, [nameActionState])
-
-  function handleToggleDirectory(path: string) {
-    setExpandedDirectories((previous) => {
-      const next = new Set(previous)
-
-      if (next.has(path)) {
-        next.delete(path)
-      } else {
-        next.add(path)
-      }
-
-      void onExpandedDirectoriesChange?.([...next].sort())
-      return next
-    })
-  }
-
-  function handleOpenContextMenu(state: FileTreeContextMenuState) {
-    const container = fileTreePanelRef.current
-    if (!container) {
-      setContextMenuState(state)
-      return
-    }
-
-    const rect = container.getBoundingClientRect()
-    const maxX = Math.max(CONTEXT_MENU_GAP, rect.width - CONTEXT_MENU_WIDTH - CONTEXT_MENU_GAP)
-    const maxY = Math.max(CONTEXT_MENU_GAP, rect.height - CONTEXT_MENU_GAP)
-    const localX = Math.min(Math.max(state.x - rect.left, CONTEXT_MENU_GAP), maxX)
-    const localY = Math.min(Math.max(state.y - rect.top, CONTEXT_MENU_GAP), maxY)
-
-    setContextMenuState({
-      ...state,
-      x: localX,
-      y: localY,
-    })
-  }
-
-  async function handleContextMenuAction(action: () => void | Promise<void>) {
-    setContextMenuState(null)
-    await action()
-  }
-
-  function handleRenameStart(path: string, currentName: string) {
-    setContextMenuState(null)
-    setNameActionState({
-      path,
-      sourceName: currentName,
-      value: currentName,
-    })
-  }
-
-  async function handleImmediateDuplicate(path: string) {
-    const nextName = createDefaultDuplicateName(path, allDocumentPaths)
-    await onDuplicateDocument(path, nextName)
-  }
-
-  function onNameActionValueChange(nextValue: string) {
-    setNameActionState((current) => (current ? { ...current, value: nextValue } : current))
-  }
-
-  function onNameActionCancel() {
-    setNameActionState(null)
-  }
-
-  async function onNameActionSubmit() {
-    const current = nameActionState
-    if (!current) {
-      return
-    }
-
-    const nextName = current.value.trim()
-    const currentName = current.sourceName
-
-    if (!nextName || nextName === currentName) {
-      setNameActionState(null)
-      return
-    }
-
-    const isSuccess = await onRenameDocument(current.path, nextName)
-    if (isSuccess !== false) {
-      setNameActionState(null)
-    }
-  }
-
-  function handleNameActionBlur() {
-    window.setTimeout(() => {
-      const activeElement = document.activeElement
-      if (activeElement === renameInputRef.current) {
-        return
-      }
-      setNameActionState(null)
-    }, 0)
-  }
-
-  function handleTreeNodeDragStart(
-    nodePath: string,
-    nodeKind: VisibleFileTreeNode['kind'],
-    parentPath: string | null,
-    event: React.DragEvent<HTMLElement>,
-  ) {
-    if (!reorderEnabled) {
-      event.preventDefault()
-      return
-    }
-
-    setContextMenuState(null)
-    dragNodePathRef.current = nodePath
-    dragNodeParentPathRef.current = parentPath
-    dragNodeKindRef.current = nodeKind
-    setDragNodePath(nodePath)
-    event.dataTransfer.effectAllowed = 'move'
-    event.dataTransfer.setData(TREE_NODE_DRAG_MIME, nodePath)
-    if (nodeKind === 'file') {
-      event.dataTransfer.setData(DOCUMENT_DRAG_MIME, nodePath)
-      event.dataTransfer.setData('text/plain', nodePath)
-    }
-  }
-
-  function handleTreeNodeDragEnd() {
-    dragNodePathRef.current = null
-    dragNodeParentPathRef.current = null
-    dragNodeKindRef.current = null
-    setDragNodePath(null)
-    setDropDirectoryPath(null)
-    setReorderDropTarget(null)
-  }
-
-  function handleDirectoryDragOver(directoryPath: string, event: React.DragEvent<HTMLElement>) {
-    const dragTypes = listDragTypes(event.dataTransfer)
-    const hasDraggedDocument =
-      dragTypes.includes(DOCUMENT_DRAG_MIME) ||
-      dragTypes.includes('text/plain') ||
-      (dragNodePathRef.current != null && dragNodeKindRef.current === 'file')
-
-    if (!hasDraggedDocument) {
-      return
-    }
-
-    event.preventDefault()
-    event.stopPropagation()
-    event.dataTransfer.dropEffect = 'move'
-    setReorderDropTarget(null)
-    setDropDirectoryPath(directoryPath)
-  }
-
-  function handleDirectoryDragLeave(directoryPath: string, event?: React.DragEvent<HTMLElement>) {
-    if (event) {
-      event.stopPropagation()
-      const nextTarget = event.relatedTarget
-      if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) {
-        return
-      }
-    }
-    setDropDirectoryPath((current) => (current === directoryPath ? null : current))
-  }
-
-  async function handleDirectoryDrop(directoryPath: string, event: React.DragEvent<HTMLElement>) {
-    const sourcePath =
-      event.dataTransfer.getData(DOCUMENT_DRAG_MIME) ||
-      event.dataTransfer.getData('text/plain') ||
-      (dragNodeKindRef.current === 'file' ? dragNodePathRef.current : null)
-    if (!sourcePath) {
-      return
-    }
-
-    event.preventDefault()
-    event.stopPropagation()
-    dragNodePathRef.current = null
-    dragNodeParentPathRef.current = null
-    dragNodeKindRef.current = null
-    setDragNodePath(null)
-    setDropDirectoryPath(null)
-    setReorderDropTarget(null)
-    await onMoveDocument(sourcePath, directoryPath)
-  }
-
-  function handleTreeNodeDragOver(
-    nodePath: string,
-    nodeKind: VisibleFileTreeNode['kind'],
-    parentPath: string | null,
-    event: React.DragEvent<HTMLElement>,
-  ) {
-    const draggedPath = event.dataTransfer.getData(TREE_NODE_DRAG_MIME) || dragNodePathRef.current
-    const draggedParentPath = dragNodeParentPathRef.current
-    const draggedKind = dragNodeKindRef.current
-
-    if (!draggedPath || draggedKind == null) {
-      return
-    }
-
-    if (
-      reorderEnabled &&
-      draggedPath !== nodePath &&
-      draggedParentPath === parentPath
-    ) {
-      const position = resolveRowReorderPositionWithCenterBand(
-        event,
-        draggedKind === 'file' && nodeKind === 'directory' ? 0.12 : 0,
-      )
-      if (position) {
-        event.preventDefault()
-        event.stopPropagation()
-        event.dataTransfer.dropEffect = 'move'
-        setDropDirectoryPath(null)
-        setReorderDropTarget({
-          targetPath: nodePath,
-          targetParentPath: parentPath,
-          position,
-        })
-        return
-      }
-    }
-
-    if (
-      draggedKind === 'file' &&
-      nodeKind === 'directory' &&
-      draggedPath !== nodePath
-    ) {
-      handleDirectoryDragOver(nodePath, event)
-    }
-  }
-
-  async function handleTreeNodeDrop(
-    nodePath: string,
-    nodeKind: VisibleFileTreeNode['kind'],
-    parentPath: string | null,
-    event: React.DragEvent<HTMLElement>,
-  ) {
-    const draggedPath = event.dataTransfer.getData(TREE_NODE_DRAG_MIME) || dragNodePathRef.current
-
-    if (!draggedPath) {
-      return
-    }
-
-    const sourceParentPath = dragNodeParentPathRef.current
-    const directDropPosition =
-      reorderEnabled && sourceParentPath === parentPath && draggedPath !== nodePath
-        ? resolveRowReorderPositionWithCenterBand(
-            event,
-            dragNodeKindRef.current === 'file' && nodeKind === 'directory' ? 0.12 : 0,
-          )
-        : null
-
-    if (directDropPosition) {
-      event.preventDefault()
-      event.stopPropagation()
-      handleTreeNodeDragEnd()
-      await onReorderFileTreeNode({
-        sourcePath: draggedPath,
-        sourceParentPath,
-        targetPath: nodePath,
-        targetParentPath: parentPath,
-        position: directDropPosition,
-      })
-      return
-    }
-
-    if (nodeKind === 'directory') {
-      await handleDirectoryDrop(nodePath, event)
-    }
-  }
-
-  function handleTailDragOver(parentPath: string | null, event: React.DragEvent<HTMLUListElement>) {
-    if (event.target !== event.currentTarget) {
-      return
-    }
-
-    if (!reorderEnabled || dragNodePathRef.current == null || dragNodeParentPathRef.current !== parentPath) {
-      return
-    }
-
-    event.preventDefault()
-    event.stopPropagation()
-    event.dataTransfer.dropEffect = 'move'
-    setDropDirectoryPath(null)
-    setReorderDropTarget({
-      targetPath: null,
-      targetParentPath: parentPath,
-      position: 'tail',
-    })
-  }
-
-  async function handleTailDrop(parentPath: string | null, event: React.DragEvent<HTMLUListElement>) {
-    if (event.target !== event.currentTarget) {
-      return
-    }
-
-    if (
-      reorderDropTarget?.position !== 'tail' ||
-      reorderDropTarget.targetParentPath !== parentPath ||
-      dragNodePathRef.current == null
-    ) {
-      return
-    }
-
-    event.preventDefault()
-    event.stopPropagation()
-    const sourcePath = dragNodePathRef.current
-    const sourceParentPath = dragNodeParentPathRef.current
-    handleTreeNodeDragEnd()
-    await onReorderFileTreeNode({
-      sourcePath,
-      sourceParentPath,
-      targetPath: null,
-      targetParentPath: parentPath,
-      position: 'tail',
-    })
-  }
-
   function handleHeadingSelect(headingId: string) {
     setActiveHeadingId(headingId)
     const target = getHeadingTargets().find((headingTarget) => headingTarget.id === headingId)
@@ -1366,10 +1633,10 @@ export function WorkspaceLayout({
     if (mode === 'regular') {
       return (
         <div className="workspace__document-workarea">
-            <div
-              ref={(node) => {
-                documentRef.current = node
-              }}
+          <div
+            ref={(node) => {
+              documentRef.current = node
+            }}
             className="workspace__editor-pane"
           >
             <VisualMarkdownEditor
@@ -1450,206 +1717,33 @@ export function WorkspaceLayout({
         } as CSSProperties
       }
     >
-      <aside className="workspace__sidebar workspace__sidebar--left">
-        <div id="workspace-file-tree" className="panel panel--sidebar">
-          <div className="panel__search panel__search--with-favorites">
-            <button
-              type="button"
-              className="panel__favorite-toggle"
-              aria-label="只看收藏文档"
-              aria-pressed={showFavoritesOnly}
-              onClick={onToggleShowFavoritesOnly}
-            >
-              <Star fill={showFavoritesOnly ? 'currentColor' : 'none'} />
-            </button>
-            <input
-              ref={fileSearchInputRef}
-              type="search"
-              className="panel__search-input"
-              aria-label="搜索文件"
-              placeholder="搜索文件"
-              value={fileSearchQuery}
-              onChange={(event) => setFileSearchQuery(event.target.value)}
-              autoComplete="off"
-              spellCheck={false}
-            />
-            <button
-              type="button"
-              className="panel__create-button"
-              aria-label="新建文档"
-              title="新建文档"
-              onClick={() => void onCreateDocument()}
-            >
-              <FilePlus2 />
-            </button>
-            <button
-              type="button"
-              className="panel__create-button"
-              aria-label="新建文件夹"
-              title="新建文件夹"
-              onClick={() => void onCreateDirectory()}
-            >
-              <FolderPlus />
-            </button>
-          </div>
-          <div
-            ref={fileTreePanelRef}
-            className="panel__content panel__content--tree"
-          >
-            {fileTree.length > 0 && visibleFileTree.length > 0 ? (
-              <WorkspaceFileTree
-                nodes={visibleFileTree}
-                level={0}
-                parentPath={null}
-                searchActive={isFilteringFiles}
-                reorderEnabled={reorderEnabled}
-                currentDocumentPath={currentDocumentPath}
-                expandedDirectories={expandedDirectories}
-                onToggleDirectory={handleToggleDirectory}
-                onDocumentSelect={onDocumentSelect}
-                onCreateDocument={onCreateDocument}
-                onCreateDirectory={onCreateDirectory}
-                onCopyDocumentLink={onCopyDocumentLink}
-                onCopyDirectoryPath={onCopyDirectoryPath}
-                onDuplicateDocument={onDuplicateDocument}
-                onRenameDocument={onRenameDocument}
-                onDeleteDocument={onDeleteDocument}
-                onMoveDocument={onMoveDocument}
-                favoritePaths={favoritePaths}
-                showHiddenItems={showHiddenItems}
-                onToggleFavoriteDocument={onToggleFavoriteDocument}
-                onHidePath={onHidePath}
-                onUnhidePath={onUnhidePath}
-                onOpenContextMenu={handleOpenContextMenu}
-                nameActionState={nameActionState}
-                renameInputRef={renameInputRef}
-                onRenameStart={handleRenameStart}
-                onNameActionValueChange={onNameActionValueChange}
-                onNameActionSubmit={onNameActionSubmit}
-                onNameActionCancel={onNameActionCancel}
-                onNameActionBlur={handleNameActionBlur}
-                dragNodePath={dragNodePath}
-                dropDirectoryPath={dropDirectoryPath}
-                reorderDropTarget={reorderDropTarget}
-                onTreeNodeDragStart={handleTreeNodeDragStart}
-                onTreeNodeDragEnd={handleTreeNodeDragEnd}
-                onTreeNodeDragOver={handleTreeNodeDragOver}
-                onTreeNodeDrop={handleTreeNodeDrop}
-                onTailDragOver={handleTailDragOver}
-                onTailDrop={handleTailDrop}
-                onDirectoryDragOver={handleDirectoryDragOver}
-                onDirectoryDragLeave={handleDirectoryDragLeave}
-                onDirectoryDrop={handleDirectoryDrop}
-              />
-            ) : isFilteringFiles ? (
-              <p className="panel__empty">没有匹配的文件</p>
-            ) : showFavoritesOnly && !hasFavorites ? (
-              <p className="panel__empty">当前还没有收藏文档</p>
-            ) : isWorkspaceBootstrapping ? (
-              <p className="panel__empty">正在恢复工作区…</p>
-            ) : (
-              <p className="panel__empty">
-                {hasProjects ? '当前项目还没有可用的 Markdown 文件' : '还没有接入任何 Markdown 项目'}
-              </p>
-            )}
-            {contextMenuState ? (
-              <div
-                role="menu"
-                className="file-tree__context-menu"
-                style={{
-                  left: contextMenuState.x,
-                  top: contextMenuState.y,
-                  position: 'absolute',
-                  width: `${CONTEXT_MENU_WIDTH}px`,
-                }}
-                onPointerDown={(event) => event.stopPropagation()}
-              >
-                {contextMenuState.kind === 'file' ? (
-                  <>
-                    <button
-                      type="button"
-                      role="menuitem"
-                      onClick={() =>
-                        void handleContextMenuAction(() => onCopyDocumentLink(contextMenuState.path))
-                      }
-                    >
-                      <Link2 aria-hidden="true" />
-                      <span>拷贝链接</span>
-                    </button>
-                    <button
-                      type="button"
-                      role="menuitem"
-                      onClick={() =>
-                        void handleContextMenuAction(() =>
-                          handleImmediateDuplicate(contextMenuState.path),
-                        )
-                      }
-                    >
-                      <Copy aria-hidden="true" />
-                      <span>创建副本</span>
-                    </button>
-                    <button
-                      type="button"
-                      role="menuitem"
-                      onClick={() =>
-                        void handleContextMenuAction(() =>
-                          handleRenameStart(contextMenuState.path, contextMenuState.name),
-                        )
-                      }
-                    >
-                      <Pencil aria-hidden="true" />
-                      <span>重命名</span>
-                    </button>
-                    <button
-                      type="button"
-                      role="menuitem"
-                      onClick={() =>
-                        void handleContextMenuAction(() => onDeleteDocument(contextMenuState.path))
-                      }
-                    >
-                      <Trash2 aria-hidden="true" />
-                      <span>删除</span>
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    <button
-                      type="button"
-                      role="menuitem"
-                      onClick={() =>
-                        void handleContextMenuAction(() => onCreateDocument(contextMenuState.path))
-                      }
-                    >
-                      <FilePlus2 aria-hidden="true" />
-                      <span>新建文档</span>
-                    </button>
-                    <button
-                      type="button"
-                      role="menuitem"
-                      onClick={() =>
-                        void handleContextMenuAction(() => onCreateDirectory(contextMenuState.path))
-                      }
-                    >
-                      <FolderPlus aria-hidden="true" />
-                      <span>新建文件夹</span>
-                    </button>
-                    <button
-                      type="button"
-                      role="menuitem"
-                      onClick={() =>
-                        void handleContextMenuAction(() => onCopyDirectoryPath(contextMenuState.path))
-                      }
-                    >
-                      <Link2 aria-hidden="true" />
-                      <span>拷贝路径</span>
-                    </button>
-                  </>
-                )}
-              </div>
-            ) : null}
-          </div>
-        </div>
-      </aside>
+      <WorkspaceSidebarPane
+        fileTree={fileTree}
+        availableDirectoryPaths={availableDirectoryPaths}
+        currentDocumentPath={currentDocumentPath}
+        persistedExpandedDirectories={persistedExpandedDirectories}
+        hasPersistedExpandedDirectories={hasPersistedExpandedDirectories}
+        hasProjects={hasProjects}
+        isWorkspaceBootstrapping={isWorkspaceBootstrapping}
+        favoritePaths={favoritePaths}
+        showFavoritesOnly={showFavoritesOnly}
+        showHiddenItems={showHiddenItems}
+        onDocumentSelect={onDocumentSelect}
+        onCreateDocument={onCreateDocument}
+        onCreateDirectory={onCreateDirectory}
+        onCopyDocumentLink={onCopyDocumentLink}
+        onCopyDirectoryPath={onCopyDirectoryPath}
+        onDuplicateDocument={onDuplicateDocument}
+        onRenameDocument={onRenameDocument}
+        onDeleteDocument={onDeleteDocument}
+        onMoveDocument={onMoveDocument}
+        onReorderFileTreeNode={onReorderFileTreeNode}
+        onToggleFavoriteDocument={onToggleFavoriteDocument}
+        onToggleShowFavoritesOnly={onToggleShowFavoritesOnly}
+        onHidePath={onHidePath}
+        onUnhidePath={onUnhidePath}
+        onExpandedDirectoriesChange={onExpandedDirectoriesChange}
+      />
 
       <div
         role="separator"

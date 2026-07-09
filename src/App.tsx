@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { ActionDialog } from './app/ActionDialog'
 import { AppShell } from './app/AppShell'
@@ -367,14 +367,22 @@ function App() {
   const editingDocumentContent = activeTab?.draftContent ?? null
   const currentDocumentMtimeMs = activeTab?.mtimeMs ?? null
   const saveState = activeTab?.saveState ?? 'clean'
-  const { visibleNodes: visibleAfterHidden, availableDirectoryPaths } = createVisibleFileTree({
-    sourceNodes: fileTree,
-    hiddenPaths,
-    showHiddenItems,
-  })
-  const visibleFileTree = showFavoritesOnly
-    ? filterFileTreeByFavorites(visibleAfterHidden, favoritePaths)
-    : visibleAfterHidden
+  const { visibleNodes: visibleAfterHidden, availableDirectoryPaths } = useMemo(
+    () =>
+      createVisibleFileTree({
+        sourceNodes: fileTree,
+        hiddenPaths,
+        showHiddenItems,
+      }),
+    [fileTree, hiddenPaths, showHiddenItems],
+  )
+  const visibleFileTree = useMemo(
+    () =>
+      showFavoritesOnly
+        ? filterFileTreeByFavorites(visibleAfterHidden, favoritePaths)
+        : visibleAfterHidden,
+    [favoritePaths, showFavoritesOnly, visibleAfterHidden],
+  )
   const autosaveTimerRef = useRef<number | null>(null)
   const actionToastTimerRef = useRef<number | null>(null)
   const flushPromiseRef = useRef<Promise<boolean> | null>(null)
