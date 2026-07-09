@@ -774,6 +774,47 @@ describe('WorkspaceLayout outline navigation', () => {
     expect(screen.getByRole('button', { name: 'meeting.md' })).toBeInTheDocument()
   })
 
+  it('restores the full file tree when the native search clear action fires', async () => {
+    const user = userEvent.setup()
+
+    render(
+      <WorkspaceLayout
+        mode="regular"
+        regularViewState="locked"
+        fileTree={createVisibleTree(['docs/guide.md', 'docs/api/reference.md', 'notes/meeting.md'])}
+        currentDocumentPath="docs/guide.md"
+        currentDocumentContent={'# 标题\n\n正文'}
+        statusMessage="当前项目：Notes"
+        sidebarWidth={280}
+        outlineWidth={320}
+        hasProjects
+        onDocumentSelect={() => {}}
+        onSidebarWidthChange={() => {}}
+        onSidebarWidthCommit={() => {}}
+        onOutlineWidthChange={() => {}}
+        onOutlineWidthCommit={() => {}}
+      />,
+    )
+
+    const searchInput = screen.getByRole('searchbox', { name: '搜索文件' }) as HTMLInputElement
+
+    await user.type(searchInput, 'ref')
+
+    expect(screen.getByRole('button', { name: 'reference.md' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'guide.md' })).not.toBeInTheDocument()
+
+    searchInput.value = ''
+    fireEvent(
+      searchInput,
+      createEvent('search', searchInput, {
+        bubbles: true,
+      }),
+    )
+
+    expect(screen.getByRole('button', { name: 'guide.md' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'meeting.md' })).toBeInTheDocument()
+  })
+
   it('shows an empty state when the sidebar search does not match any files', async () => {
     const user = userEvent.setup()
 

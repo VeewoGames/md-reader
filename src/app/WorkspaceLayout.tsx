@@ -687,6 +687,7 @@ export function WorkspaceLayout({
   const [dropDirectoryPath, setDropDirectoryPath] = useState<string | null>(null)
   const [reorderDropTarget, setReorderDropTarget] = useState<FileTreeReorderDropTarget | null>(null)
   const renameInputRef = useRef<HTMLInputElement | null>(null)
+  const fileSearchInputRef = useRef<HTMLInputElement | null>(null)
   const dragNodePathRef = useRef<string | null>(null)
   const dragNodeParentPathRef = useRef<string | null>(null)
   const dragNodeKindRef = useRef<VisibleFileTreeNode['kind'] | null>(null)
@@ -707,6 +708,24 @@ export function WorkspaceLayout({
   ) as VisibleFileTreeNode[]
   const allDocumentPaths = collectDocumentPaths(fileTree)
   const hasFavorites = favoritePaths.length > 0
+
+  useEffect(() => {
+    const input = fileSearchInputRef.current
+
+    if (!input) {
+      return
+    }
+
+    const syncNativeSearchValue = () => {
+      setFileSearchQuery(input.value)
+    }
+
+    input.addEventListener('search', syncNativeSearchValue)
+
+    return () => {
+      input.removeEventListener('search', syncNativeSearchValue)
+    }
+  }, [])
 
   useEffect(() => {
     const nextAvailableDirectoryPaths =
@@ -1444,6 +1463,7 @@ export function WorkspaceLayout({
               <Star fill={showFavoritesOnly ? 'currentColor' : 'none'} />
             </button>
             <input
+              ref={fileSearchInputRef}
               type="search"
               className="panel__search-input"
               aria-label="搜索文件"
