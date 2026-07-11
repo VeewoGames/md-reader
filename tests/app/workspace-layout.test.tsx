@@ -174,7 +174,7 @@ describe('WorkspaceLayout outline navigation', () => {
       />,
     )
 
-    await screen.findByLabelText('可视 Markdown 编辑器')
+    await screen.findByLabelText('只读 Markdown 渲染器')
     const heading = screen.getByRole('heading', { name: '提交信息格式' })
     const canvasPanel = document.querySelector('.panel__content--canvas') as HTMLDivElement | null
     const scrollTo = vi.fn()
@@ -226,7 +226,7 @@ describe('WorkspaceLayout outline navigation', () => {
       />,
     )
 
-    await screen.findByLabelText('可视 Markdown 编辑器')
+    await screen.findByLabelText('只读 Markdown 渲染器')
     const canvasPanel = document.querySelector('.panel__content--canvas') as HTMLDivElement | null
     const scrollTo = vi.fn()
 
@@ -268,6 +268,68 @@ describe('WorkspaceLayout outline navigation', () => {
 
     await waitFor(() => {
       expect(replacementHeading).toHaveAttribute('data-heading-id', '提交信息格式')
+    })
+
+    await user.click(screen.getByRole('button', { name: '提交信息格式' }))
+
+    expect(scrollTo).toHaveBeenCalledWith({ behavior: 'auto', top: 412 })
+  })
+
+  it('recollects heading targets on outline click when the regular-mode DOM changed without a structure event', async () => {
+    const user = userEvent.setup()
+
+    render(
+      <WorkspaceLayout
+        mode="regular"
+        regularViewState="locked"
+        fileTree={[]}
+        currentDocumentPath="docs/guide.md"
+        currentDocumentContent={'# 总览\n\n## 提交信息格式\n\n内容'}
+        statusMessage="当前项目：Notes"
+        sidebarWidth={280}
+        outlineWidth={320}
+        hasProjects
+        onDocumentSelect={() => {}}
+        onSidebarWidthChange={() => {}}
+        onSidebarWidthCommit={() => {}}
+        onOutlineWidthChange={() => {}}
+        onOutlineWidthCommit={() => {}}
+      />,
+    )
+
+    await screen.findByLabelText('只读 Markdown 渲染器')
+    const canvasPanel = document.querySelector('.panel__content--canvas') as HTMLDivElement | null
+    const scrollTo = vi.fn()
+
+    expect(canvasPanel).not.toBeNull()
+
+    const originalHeading = await screen.findByRole('heading', { name: '提交信息格式' })
+
+    await waitFor(() => {
+      expect(originalHeading).toHaveAttribute('data-heading-id', '提交信息格式')
+    })
+
+    const replacementHeading = originalHeading.cloneNode(true) as HTMLElement
+    replacementHeading.removeAttribute('data-heading-id')
+    replacementHeading.removeAttribute('id')
+    originalHeading.replaceWith(replacementHeading)
+
+    Object.defineProperty(canvasPanel as HTMLDivElement, 'scrollTop', {
+      configurable: true,
+      value: 180,
+      writable: true,
+    })
+    Object.defineProperty(canvasPanel as HTMLDivElement, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({ top: 100 }),
+    })
+    Object.defineProperty(canvasPanel as HTMLDivElement, 'scrollTo', {
+      configurable: true,
+      value: scrollTo,
+    })
+    Object.defineProperty(replacementHeading, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({ top: 356 }),
     })
 
     await user.click(screen.getByRole('button', { name: '提交信息格式' }))
@@ -361,7 +423,7 @@ describe('WorkspaceLayout outline navigation', () => {
       />,
     )
 
-    await screen.findByLabelText('可视 Markdown 编辑器')
+    await screen.findByLabelText('只读 Markdown 渲染器')
     const headingElements = screen.getAllByRole('heading')
     const canvasPanel = document.querySelector('.panel__content--canvas') as HTMLDivElement | null
 
@@ -417,7 +479,7 @@ describe('WorkspaceLayout outline navigation', () => {
       </StrictMode>,
     )
 
-    await screen.findByLabelText('可视 Markdown 编辑器')
+    await screen.findByLabelText('只读 Markdown 渲染器')
 
     await waitFor(() => {
       expect(document.querySelectorAll('[data-heading-id]')).toHaveLength(4)
@@ -481,7 +543,7 @@ describe('WorkspaceLayout outline navigation', () => {
     expect(onOutlineWidthCommit).toHaveBeenLastCalledWith(360)
   })
 
-  it('renders a locked visual markdown editor shell in regular mode', async () => {
+  it('renders the final readonly preview in locked regular mode', () => {
     const { container } = render(
       <WorkspaceLayout
         mode="regular"
@@ -503,13 +565,11 @@ describe('WorkspaceLayout outline navigation', () => {
       />,
     )
 
-    expect(await screen.findByLabelText('可视 Markdown 编辑器')).toHaveAttribute(
-      'data-readonly',
-      'true',
-    )
+    expect(screen.getByLabelText('只读 Markdown 渲染器')).toBeInTheDocument()
+    expect(screen.queryByLabelText('可视 Markdown 编辑器')).not.toBeInTheDocument()
     expect(screen.queryByRole('textbox', { name: 'Markdown 编辑器' })).not.toBeInTheDocument()
     expect(container.querySelector('.workspace__document-workarea')).not.toBeNull()
-    expect(container.querySelector('.workspace__editor-pane')).not.toBeNull()
+    expect(container.querySelector('.workspace__editor-pane')).toBeNull()
   })
 
   it('aligns outline navigation clicks to the document anchor in regular editable mode', async () => {
@@ -631,6 +691,81 @@ describe('WorkspaceLayout outline navigation', () => {
     expect(container.querySelectorAll('.workspace__split-pane')).toHaveLength(2)
   })
 
+  it('keeps Mermaid source in editable surfaces and routes final previews to the readonly renderer', async () => {
+    const markdown = '```mermaid\nflowchart TD\n  A --> B\n```'
+    const { rerender } = render(
+      <WorkspaceLayout
+        mode="regular"
+        regularViewState="locked"
+        fileTree={[]}
+        currentDocumentPath="docs/diagram.md"
+        currentDocumentContent={markdown}
+        editingDocumentContent={markdown}
+        statusMessage="当前项目：Notes"
+        sidebarWidth={280}
+        outlineWidth={320}
+        hasProjects
+        onDocumentSelect={() => {}}
+        onSidebarWidthChange={() => {}}
+        onSidebarWidthCommit={() => {}}
+        onOutlineWidthChange={() => {}}
+        onOutlineWidthCommit={() => {}}
+        onEditingDocumentContentChange={() => {}}
+      />,
+    )
+
+    expect(screen.getByLabelText('只读 Markdown 渲染器')).toBeInTheDocument()
+    expect(screen.queryByLabelText('可视 Markdown 编辑器')).not.toBeInTheDocument()
+
+    rerender(
+      <WorkspaceLayout
+        mode="regular"
+        regularViewState="editable"
+        fileTree={[]}
+        currentDocumentPath="docs/diagram.md"
+        currentDocumentContent={markdown}
+        editingDocumentContent={markdown}
+        statusMessage="当前项目：Notes"
+        sidebarWidth={280}
+        outlineWidth={320}
+        hasProjects
+        onDocumentSelect={() => {}}
+        onSidebarWidthChange={() => {}}
+        onSidebarWidthCommit={() => {}}
+        onOutlineWidthChange={() => {}}
+        onOutlineWidthCommit={() => {}}
+        onEditingDocumentContentChange={() => {}}
+      />,
+    )
+
+    expect(await screen.findByLabelText('可视 Markdown 编辑器')).toHaveTextContent('flowchart TD')
+    expect(screen.queryByLabelText('只读 Markdown 渲染器')).not.toBeInTheDocument()
+
+    rerender(
+      <WorkspaceLayout
+        mode="split"
+        regularViewState="locked"
+        fileTree={[]}
+        currentDocumentPath="docs/diagram.md"
+        currentDocumentContent={markdown}
+        editingDocumentContent={markdown}
+        statusMessage="当前项目：Notes"
+        sidebarWidth={280}
+        outlineWidth={320}
+        hasProjects
+        onDocumentSelect={() => {}}
+        onSidebarWidthChange={() => {}}
+        onSidebarWidthCommit={() => {}}
+        onOutlineWidthChange={() => {}}
+        onOutlineWidthCommit={() => {}}
+        onEditingDocumentContentChange={() => {}}
+      />,
+    )
+
+    expect(screen.getByRole('textbox', { name: 'Markdown 编辑器' })).toHaveValue(markdown)
+    expect(screen.getByLabelText('只读 Markdown 渲染器')).toBeInTheDocument()
+  })
+
   it('renders --- consistently in locked regular mode and split preview', async () => {
     const markdown = '# 标题\n\n普通段落\n\n---\n\n## 下一节'
     const { container, rerender } = render(
@@ -653,12 +788,9 @@ describe('WorkspaceLayout outline navigation', () => {
       />,
     )
 
-    expect(await screen.findByLabelText('可视 Markdown 编辑器')).toHaveAttribute(
-      'data-readonly',
-      'true',
-    )
+    expect(screen.getByLabelText('只读 Markdown 渲染器')).toBeInTheDocument()
     expect(screen.getByText('普通段落').tagName).toBe('P')
-    expect(container.querySelector('[data-testid="visual-markdown-editor"] hr')).not.toBeNull()
+    expect(container.querySelector('.readonly-markdown-renderer hr')).not.toBeNull()
     expect(screen.getByRole('heading', { name: '下一节' })).toBeInTheDocument()
 
     rerender(

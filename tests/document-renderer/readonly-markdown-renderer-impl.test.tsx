@@ -1,5 +1,11 @@
 import { render, screen } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+
+vi.mock('../../src/document-renderer/mermaid-diagram', () => ({
+  MermaidDiagram: ({ chart }: { chart: string }) => (
+    <figure aria-label="Mermaid 流程图">{chart}</figure>
+  ),
+}))
 
 import { ReadonlyMarkdownRendererImpl } from '../../src/document-renderer/readonly-markdown-renderer-impl'
 
@@ -45,6 +51,29 @@ describe('ReadonlyMarkdownRendererImpl', () => {
       'href',
       'https://example.com',
     )
+  })
+
+  it('renders mermaid code fences as diagrams while preserving ordinary code blocks', () => {
+    const { container } = render(
+      <ReadonlyMarkdownRendererImpl
+        value={[
+          '```mermaid',
+          'flowchart TD',
+          '  A --> B',
+          '```',
+          '',
+          '```ts',
+          'const answer = 42',
+          '```',
+        ].join('\n')}
+      />,
+    )
+
+    expect(screen.getByRole('figure', { name: 'Mermaid 流程图' })).toHaveTextContent(
+      'flowchart TD',
+    )
+    expect(container.querySelector('code.language-mermaid')).toBeNull()
+    expect(container.querySelector('code.language-ts')).toHaveTextContent('const answer = 42')
   })
 
   it('treats --- after a paragraph as a thematic break instead of a setext heading', () => {

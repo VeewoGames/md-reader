@@ -1448,7 +1448,7 @@ select {
   padding: 0.12rem 0.36rem;
   border-radius: 6px;
   background: var(--doc-inline-code-bg);
-  font-family: 'Cascadia Code', 'Consolas', monospace;
+  font-family: 'Cascadia Code', 'Consolas', 'Sarasa Mono SC', 'Microsoft YaHei UI', monospace;
   font-size: 0.92em;
 }
 
@@ -1463,6 +1463,148 @@ select {
 :where(.markdown-document, .visual-markdown-editor .editor) pre code {
   padding: 0;
   background: transparent;
+}
+
+.mermaid-diagram {
+  width: 100%;
+  margin: 1.5rem 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fffdf8;
+  box-shadow: 0 12px 32px rgba(82, 62, 42, 0.08);
+}
+
+.mermaid-diagram__toolbar {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-height: 42px;
+  padding: 0.4rem 0.55rem;
+  border-bottom: 1px solid rgba(127, 105, 82, 0.14);
+  background: rgba(255, 250, 243, 0.94);
+  backdrop-filter: blur(12px);
+}
+
+.mermaid-diagram__tool {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  color: #6f5f50;
+  background: transparent;
+  cursor: pointer;
+}
+
+.mermaid-diagram__tool:hover:not(:disabled) {
+  color: #2f5f9f;
+  background: rgba(70, 118, 184, 0.11);
+}
+
+.mermaid-diagram__tool:focus-visible {
+  outline: 2px solid rgba(31, 111, 235, 0.48);
+  outline-offset: 1px;
+}
+
+.mermaid-diagram__tool:disabled {
+  opacity: 0.34;
+  cursor: default;
+}
+
+.mermaid-diagram__zoom {
+  min-width: 46px;
+  color: #736456;
+  font: 600 12px/1 var(--sans);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.mermaid-diagram__toolbar-divider {
+  width: 1px;
+  height: 18px;
+  margin: 0 0.35rem;
+  background: rgba(127, 105, 82, 0.18);
+}
+
+.mermaid-diagram__viewport {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  overscroll-behavior-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.mermaid-diagram__canvas {
+  min-width: 50%;
+  margin-inline: auto;
+  transition: width 160ms ease;
+}
+
+.mermaid-diagram__surface {
+  width: 100%;
+}
+
+.mermaid-diagram__surface svg {
+  display: block;
+  width: 100%;
+  max-width: none;
+  height: auto;
+  margin: 0 auto;
+  padding: 1.5rem;
+}
+
+.mermaid-diagram:fullscreen,
+.mermaid-diagram[data-fullscreen='true'] {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  width: 100vw;
+  height: 100vh;
+  margin: 0;
+  flex-direction: column;
+  border: 0;
+  border-radius: 0;
+  background: #f8f3ea;
+}
+
+.mermaid-diagram:fullscreen .mermaid-diagram__toolbar,
+.mermaid-diagram[data-fullscreen='true'] .mermaid-diagram__toolbar {
+  flex: 0 0 auto;
+  padding-right: 1rem;
+}
+
+.mermaid-diagram:fullscreen .mermaid-diagram__viewport,
+.mermaid-diagram[data-fullscreen='true'] .mermaid-diagram__viewport {
+  flex: 1 1 auto;
+}
+
+.mermaid-diagram--loading {
+  min-height: 8rem;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+}
+
+.mermaid-diagram--error {
+  padding: 1rem;
+}
+
+.mermaid-diagram--error figcaption {
+  margin-bottom: 0.75rem;
+  color: #a23b32;
+  font-weight: 600;
+}
+
+.mermaid-diagram--error pre {
+  margin: 0;
 }
 
 :where(.markdown-document, .visual-markdown-editor .editor) table {
@@ -1879,6 +2021,14 @@ select {
   padding: 0;
   background: transparent;
   white-space: pre-wrap;
+}
+
+.visual-markdown-editor .code-block-strong-content {
+  font-weight: 700;
+}
+
+.visual-markdown-editor .code-block-strong-marker {
+  display: none;
 }
 
 .visual-markdown-editor .milkdown-list-item-block {

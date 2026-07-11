@@ -1810,8 +1810,28 @@ export function WorkspaceLayout({
   }, [documentHeadings, mode, activeDocumentContent])
 
   function getHeadingTargets(): HeadingTarget[] {
-    if (headingTargetsRef.current.length > 0) {
-      return headingTargetsRef.current
+    const cachedTargets = headingTargetsRef.current
+
+    if (cachedTargets.length > 0) {
+      const headingElements = Array.from(
+        documentRef.current?.querySelectorAll<HTMLElement>(HEADING_SELECTOR) ?? [],
+      )
+
+      const canReuseCachedTargets =
+        cachedTargets.length === headingElements.length &&
+        cachedTargets.every((target, index) => {
+          const element = headingElements[index]
+          return (
+            target.element.isConnected &&
+            element != null &&
+            element === target.element &&
+            target.id === (documentHeadings[index]?.id ?? element.dataset.headingId ?? element.id)
+          )
+        })
+
+      if (canReuseCachedTargets) {
+        return cachedTargets
+      }
     }
 
     const nextTargets = collectHeadingTargets(documentRef.current, documentHeadings)
@@ -1998,6 +2018,14 @@ export function WorkspaceLayout({
     }
 
     if (mode === 'regular') {
+      if (regularViewState !== 'editable') {
+        return (
+          <div className="workspace__document-workarea">
+            {renderDocumentPreview(activeDocumentContent ?? '')}
+          </div>
+        )
+      }
+
       return (
         <div className="workspace__document-workarea">
           <div
@@ -2008,7 +2036,6 @@ export function WorkspaceLayout({
           >
             <VisualMarkdownEditor
               value={editingDocumentContent ?? currentDocumentContent ?? ''}
-              readonly={regularViewState !== 'editable'}
               onChange={(content) => onEditingDocumentContentChange?.(content)}
               onCompositionStart={onEditingCompositionStart}
               onCompositionEnd={onEditingCompositionEnd}

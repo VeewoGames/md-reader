@@ -252,9 +252,8 @@ describe('App autosave transitions', () => {
     })
 
     await waitFor(() => {
-      expect(screen.getByRole('textbox', { name: '可视 Markdown 编辑器' })).toHaveAttribute(
-        'readonly',
-      )
+      expect(screen.getByLabelText('只读 Markdown 渲染器')).toBeInTheDocument()
+      expect(screen.queryByRole('textbox', { name: '可视 Markdown 编辑器' })).not.toBeInTheDocument()
       expect(screen.getByRole('button', { name: '解锁' })).toBeInTheDocument()
     })
   })
@@ -335,12 +334,8 @@ describe('App autosave transitions', () => {
       )
     })
 
-    expect(screen.getByRole('textbox', { name: '可视 Markdown 编辑器' })).toHaveValue(
-      '# 新标题\n\n新内容',
-    )
-    expect(screen.getByRole('textbox', { name: '可视 Markdown 编辑器' })).toHaveAttribute(
-      'readonly',
-    )
+    expect(screen.getByLabelText('只读 Markdown 渲染器')).toHaveTextContent('新标题')
+    expect(screen.queryByRole('textbox', { name: '可视 Markdown 编辑器' })).not.toBeInTheDocument()
     expect(screen.queryByText(/保存失败：/)).not.toBeInTheDocument()
   })
 
@@ -456,7 +451,8 @@ describe('App autosave transitions', () => {
       )
     })
 
-    expect(screen.getByRole('textbox', { name: '可视 Markdown 编辑器' })).toHaveAttribute('readonly')
+    expect(screen.getByLabelText('只读 Markdown 渲染器')).toBeInTheDocument()
+    expect(screen.queryByRole('textbox', { name: '可视 Markdown 编辑器' })).not.toBeInTheDocument()
   })
 
   it('prompts before closing a dirty tab and can save it before closing', async () => {

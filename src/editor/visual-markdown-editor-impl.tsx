@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Milkdown, MilkdownProvider, useEditor } from '@milkdown/react'
-import { Editor, defaultValueCtx, editorViewOptionsCtx, rootCtx } from '@milkdown/kit/core'
+import { Editor, defaultValueCtx, editorViewOptionsCtx, prosePluginsCtx, rootCtx } from '@milkdown/kit/core'
 import { clipboard } from '@milkdown/kit/plugin/clipboard'
 import { history } from '@milkdown/kit/plugin/history'
 import { listener, listenerCtx } from '@milkdown/kit/plugin/listener'
@@ -12,6 +12,7 @@ import '@milkdown/crepe/theme/classic.css'
 import { dispatchEditorStructureUpdated } from './editor-structure-events'
 import { syncStrongOnlyParagraphClasses } from '../markdown/strong-only-paragraph'
 import { installSlashMenuFeature } from './slash-menu-feature'
+import { codeBlockStrongDecorations } from './code-block-strong-decorations'
 
 interface VisualMarkdownEditorImplProps {
   value: string
@@ -64,6 +65,7 @@ function VisualMarkdownEditorContent({
         .config((ctx) => {
           ctx.set(rootCtx, root)
           ctx.set(defaultValueCtx, value)
+          ctx.update(prosePluginsCtx, (plugins) => [...plugins, codeBlockStrongDecorations])
           ctx.set(editorViewOptionsCtx, {
             attributes: {
               autocapitalize: 'off',

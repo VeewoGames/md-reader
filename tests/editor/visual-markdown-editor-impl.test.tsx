@@ -76,6 +76,7 @@ vi.mock('@milkdown/kit/core', () => {
   const rootCtx = Symbol('rootCtx')
   const defaultValueCtx = Symbol('defaultValueCtx')
   const editorViewOptionsCtx = Symbol('editorViewOptionsCtx')
+  const prosePluginsCtx = Symbol('prosePluginsCtx')
 
   return {
     Editor: {
@@ -84,6 +85,7 @@ vi.mock('@milkdown/kit/core', () => {
     rootCtx,
     defaultValueCtx,
     editorViewOptionsCtx,
+    prosePluginsCtx,
   }
 })
 
@@ -120,7 +122,7 @@ vi.mock('../../src/editor/slash-menu-feature', () => ({
   installSlashMenuFeature: slashMenuFeatureState.install,
 }))
 
-import { defaultValueCtx, Editor, editorViewOptionsCtx, rootCtx } from '@milkdown/kit/core'
+import { defaultValueCtx, Editor, editorViewOptionsCtx, prosePluginsCtx, rootCtx } from '@milkdown/kit/core'
 import { clipboard } from '@milkdown/kit/plugin/clipboard'
 import { history } from '@milkdown/kit/plugin/history'
 import { listener, listenerCtx } from '@milkdown/kit/plugin/listener'
@@ -162,12 +164,15 @@ describe('VisualMarkdownEditorImpl', () => {
 
     const configCalls = editor.config.mock.calls.map(([callback]) => callback as (ctx: any) => void)
     const baseSet = vi.fn()
+    const baseUpdate = vi.fn()
     configCalls[0]({
       set: baseSet,
+      update: baseUpdate,
     })
 
     expect(baseSet).toHaveBeenCalledWith(rootCtx, root)
     expect(baseSet).toHaveBeenCalledWith(defaultValueCtx, '# 标题\n\n正文')
+    expect(baseUpdate).toHaveBeenCalledWith(prosePluginsCtx, expect.any(Function))
     expect(baseSet).toHaveBeenCalledWith(
       editorViewOptionsCtx,
       expect.objectContaining({
@@ -198,6 +203,7 @@ describe('VisualMarkdownEditorImpl', () => {
     const baseSet = vi.fn()
     configCalls[0]({
       set: baseSet,
+      update: vi.fn(),
     })
 
     const optionsCall = baseSet.mock.calls.find(([slice]) => slice === editorViewOptionsCtx)
