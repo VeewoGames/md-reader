@@ -41,6 +41,40 @@ describe('WorkspaceFileTree hidden items actions', () => {
     expect(onToggleFavoriteDocument).toHaveBeenCalledWith('docs/api/reference.md')
   })
 
+  it('forwards a directory favorite without toggling directory expansion', async () => {
+    const user = userEvent.setup()
+    const onToggleFavoriteDocument = vi.fn()
+    const onToggleDirectory = vi.fn()
+
+    render(
+      <WorkspaceFileTree
+        nodes={
+          createVisibleFileTree({
+            sourceNodes: buildFileTree(['docs/guide.md']),
+            hiddenPaths: [],
+            showHiddenItems: false,
+          }).visibleNodes
+        }
+        level={0}
+        searchActive={false}
+        currentDocumentPath={null}
+        expandedDirectories={new Set()}
+        onToggleDirectory={onToggleDirectory}
+        onDocumentSelect={() => {}}
+        favoritePaths={[]}
+        showHiddenItems={false}
+        onToggleFavoriteDocument={onToggleFavoriteDocument}
+        onHidePath={() => {}}
+        onUnhidePath={() => {}}
+      />,
+    )
+
+    await user.click(screen.getByRole('button', { name: '收藏 docs' }))
+
+    expect(onToggleFavoriteDocument).toHaveBeenCalledWith('docs')
+    expect(onToggleDirectory).not.toHaveBeenCalled()
+  })
+
   it('calls onHidePath for a visible document action button', async () => {
     const user = userEvent.setup()
     const onHidePath = vi.fn()

@@ -979,6 +979,20 @@ export const WorkspaceSidebarPane = memo(function WorkspaceSidebarPane({
                     type="button"
                     role="menuitem"
                     onClick={() =>
+                      void handleContextMenuAction(() =>
+                        onToggleFavoriteDocument(contextMenuState.path),
+                      )
+                    }
+                  >
+                    <Star aria-hidden="true" />
+                    <span>
+                      {favoritePaths.includes(contextMenuState.path) ? '取消收藏文件夹' : '收藏文件夹'}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() =>
                       void handleContextMenuAction(() => onCreateDocument(contextMenuState.path))
                     }
                   >
@@ -1175,6 +1189,8 @@ export function WorkspaceFileTree({
               const isHidden = node.meta.isExplicitlyHidden || node.meta.isHiddenByAncestor
               const canUnhideDirectly = node.meta.isExplicitlyHidden && showHiddenItems
               const shouldShowActionButton = !node.meta.isHiddenByAncestor || node.meta.isExplicitlyHidden
+              const isFavorited = favoritePaths.includes(node.path)
+              const favoriteIndicatorTestId = `favorite-indicator-${node.path.replaceAll('/', '-')}`
 
               return (
                 <>
@@ -1214,6 +1230,19 @@ export function WorkspaceFileTree({
                       <span className="file-tree__directory-name">{node.name}</span>
                     </button>
                     <div className="file-tree__actions">
+                      <button
+                        type="button"
+                        className="file-tree__action file-tree__action--favorite"
+                        data-favorited={isFavorited ? 'true' : undefined}
+                        data-testid={favoriteIndicatorTestId}
+                        aria-label={isFavorited ? `取消收藏 ${node.name}` : `收藏 ${node.name}`}
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          onToggleFavoriteDocument(node.path)
+                        }}
+                      >
+                        <Star fill={isFavorited ? 'currentColor' : 'none'} />
+                      </button>
                       {showHiddenItems && node.meta.isHiddenByAncestor && !node.meta.isExplicitlyHidden ? (
                         <span className="file-tree__derived-hidden-indicator" aria-hidden="true" />
                       ) : null}

@@ -266,6 +266,22 @@ function joinNodePath(directoryPath: string, name: string): string {
   return directoryPath ? `${directoryPath}/${trimmedName}` : trimmedName
 }
 
+function pruneFavoritePaths(fileTree: FileTreeNode[], favoritePaths: string[]): string[] {
+  const availablePaths = new Set<string>()
+
+  function visit(nodes: FileTreeNode[]) {
+    for (const node of nodes) {
+      availablePaths.add(node.path)
+      if (node.kind === 'directory') {
+        visit(node.children)
+      }
+    }
+  }
+
+  visit(fileTree)
+  return Array.from(new Set(favoritePaths)).filter((path) => availablePaths.has(path))
+}
+
 function formatReorderFeedbackMessage(payload: {
   sourcePath: string
   targetPath: string | null
@@ -1123,9 +1139,19 @@ function App() {
         localState.regularViewState ?? inferRegularViewStateFromMode(localState.activeMode),
     }
 
+    const orderedFileTree = buildOrderedFileTree(
+      markdownPaths,
+      profile.navigation?.manualNodeOrderByParent ?? {},
+    )
+    const nextFavoritePaths = pruneFavoritePaths(
+      orderedFileTree,
+      profile.navigation?.favoritePaths ?? [],
+    )
+
     setActiveProjectId(project.id)
     setManualNodeOrderByParent(profile.navigation?.manualNodeOrderByParent ?? {})
-    setFileTree(buildOrderedFileTree(markdownPaths, profile.navigation?.manualNodeOrderByParent ?? {}))
+    setFavoritePaths(nextFavoritePaths)
+    setFileTree(orderedFileTree)
     sessionRef.current = restoredSession
     setSession(restoredSession)
     setStatusMessage(
@@ -1139,6 +1165,20 @@ function App() {
         regularViewState:
           localState.regularViewState ?? inferRegularViewStateFromMode(localState.activeMode),
       })
+    }
+
+    if (nextFavoritePaths.length !== (profile.navigation?.favoritePaths ?? []).length) {
+      await saveProfileToBridge(
+        project.id,
+        {
+          ...profile,
+          navigation: {
+            ...profile.navigation,
+            favoritePaths: nextFavoritePaths,
+          },
+        },
+        nextProfileId,
+      )
     }
 
     if (nextActiveDocumentPath) {
@@ -1376,7 +1416,15 @@ function App() {
 
   async function refreshProjectTree(projectId: string, profileId: string) {
     const markdownPaths = await workspaceProvider.getFileTreePaths(projectId, profileId)
-    setFileTree(buildOrderedFileTree(markdownPaths, manualNodeOrderByParent))
+    const nextFileTree = buildOrderedFileTree(markdownPaths, manualNodeOrderByParent)
+    const nextFavoritePaths = pruneFavoritePaths(nextFileTree, favoritePaths)
+    setFileTree(nextFileTree)
+
+    if (nextFavoritePaths.length !== favoritePaths.length) {
+      setFavoritePaths(nextFavoritePaths)
+      await saveActiveProfileNavigation({ favoritePaths: nextFavoritePaths })
+    }
+
     return markdownPaths
   }
 

@@ -198,6 +198,46 @@ describe('createVisibleFileTree', () => {
 })
 
 describe('filterFileTreeByFavorites', () => {
+  it('keeps a favorited directory with its complete visible subtree', () => {
+    const visibleTree = createVisibleFileTree({
+      sourceNodes: buildFileTree([
+        'docs/guide.md',
+        'docs/api/reference.md',
+        'notes/todo.md',
+      ]),
+      hiddenPaths: [],
+      showHiddenItems: false,
+    }).visibleNodes
+
+    expect(filterFileTreeByFavorites(visibleTree, ['docs'])).toEqual([
+      expect.objectContaining({
+        path: 'docs',
+        children: [
+          expect.objectContaining({ path: 'docs/guide.md' }),
+          expect.objectContaining({
+            path: 'docs/api',
+            children: [expect.objectContaining({ path: 'docs/api/reference.md' })],
+          }),
+        ],
+      }),
+    ])
+  })
+
+  it('does not restore hidden descendants of a favorited directory', () => {
+    const visibleTree = createVisibleFileTree({
+      sourceNodes: buildFileTree(['docs/public.md', 'docs/private/secret.md']),
+      hiddenPaths: ['docs/private'],
+      showHiddenItems: false,
+    }).visibleNodes
+
+    expect(filterFileTreeByFavorites(visibleTree, ['docs'])).toEqual([
+      expect.objectContaining({
+        path: 'docs',
+        children: [expect.objectContaining({ path: 'docs/public.md' })],
+      }),
+    ])
+  })
+
   it('keeps only favorite documents while preserving directory context', () => {
     const visibleTree = createVisibleFileTree({
       sourceNodes: buildFileTree([

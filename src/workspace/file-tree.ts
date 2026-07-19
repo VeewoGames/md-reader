@@ -98,12 +98,18 @@ export function filterFileTreeByFavorites(
   const favoritePathSet = new Set(favoritePaths)
 
   function visit(node: VisibleFileTreeNode): VisibleFileTreeNode | null {
+    const isFavorited = favoritePathSet.has(node.path)
+
     if (node.kind === 'file') {
-      return favoritePathSet.has(node.path) ? node : null
+      return isFavorited ? node : null
+    }
+
+    if (isFavorited) {
+      return node
     }
 
     const nextChildren = node.children
-      .map(visit)
+      .map((child) => visit(child))
       .filter((child): child is VisibleFileTreeNode => child != null)
 
     if (nextChildren.length === 0) {
@@ -117,7 +123,7 @@ export function filterFileTreeByFavorites(
   }
 
   return nodes
-    .map(visit)
+    .map((node) => visit(node))
     .filter((node): node is VisibleFileTreeNode => node != null)
 }
 
