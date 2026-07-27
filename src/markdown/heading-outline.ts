@@ -58,7 +58,7 @@ export function remarkHeadingIds() {
   }
 }
 
-function createHeadingSlug(text: string, slugCounts: Map<string, number>): string {
+export function createHeadingSlug(text: string, slugCounts = new Map<string, number>()): string {
   const normalized = text
     .normalize('NFKD')
     .replace(/[\u0300-\u036f]/g, '')

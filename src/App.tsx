@@ -77,6 +77,58 @@ const workspaceProvider = createWorkspaceProvider({
 const AUTOSAVE_DEBOUNCE_MS = 1200
 const MARKDOWN_TITLE_EXTENSION_PATTERN = /\.(md|mdx)$/i
 
+export type DeepLinkTarget = { projectId: string; profileId: string; documentPath: string; headingId: string | null }
+
+export function parseDeepLinkFromLocation(location: Pick<Location, 'search' | 'hash'>): DeepLinkTarget | null | 'invalid' {
+  const params = new URLSearchParams(location.search)
+  const keys = ['project', 'profile', 'path'] as const
+  const hasAny = keys.some((key) => params.has(key))
+  if (!hasAny) return null
+  if (keys.some((key) => params.getAll(key).length !== 1)) return 'invalid'
+  const projectId = params.get('project') ?? ''
+  const profileId = params.get('profile') ?? ''
+  const documentPath = params.get('path') ?? ''
+  if (!projectId || !profileId || !documentPath || documentPath.startsWith('/') || documentPath.includes('\\') || documentPath.split('/').includes('..')) {
+    return 'invalid'
+  }
+  const rawHash = location.hash.slice(1)
+  try {
+    return { projectId, profileId, documentPath, headingId: rawHash ? decodeURIComponent(rawHash) : null }
+  } catch {
+    return 'invalid'
+  }
+}
+
+function parseDeepLink(): DeepLinkTarget | null | 'invalid' {
+  return parseDeepLinkFromLocation(window.location)
+}
+
+export function createDocumentShareHref(projectId: string, profileId: string, documentPath: string, headingId: string | null) {
+  const url = new URL(window.location.href)
+  url.search = new URLSearchParams({ project: projectId, profile: profileId, path: documentPath }).toString()
+  url.hash = headingId ? encodeURIComponent(headingId) : ''
+  return url.toString()
+}
+
+export function createNavigationPersistenceCoordinator() {
+  let queue: Promise<void> = Promise.resolve()
+  return {
+    enqueue(
+      requestId: number,
+      getLatestRequestId: () => number,
+      persist: () => Promise<void>,
+    ): Promise<boolean> {
+      const result = queue.then(async () => {
+        if (getLatestRequestId() !== requestId) return false
+        await persist()
+        return getLatestRequestId() === requestId
+      })
+      queue = result.then(() => undefined, () => undefined)
+      return result
+    },
+  }
+}
+
 function createTabId(documentPath: string): string {
   return documentPath
 }
@@ -282,6 +334,18 @@ function pruneFavoritePaths(fileTree: FileTreeNode[], favoritePaths: string[]): 
   return Array.from(new Set(favoritePaths)).filter((path) => availablePaths.has(path))
 }
 
+function collectDocumentPaths(fileTree: FileTreeNode[]): string[] {
+  const paths: string[] = []
+  const visit = (nodes: FileTreeNode[]) => {
+    for (const node of nodes) {
+      if (node.kind === 'directory') visit(node.children)
+      else paths.push(node.path)
+    }
+  }
+  visit(fileTree)
+  return paths
+}
+
 function formatReorderFeedbackMessage(payload: {
   sourcePath: string
   targetPath: string | null
@@ -375,6 +439,7 @@ function App() {
   const [documentPageWidth, setDocumentPageWidth] = useState<PageWidthMode>('narrow')
   const [documentLineHeight, setDocumentLineHeight] = useState<DocumentLineHeight>(1.6)
   const [isWorkspaceBootstrapping, setIsWorkspaceBootstrapping] = useState(true)
+  const [pendingHeadingId, setPendingHeadingId] = useState<string | null>(null)
   const activeTab = getActiveTab(session)
   const mode = session.mode
   const regularViewState = session.regularViewState
@@ -416,6 +481,8 @@ function App() {
   const isComposingRef = useRef(false)
   const hasHydratedActiveProfileRef = useRef(false)
   const actionToastIdRef = useRef(0)
+  const navigationRequestRef = useRef(0)
+  const navigationPersistenceRef = useRef(createNavigationPersistenceCoordinator())
 
   function clearSaveFailureStatus(projectId: string | null) {
     setStatusMessage((current) => {
@@ -557,26 +624,45 @@ function App() {
 
   useEffect(() => {
     void (async () => {
+      const deepLink = parseDeepLink()
       const restoredActiveProfileId =
         (await storage.getItem<string>(STORAGE_KEYS.activeProfile())) ?? 'default'
+      const initialProfileId = deepLink && deepLink !== 'invalid' ? deepLink.profileId : restoredActiveProfileId
       hasHydratedActiveProfileRef.current = true
-      setActiveProfileId(restoredActiveProfileId)
+      setActiveProfileId(initialProfileId)
 
       const source = await workspaceProvider.getSource()
       setWorkspaceSource(source)
 
       if (source === 'local-service') {
         const health = await getLocalBridgeHealth()
-        const snapshot = await workspaceProvider.listProjects(restoredActiveProfileId)
+        const snapshot = await workspaceProvider.listProjects(initialProfileId)
         setProjects(snapshot.projects)
-        setActiveProjectId(snapshot.activeProjectId)
+        setActiveProjectId(deepLink && deepLink !== 'invalid' ? deepLink.projectId : snapshot.activeProjectId)
         setProfileIds(
-          restoredActiveProfileId === 'default'
+          initialProfileId === 'default'
             ? ['default']
-            : Array.from(new Set(['default', restoredActiveProfileId])),
+            : Array.from(new Set(['default', initialProfileId])),
         )
 
-        if (!snapshot.activeProjectId) {
+        if (deepLink === 'invalid') {
+          resetSessionState()
+          setFileTree([])
+          setStatusMessage('分享链接无效，未恢复工作区文档')
+          setIsWorkspaceBootstrapping(false)
+          return
+        }
+
+        if (deepLink && !snapshot.projects.some((project) => project.id === deepLink.projectId)) {
+          resetSessionState()
+          setFileTree([])
+          setStatusMessage('分享链接中的项目不存在，未恢复工作区文档')
+          setIsWorkspaceBootstrapping(false)
+          return
+        }
+
+        const initialProjectId = deepLink?.projectId ?? snapshot.activeProjectId
+        if (!initialProjectId) {
           setStatusMessage(
             health.projectsLoaded > 0
               ? '本地服务已连接，但当前 profile 还没有激活项目'
@@ -585,11 +671,13 @@ function App() {
           return
         }
 
-        await loadLocalServiceProject(
-          snapshot.activeProjectId,
+        const restored = await loadLocalServiceProject(
+          initialProjectId,
           snapshot.projects,
-          restoredActiveProfileId,
+          initialProfileId,
+          deepLink ?? undefined,
         )
+        if (!restored && deepLink) setStatusMessage('分享链接中的文档不存在，未恢复工作区文档')
         setIsWorkspaceBootstrapping(false)
         return
       }
@@ -1095,6 +1183,7 @@ function App() {
     projectId: string,
     nextProjects = projects,
     nextProfileId = activeProfileId,
+    deepLink?: DeepLinkTarget,
   ) {
     const project = nextProjects.find((entry) => entry.id === projectId)
 
@@ -1103,16 +1192,29 @@ function App() {
       setFileTree([])
       resetSessionState()
       setStatusMessage('当前 profile 还没有接入任何项目')
-      return
+      return false
     }
 
     const markdownPaths = await workspaceProvider.getFileTreePaths(project.id, nextProfileId)
+    if (deepLink && !markdownPaths.includes(deepLink.documentPath)) {
+      setActiveProjectId(project.id)
+      setFileTree(buildOrderedFileTree(markdownPaths, {}))
+      resetSessionState()
+      return false
+    }
     const profile = await getProfileFromBridge(project.id, nextProfileId, nextProfileId)
-    const restoredLocalState = normalizeLocalStateSnapshot(
-      (await localStateStore.getState(project.id)) as Awaited<
-        ReturnType<typeof localStateStore.getState>
-      > & { activeMode: 'regular' | 'split' | 'read' | 'edit'; lastKnownScrollTop?: number },
-    )
+    const restoredLocalState = deepLink
+      ? normalizeLocalStateSnapshot({
+          openDocumentPaths: [deepLink.documentPath],
+          activeDocumentPath: deepLink.documentPath,
+          activeMode: 'regular',
+          regularViewState: 'locked',
+        })
+      : normalizeLocalStateSnapshot(
+          (await localStateStore.getState(project.id)) as Awaited<
+            ReturnType<typeof localStateStore.getState>
+          > & { activeMode: 'regular' | 'split' | 'read' | 'edit'; lastKnownScrollTop?: number },
+        )
     const { state: localState, changed: localStateChanged } = reconcileLocalStateWithFileTree(
       restoredLocalState,
       markdownPaths,
@@ -1182,10 +1284,19 @@ function App() {
     }
 
     if (nextActiveDocumentPath) {
-      await loadDocumentContent(project, nextActiveDocumentPath, nextProfileId)
+      const loaded = await loadDocumentContent(project, nextActiveDocumentPath, nextProfileId)
+      if (!loaded) {
+        if (deepLink) resetSessionState()
+        return false
+      }
+      if (deepLink) {
+        setPendingHeadingId(deepLink.headingId)
+        window.history.replaceState(null, '', createDocumentShareHref(project.id, nextProfileId, nextActiveDocumentPath, deepLink.headingId))
+      }
     } else {
       resetSessionState()
     }
+    return true
   }
 
   async function restoreLocalServiceWorkspace(profileId: string) {
@@ -1703,13 +1814,103 @@ function App() {
 
   async function handleCopyDocumentLink(documentPath: string) {
     try {
-      await navigator.clipboard.writeText(documentPath)
-      publishActionFeedback(`已拷贝链接：${documentPath}`)
+      const projectId = activeProjectIdRef.current
+      if (!projectId) {
+        throw new Error('当前没有可分享的项目')
+      }
+      const href = createDocumentShareHref(projectId, activeProfileIdRef.current, documentPath, null)
+      await navigator.clipboard.writeText(href)
+      publishActionFeedback(`已拷贝链接：${href}`)
     } catch (error) {
       publishActionFeedback(
         error instanceof Error ? `拷贝链接失败：${error.message}` : '拷贝链接失败',
         'error',
       )
+    }
+  }
+
+  function getDocumentLinkHref(documentPath: string, headingId: string | null) {
+    const projectId = activeProjectIdRef.current
+    if (!projectId) return '#'
+    return createDocumentShareHref(projectId, activeProfileIdRef.current, documentPath, headingId)
+  }
+
+  function handleInvalidDocumentLink(href: string, reason: string) {
+    publishActionFeedback(`无法打开链接「${href}」：${reason}`, 'error')
+  }
+
+  function handleCurrentDocumentAnchorNavigate(headingId: string) {
+    setPendingHeadingId(headingId)
+  }
+
+  async function handleDocumentLinkNavigate(documentPath: string, headingId: string | null) {
+    const requestId = navigationRequestRef.current + 1
+    navigationRequestRef.current = requestId
+    const projectId = activeProjectIdRef.current
+    const profileId = activeProfileIdRef.current
+    const project = projects.find((entry) => entry.id === projectId)
+    const sourceDocumentPath = currentDocumentPathRef.current
+    if (!project || !projectId) {
+      publishActionFeedback('当前项目不可用，无法打开链接', 'error')
+      return
+    }
+
+    if (sourceDocumentPath && !(await flushDocumentDraftIfNeeded(sourceDocumentPath))) {
+      return
+    }
+
+    try {
+      const document = await getDocumentContentFromBridge(project.id, profileId, documentPath)
+      if (navigationRequestRef.current !== requestId) return
+
+      const currentSession = sessionRef.current
+      const existingTab = getTabByDocumentPath(currentSession, document.path)
+      const nextTab: WorkspaceTab = {
+        ...(existingTab ?? createWorkspaceTab(document.path)),
+        documentPath: document.path,
+        persistedContent: document.content,
+        draftContent: document.content,
+        mtimeMs: document.mtimeMs,
+        saveState: 'clean',
+        saveErrorMessage: null,
+      }
+      const nextSession: WorkspaceSession = {
+        ...currentSession,
+        tabs:
+          existingTab == null
+            ? [...currentSession.tabs, nextTab]
+            : currentSession.tabs.map((tab) => (tab.id === nextTab.id ? nextTab : tab)),
+        activeTabId: nextTab.id,
+      }
+      sessionRef.current = nextSession
+      setSession(nextSession)
+      setPendingHeadingId(headingId)
+
+      const persistNavigation = navigationPersistenceRef.current.enqueue(requestId, () => navigationRequestRef.current, async () => {
+        const localState = normalizeLocalStateSnapshot(
+          (await localStateStore.getState(project.id)) as Awaited<
+            ReturnType<typeof localStateStore.getState>
+          > & { activeMode: 'regular' | 'split' | 'read' | 'edit'; lastKnownScrollTop?: number },
+        )
+        if (navigationRequestRef.current !== requestId) return
+        await localStateStore.saveState(project.id, {
+          ...localState,
+          openDocumentPaths: Array.from(new Set([...localState.openDocumentPaths, document.path])),
+          activeDocumentPath: document.path,
+          activeMode: nextSession.mode,
+          regularViewState: nextSession.regularViewState,
+          readingProgressByDocument: {
+            ...localState.readingProgressByDocument,
+            [document.path]: localState.readingProgressByDocument[document.path] ?? 0,
+          },
+        })
+      })
+      if (!(await persistNavigation)) return
+      window.history.replaceState(null, '', getDocumentLinkHref(document.path, headingId))
+      setStatusMessage(`当前项目：${project.name}`)
+    } catch (error) {
+      if (navigationRequestRef.current !== requestId) return
+      publishActionFeedback(error instanceof Error ? `读取文档失败：${error.message}` : '读取文档失败', 'error')
     }
   }
 
@@ -2065,10 +2266,11 @@ function App() {
     try {
       const document = await getDocumentContentFromBridge(project.id, profileId, documentPath)
       applyLoadedDocument(document.path, document.content, document.mtimeMs, `当前项目：${project.name}`)
+      return true
     } catch (error) {
       if (isMissingDocumentLoadError(error)) {
         await purgeMissingDocumentPath(project, profileId, documentPath)
-        return
+        return false
       }
 
       setSession((current) => {
@@ -2091,6 +2293,7 @@ function App() {
             }
       })
       setStatusMessage(error instanceof Error ? `读取文档失败：${error.message}` : '读取文档失败')
+      return false
     } finally {
       setIsDocumentLoading(false)
     }
@@ -2464,6 +2667,17 @@ function App() {
         onEditingDocumentContentChange={setDraftDocumentContent}
         onEditingCompositionStart={handleEditingCompositionStart}
         onEditingCompositionEnd={handleEditingCompositionEnd}
+        documentLinkPaths={collectDocumentPaths(fileTree)}
+        documentLinkContentRoots={projects.find((project) => project.id === activeProjectId)?.contentRoots ?? ['.']}
+        getDocumentLinkHref={getDocumentLinkHref}
+        onDocumentLinkNavigate={handleDocumentLinkNavigate}
+        onCurrentDocumentAnchorNavigate={handleCurrentDocumentAnchorNavigate}
+        onInvalidDocumentLink={handleInvalidDocumentLink}
+        pendingHeadingId={pendingHeadingId}
+        onPendingHeadingHandled={(found) => {
+          if (!found && pendingHeadingId) publishActionFeedback(`未找到标题：${pendingHeadingId}`, 'error')
+          setPendingHeadingId(null)
+        }}
         onSidebarWidthChange={handleSidebarWidthChange}
         onSidebarWidthCommit={handleSidebarWidthCommit}
         onOutlineWidthChange={handleOutlineWidthChange}

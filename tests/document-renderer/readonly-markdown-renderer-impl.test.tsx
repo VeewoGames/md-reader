@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
 vi.mock('../../src/document-renderer/mermaid-diagram', () => ({
@@ -51,6 +51,82 @@ describe('ReadonlyMarkdownRendererImpl', () => {
       'href',
       'https://example.com',
     )
+  })
+
+  it('uses controlled callbacks for document, current-anchor and invalid links while preserving external links', () => {
+    const onDocumentLinkNavigate = vi.fn()
+    const onCurrentDocumentAnchorNavigate = vi.fn()
+    const onInvalidDocumentLink = vi.fn()
+
+    render(
+      <ReadonlyMarkdownRendererImpl
+        value={[
+          '[目标](guide.md#设计目标)',
+          '[当前](#当前标题)',
+          '[缺失](missing.md)',
+          '[外部](https://example.com)',
+        ].join('\n\n')}
+        currentDocumentPath="docs/current.md"
+        documentPaths={['docs/current.md', 'docs/guide.md']}
+        contentRoots={['docs']}
+        getDocumentLinkHref={(path, headingId) => `/?path=${path}#${headingId ?? ''}`}
+        onDocumentLinkNavigate={onDocumentLinkNavigate}
+        onCurrentDocumentAnchorNavigate={onCurrentDocumentAnchorNavigate}
+        onInvalidDocumentLink={onInvalidDocumentLink}
+      />,
+    )
+
+    const target = screen.getByRole('link', { name: '目标' })
+    expect(target).toHaveAttribute('href', '/?path=docs/guide.md#设计目标')
+    expect(fireEvent.click(target)).toBe(false)
+    expect(onDocumentLinkNavigate).toHaveBeenCalledWith('docs/guide.md', '设计目标')
+
+    const current = screen.getByRole('link', { name: '当前' })
+    expect(current).toHaveAttribute('href', '/?path=docs/current.md#当前标题')
+    expect(fireEvent.click(current)).toBe(false)
+    expect(onCurrentDocumentAnchorNavigate).toHaveBeenCalledWith('当前标题')
+
+    const missing = screen.getByRole('link', { name: '缺失' })
+    expect(missing).toHaveAttribute('href', '#')
+    expect(fireEvent.click(missing)).toBe(false)
+    expect(fireEvent(missing, new MouseEvent('auxclick', { bubbles: true, cancelable: true, button: 1 }))).toBe(
+      false,
+    )
+    expect(onInvalidDocumentLink).toHaveBeenCalledWith('missing.md', 'target-not-in-file-tree')
+
+    const external = screen.getByRole('link', { name: '外部' })
+    expect(external).toHaveAttribute('href', 'https://example.com')
+    expect(fireEvent.click(external)).toBe(true)
+  })
+
+  it('leaves modified legal document clicks to the browser default', () => {
+    const onDocumentLinkNavigate = vi.fn()
+    const onCurrentDocumentAnchorNavigate = vi.fn()
+
+    render(
+      <ReadonlyMarkdownRendererImpl
+        value={'[目标](guide.md)\n\n[当前](#标题)'}
+        currentDocumentPath="docs/current.md"
+        documentPaths={['docs/current.md', 'docs/guide.md']}
+        contentRoots={['docs']}
+        getDocumentLinkHref={(path, headingId) =>
+          `/?project=notes&path=${encodeURIComponent(path)}${headingId ? `#${headingId}` : ''}`
+        }
+        onDocumentLinkNavigate={onDocumentLinkNavigate}
+        onCurrentDocumentAnchorNavigate={onCurrentDocumentAnchorNavigate}
+      />,
+    )
+
+    const target = screen.getByRole('link', { name: '目标' })
+    expect(target).toHaveAttribute('href', '/?project=notes&path=docs%2Fguide.md')
+    expect(fireEvent.click(target, { ctrlKey: true })).toBe(true)
+    expect(fireEvent(target, new MouseEvent('auxclick', { bubbles: true, cancelable: true, button: 1 }))).toBe(true)
+    expect(onDocumentLinkNavigate).not.toHaveBeenCalled()
+
+    const current = screen.getByRole('link', { name: '当前' })
+    expect(current).toHaveAttribute('href', '/?project=notes&path=docs%2Fcurrent.md#标题')
+    expect(fireEvent.click(current, { ctrlKey: true })).toBe(true)
+    expect(onCurrentDocumentAnchorNavigate).not.toHaveBeenCalled()
   })
 
   it('renders mermaid code fences as diagrams while preserving ordinary code blocks', () => {

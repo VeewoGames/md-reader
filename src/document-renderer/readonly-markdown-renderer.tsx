@@ -1,9 +1,17 @@
 import { useEffect, useRef, useState, type ComponentType } from 'react'
 
+import type { DocumentLinkInvalidReason } from '../markdown/document-link'
 import { splitLeadingHtmlComments } from '../markdown/split-leading-html-comments'
 
-interface ReadonlyMarkdownRendererProps {
+export interface ReadonlyMarkdownRendererProps {
   value: string
+  currentDocumentPath?: string | null
+  documentPaths?: Iterable<string>
+  contentRoots?: Iterable<string>
+  getDocumentLinkHref?: (documentPath: string, headingId: string | null) => string
+  onDocumentLinkNavigate?: (documentPath: string, headingId: string | null) => void | Promise<void>
+  onCurrentDocumentAnchorNavigate?: (headingId: string) => void
+  onInvalidDocumentLink?: (href: string, reason: DocumentLinkInvalidReason) => void
 }
 
 type ReadonlyMarkdownRendererModule = {

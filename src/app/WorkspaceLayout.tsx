@@ -27,6 +27,7 @@ import { findActiveHeadingId, type HeadingTarget } from './outline-active-headin
 import { VisualMarkdownEditor } from '../editor/visual-markdown-editor'
 import { EDITOR_STRUCTURE_UPDATED_EVENT } from '../editor/editor-structure-events'
 import { ReadonlyMarkdownRenderer } from '../document-renderer/readonly-markdown-renderer'
+import type { DocumentLinkInvalidReason } from '../markdown/document-link'
 import {
   extractMarkdownHeadings,
   type MarkdownHeading,
@@ -191,6 +192,14 @@ interface WorkspaceLayoutProps {
   onEditingDocumentContentChange?: (content: string) => void
   onEditingCompositionStart?: () => void
   onEditingCompositionEnd?: () => void
+  documentLinkPaths?: Iterable<string>
+  documentLinkContentRoots?: Iterable<string>
+  getDocumentLinkHref?: (documentPath: string, headingId: string | null) => string
+  onDocumentLinkNavigate?: (documentPath: string, headingId: string | null) => void | Promise<void>
+  onCurrentDocumentAnchorNavigate?: (headingId: string) => void
+  onInvalidDocumentLink?: (href: string, reason: DocumentLinkInvalidReason) => void
+  pendingHeadingId?: string | null
+  onPendingHeadingHandled?: (found: boolean) => void
   onSidebarWidthChange: (width: number) => void
   onSidebarWidthCommit: (width: number) => void | Promise<void>
   onOutlineWidthChange: (width: number) => void
@@ -1479,6 +1488,14 @@ export function WorkspaceLayout({
   onEditingDocumentContentChange,
   onEditingCompositionStart,
   onEditingCompositionEnd,
+  documentLinkPaths = EMPTY_PATHS,
+  documentLinkContentRoots = ['.'],
+  getDocumentLinkHref,
+  onDocumentLinkNavigate,
+  onCurrentDocumentAnchorNavigate,
+  onInvalidDocumentLink,
+  pendingHeadingId = null,
+  onPendingHeadingHandled,
   onSidebarWidthChange,
   onSidebarWidthCommit,
   onOutlineWidthChange,
@@ -1946,6 +1963,36 @@ export function WorkspaceLayout({
     })
   }
 
+  useEffect(() => {
+    if (!pendingHeadingId) return
+    const root = documentRef.current
+    if (!root) return
+    let isHandled = false
+    const locateHeading = () => {
+      if (isHandled) return
+      const target = getHeadingTargets().find((entry) => entry.id === pendingHeadingId)
+      if (target) {
+        isHandled = true
+        handleHeadingSelect(pendingHeadingId)
+        onPendingHeadingHandled?.(true)
+        return
+      }
+      if (root.querySelector('[aria-label="只读 Markdown 渲染器"]')) {
+        isHandled = true
+        onPendingHeadingHandled?.(false)
+      }
+    }
+    const observer = new MutationObserver(locateHeading)
+    observer.observe(root, { childList: true, subtree: true })
+    const frameId = window.requestAnimationFrame(() => {
+      locateHeading()
+    })
+    return () => {
+      window.cancelAnimationFrame(frameId)
+      observer.disconnect()
+    }
+  }, [activeDocumentContent, documentHeadings, pendingHeadingId])
+
   function clampSidebarWidth(nextWidth: number) {
     return Math.max(minSidebarWidth, Math.min(maxSidebarWidth, Math.round(nextWidth)))
   }
@@ -2032,7 +2079,16 @@ export function WorkspaceLayout({
         }}
         className="markdown-document markdown-document--milkdown-probe"
       >
-        <ReadonlyMarkdownRenderer value={content} />
+        <ReadonlyMarkdownRenderer
+          value={content}
+          currentDocumentPath={currentDocumentPath}
+          documentPaths={documentLinkPaths}
+          contentRoots={documentLinkContentRoots}
+          getDocumentLinkHref={getDocumentLinkHref}
+          onDocumentLinkNavigate={onDocumentLinkNavigate}
+          onCurrentDocumentAnchorNavigate={onCurrentDocumentAnchorNavigate}
+          onInvalidDocumentLink={onInvalidDocumentLink}
+        />
       </article>
     )
   }

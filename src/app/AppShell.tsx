@@ -6,6 +6,7 @@ import type { VisibleFileTreeNode } from '../workspace/file-tree-types'
 import type { ProjectRegistryRecord } from '../workspace/registry'
 import type { TabSaveState } from '../workspace/workspace-session'
 import type { DocumentLineHeight, PageWidthMode } from '../workspace/profile-store'
+import type { DocumentLinkInvalidReason } from '../markdown/document-link'
 
 interface AppShellTab {
   id: string
@@ -84,6 +85,14 @@ interface AppShellProps {
   onEditingDocumentContentChange?: (content: string) => void
   onEditingCompositionStart?: () => void
   onEditingCompositionEnd?: () => void
+  documentLinkPaths?: Iterable<string>
+  documentLinkContentRoots?: Iterable<string>
+  getDocumentLinkHref?: (documentPath: string, headingId: string | null) => string
+  onDocumentLinkNavigate?: (documentPath: string, headingId: string | null) => void | Promise<void>
+  onCurrentDocumentAnchorNavigate?: (headingId: string) => void
+  onInvalidDocumentLink?: (href: string, reason: DocumentLinkInvalidReason) => void
+  pendingHeadingId?: string | null
+  onPendingHeadingHandled?: (found: boolean) => void
   onSidebarWidthChange: (width: number) => void
   onSidebarWidthCommit: (width: number) => void | Promise<void>
   onOutlineWidthChange: (width: number) => void
@@ -178,6 +187,14 @@ export function AppShell(props: AppShellProps) {
         onEditingDocumentContentChange={props.onEditingDocumentContentChange}
         onEditingCompositionStart={props.onEditingCompositionStart}
         onEditingCompositionEnd={props.onEditingCompositionEnd}
+        documentLinkPaths={props.documentLinkPaths}
+        documentLinkContentRoots={props.documentLinkContentRoots}
+        getDocumentLinkHref={props.getDocumentLinkHref}
+        onDocumentLinkNavigate={props.onDocumentLinkNavigate}
+        onCurrentDocumentAnchorNavigate={props.onCurrentDocumentAnchorNavigate}
+        onInvalidDocumentLink={props.onInvalidDocumentLink}
+        pendingHeadingId={props.pendingHeadingId}
+        onPendingHeadingHandled={props.onPendingHeadingHandled}
         onSidebarWidthChange={props.onSidebarWidthChange}
         onSidebarWidthCommit={props.onSidebarWidthCommit}
         onOutlineWidthChange={props.onOutlineWidthChange}
