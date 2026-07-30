@@ -36,18 +36,42 @@ vi.mock('../../src/editor/visual-markdown-editor', () => ({
 }))
 
 vi.mock('../../src/document-renderer/readonly-markdown-renderer', () => ({
-  ReadonlyMarkdownRenderer: ({ value }: { value: string }) => {
+  ReadonlyMarkdownRenderer: ({
+    value,
+    currentDocumentPath,
+    documentPaths,
+  }: {
+    value: string
+    currentDocumentPath?: string | null
+    documentPaths?: Iterable<string>
+  }) => {
     const lines = value.split(/\r?\n/)
+    const [isDelayedReady, setIsDelayedReady] = useState(!value.includes('[delayed-heading]'))
+
+    useEffect(() => {
+      if (!value.includes('[delayed-heading]')) return
+      const timer = window.setTimeout(() => setIsDelayedReady(true), 0)
+      return () => window.clearTimeout(timer)
+    }, [value])
 
     return (
-      <article aria-label="只读 Markdown 渲染器" className="readonly-markdown-renderer">
-        {renderMockMarkdown(lines, true)}
+      <article
+        aria-label="只读 Markdown 渲染器"
+        className="readonly-markdown-renderer"
+        data-current-document-path={currentDocumentPath ?? ''}
+        data-document-paths={Array.from(documentPaths ?? []).join(',')}
+      >
+        {isDelayedReady ? renderMockMarkdown(lines, true) : <div role="status">正在加载只读 Markdown…</div>}
       </article>
     )
   },
 }))
 
-import { WorkspaceLayout, WorkspaceSidebarPane } from '../../src/app/WorkspaceLayout'
+import {
+  getFileTreeEdgeScrollDelta,
+  WorkspaceLayout,
+  WorkspaceSidebarPane,
+} from '../../src/app/WorkspaceLayout'
 import { buildFileTree, createVisibleFileTree } from '../../src/workspace/file-tree'
 
 function createVisibleTree(paths: string[], hiddenPaths: string[] = [], showHiddenItems = false) {
@@ -84,6 +108,105 @@ function renderMockMarkdown(lines: string[], attachHeadingIds = false) {
     return <p key={`paragraph-${index}`}>{line}</p>
   })
 }
+
+describe('file tree edge auto-scroll calculation', () => {
+  const rect = { top: 100, bottom: 500 } as DOMRect
+
+  it('scrolls upward and downward only inside the edge zones', () => {
+    expect(getFileTreeEdgeScrollDelta(rect, 100)).toBeLessThan(0)
+    expect(getFileTreeEdgeScrollDelta(rect, 500)).toBeGreaterThan(0)
+    expect(getFileTreeEdgeScrollDelta(rect, 300)).toBe(0)
+  })
+
+  it('increases speed nearer the edge', () => {
+    expect(Math.abs(getFileTreeEdgeScrollDelta(rect, 101))).toBeGreaterThan(
+      Math.abs(getFileTreeEdgeScrollDelta(rect, 140)),
+    )
+  })
+})
+
+describe('WorkspaceSidebarPane edge auto-scroll', () => {
+  const noop = () => {}
+  const asyncTrue = async () => true
+
+  function renderSidebar() {
+    return render(
+      <WorkspaceSidebarPane
+        fileTree={createVisibleTree(['docs/guide.md', 'docs/reference.md'])}
+        availableDirectoryPaths={['docs']}
+        currentDocumentPath="docs/guide.md"
+        persistedExpandedDirectories={['docs']}
+        hasPersistedExpandedDirectories
+        hasProjects
+        favoritePaths={[]}
+        showFavoritesOnly={false}
+        showHiddenItems={false}
+        onDocumentSelect={noop}
+        onCreateDocument={noop}
+        onCreateDirectory={noop}
+        onCopyDocumentLink={noop}
+        onCopyDirectoryPath={noop}
+        onDuplicateDocument={asyncTrue}
+        onRenameDocument={asyncTrue}
+        onDeleteDocument={noop}
+        onMoveDocument={noop}
+        onReorderFileTreeNode={noop}
+        onToggleFavoriteDocument={noop}
+        onToggleShowFavoritesOnly={noop}
+        onHidePath={noop}
+        onUnhidePath={noop}
+      />,
+    )
+  }
+
+  it('scrolls, recomputes the target under the stationary pointer, and stops when dragging ends', async () => {
+    const frames: FrameRequestCallback[] = []
+    const cancelAnimationFrame = vi.fn()
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      frames.push(callback)
+      return frames.length
+    })
+    vi.stubGlobal('cancelAnimationFrame', cancelAnimationFrame)
+    const data = new Map<string, string>()
+    const dataTransfer = {
+      effectAllowed: 'none',
+      dropEffect: 'none',
+      types: [],
+      setData: (type: string, value: string) => data.set(type, value),
+      getData: (type: string) => data.get(type) ?? '',
+    }
+
+    renderSidebar()
+    const panel = document.querySelector('.panel__content--tree') as HTMLDivElement
+    const guideRow = screen.getByRole('button', { name: 'guide.md' }).closest('.file-tree__row') as HTMLDivElement
+    const referenceRow = screen.getByRole('button', { name: 'reference.md' }).closest('.file-tree__row') as HTMLDivElement
+    Object.defineProperty(panel, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({ top: 100, bottom: 500 }),
+    })
+    Object.defineProperty(panel, 'scrollTop', { configurable: true, writable: true, value: 40 })
+    Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: () => referenceRow })
+
+    fireEvent.dragStart(guideRow, { dataTransfer })
+    const edgeDragOver = createEvent.dragOver(panel)
+    Object.defineProperties(edgeDragOver, {
+      clientX: { value: 40 },
+      clientY: { value: 499 },
+      dataTransfer: { value: dataTransfer },
+    })
+    fireEvent(panel, edgeDragOver)
+    expect(frames).toHaveLength(1)
+
+    frames[0](0)
+    expect(panel.scrollTop).toBeGreaterThan(40)
+    await waitFor(() => {
+      expect(referenceRow).toHaveAttribute('data-reorder-target', 'after')
+    })
+
+    fireEvent.dragEnd(guideRow)
+    expect(cancelAnimationFrame).toHaveBeenCalled()
+  })
+})
 
 describe('WorkspaceLayout outline navigation', () => {
   afterEach(() => {
@@ -150,6 +273,71 @@ describe('WorkspaceLayout outline navigation', () => {
     await user.click(screen.getByRole('button', { name: /rerender/i }))
 
     expect(sidebarCommitCount).toBe(initialCommitCount)
+  })
+
+  it('passes document-link context to both locked and split previews', async () => {
+    const props = {
+      fileTree: [],
+      currentDocumentPath: 'docs/current.md',
+      currentDocumentContent: '[目标](guide.md)',
+      statusMessage: '当前项目：Notes',
+      sidebarWidth: 280,
+      outlineWidth: 320,
+      hasProjects: true,
+      onDocumentSelect: () => {},
+      onSidebarWidthChange: () => {},
+      onSidebarWidthCommit: () => {},
+      onOutlineWidthChange: () => {},
+      onOutlineWidthCommit: () => {},
+      documentLinkPaths: ['docs/current.md', 'docs/guide.md'],
+      documentLinkContentRoots: ['docs'],
+    }
+    const { rerender } = render(
+      <WorkspaceLayout mode="regular" regularViewState="locked" {...props} />,
+    )
+
+    const lockedPreview = await screen.findByLabelText('只读 Markdown 渲染器')
+    expect(lockedPreview).toHaveAttribute('data-current-document-path', 'docs/current.md')
+    expect(lockedPreview).toHaveAttribute('data-document-paths', 'docs/current.md,docs/guide.md')
+
+    rerender(
+      <WorkspaceLayout
+        mode="split"
+        regularViewState="locked"
+        editingDocumentContent={'[目标](guide.md)'}
+        {...props}
+      />,
+    )
+
+    const splitPreview = await screen.findByLabelText('只读 Markdown 渲染器')
+    expect(splitPreview).toHaveAttribute('data-current-document-path', 'docs/current.md')
+    expect(splitPreview).toHaveAttribute('data-document-paths', 'docs/current.md,docs/guide.md')
+  })
+
+  it('waits for a delayed readonly renderer before resolving a pending heading', async () => {
+    const onPendingHeadingHandled = vi.fn()
+    render(
+      <WorkspaceLayout
+        mode="regular"
+        regularViewState="locked"
+        fileTree={[]}
+        currentDocumentPath="docs/current.md"
+        currentDocumentContent={'# 延迟标题\n\n[delayed-heading]'}
+        statusMessage="当前项目：Notes"
+        sidebarWidth={280}
+        outlineWidth={320}
+        hasProjects
+        onDocumentSelect={() => {}}
+        onSidebarWidthChange={() => {}}
+        onSidebarWidthCommit={() => {}}
+        onOutlineWidthChange={() => {}}
+        onOutlineWidthCommit={() => {}}
+        pendingHeadingId="延迟标题"
+        onPendingHeadingHandled={onPendingHeadingHandled}
+      />,
+    )
+
+    await waitFor(() => expect(onPendingHeadingHandled).toHaveBeenCalledWith(true))
   })
 
   it('aligns outline navigation clicks to the document anchor in locked mode', async () => {
