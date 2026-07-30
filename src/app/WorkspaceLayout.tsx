@@ -55,6 +55,27 @@ function isOutlinePerfEnabled(): boolean {
 }
 
 const OUTLINE_PERF_ENABLED = isOutlinePerfEnabled()
+const FILE_TREE_EDGE_SCROLL_ZONE_PX = 48
+const FILE_TREE_EDGE_SCROLL_MAX_DELTA_PX = 18
+
+export function getFileTreeEdgeScrollDelta(
+  rect: Pick<DOMRect, 'top' | 'bottom'>,
+  clientY: number,
+  zonePx = FILE_TREE_EDGE_SCROLL_ZONE_PX,
+  maxDeltaPx = FILE_TREE_EDGE_SCROLL_MAX_DELTA_PX,
+) {
+  if (!Number.isFinite(clientY) || zonePx <= 0) {
+    return 0
+  }
+
+  if (clientY < rect.top + zonePx) {
+    return -Math.ceil(((rect.top + zonePx - clientY) / zonePx) * maxDeltaPx)
+  }
+  if (clientY > rect.bottom - zonePx) {
+    return Math.ceil(((clientY - (rect.bottom - zonePx)) / zonePx) * maxDeltaPx)
+  }
+  return 0
+}
 
 export function createDefaultExpandedDirectories(
   availableDirectoryPaths: string[],
@@ -392,6 +413,9 @@ export const WorkspaceSidebarPane = memo(function WorkspaceSidebarPane({
   const dragNodeKindRef = useRef<VisibleFileTreeNode['kind'] | null>(null)
   const fileTreePanelRef = useRef<HTMLDivElement | null>(null)
   const fileTreeHoverLayerRef = useRef<HTMLDivElement | null>(null)
+  const edgeScrollFrameRef = useRef<number | null>(null)
+  const edgeScrollDeltaRef = useRef(0)
+  const dragPointerRef = useRef<{ x: number; y: number } | null>(null)
   const deferredFileSearchQuery = useDeferredValue(fileSearchQuery)
   const isFilteringFiles = deferredFileSearchQuery.trim().length > 0
   const reorderEnabled = !isFilteringFiles && !showFavoritesOnly
@@ -401,6 +425,71 @@ export const WorkspaceSidebarPane = memo(function WorkspaceSidebarPane({
   ) as VisibleFileTreeNode[]
   const allDocumentPaths = collectDocumentPaths(fileTree)
   const hasFavorites = favoritePaths.length > 0
+
+  function stopEdgeAutoScroll() {
+    edgeScrollDeltaRef.current = 0
+    if (edgeScrollFrameRef.current != null) {
+      window.cancelAnimationFrame(edgeScrollFrameRef.current)
+      edgeScrollFrameRef.current = null
+    }
+  }
+
+  function runEdgeAutoScroll() {
+    const panel = fileTreePanelRef.current
+    const delta = edgeScrollDeltaRef.current
+    if (!panel || !delta || dragNodePathRef.current == null) {
+      stopEdgeAutoScroll()
+      return
+    }
+
+    const previousScrollTop = panel.scrollTop
+    panel.scrollTop += delta
+    if (panel.scrollTop === previousScrollTop) {
+      stopEdgeAutoScroll()
+      return
+    }
+    const pointer = dragPointerRef.current
+    const row = pointer
+      ? document.elementFromPoint(pointer.x, pointer.y)?.closest<HTMLElement>('.file-tree__row')
+      : null
+    if (row) {
+      const nodePath = row.dataset.treeNodePath
+      const nodeKind = row.dataset.treeNodeKind as VisibleFileTreeNode['kind'] | undefined
+      const parentPath = row.dataset.treeParentPath || null
+      if (nodePath && nodeKind) {
+        updateTreeNodeDropTarget(nodePath, nodeKind, parentPath, pointer!.y, row.getBoundingClientRect())
+      }
+    } else if (pointer) {
+      const tail = document.elementFromPoint(pointer.x, pointer.y)?.closest<HTMLUListElement>('.file-tree')
+      const parentPath = tail?.dataset.treeTailParentPath || null
+      if (tail && dragNodePathRef.current != null && dragNodeParentPathRef.current === parentPath) {
+        setDropDirectoryPath(null)
+        setReorderDropTarget({ targetPath: null, targetParentPath: parentPath, position: 'tail' })
+      }
+    }
+    edgeScrollFrameRef.current = window.requestAnimationFrame(runEdgeAutoScroll)
+  }
+
+  function handleFileTreeDragOverCapture(event: React.DragEvent<HTMLDivElement>) {
+    if (dragNodePathRef.current == null) {
+      return
+    }
+    const panel = fileTreePanelRef.current
+    if (!panel) {
+      return
+    }
+    dragPointerRef.current = { x: event.clientX, y: event.clientY }
+    edgeScrollDeltaRef.current = getFileTreeEdgeScrollDelta(panel.getBoundingClientRect(), event.clientY)
+    if (!edgeScrollDeltaRef.current) {
+      stopEdgeAutoScroll()
+      return
+    }
+    if (edgeScrollFrameRef.current == null) {
+      edgeScrollFrameRef.current = window.requestAnimationFrame(runEdgeAutoScroll)
+    }
+  }
+
+  useEffect(() => stopEdgeAutoScroll, [])
 
   useEffect(() => {
     const panel = fileTreePanelRef.current
@@ -629,6 +718,8 @@ export const WorkspaceSidebarPane = memo(function WorkspaceSidebarPane({
   }
 
   function handleTreeNodeDragEnd() {
+    stopEdgeAutoScroll()
+    dragPointerRef.current = null
     dragNodePathRef.current = null
     dragNodeParentPathRef.current = null
     dragNodeKindRef.current = null
@@ -692,44 +783,47 @@ export const WorkspaceSidebarPane = memo(function WorkspaceSidebarPane({
     parentPath: string | null,
     event: React.DragEvent<HTMLElement>,
   ) {
-    const draggedPath = event.dataTransfer.getData(TREE_NODE_DRAG_MIME) || dragNodePathRef.current
-    const draggedParentPath = dragNodeParentPathRef.current
-    const draggedKind = dragNodeKindRef.current
-
-    if (!draggedPath || draggedKind == null) {
+    const didUpdateTarget = updateTreeNodeDropTarget(
+      nodePath,
+      nodeKind,
+      parentPath,
+      event.clientY,
+      event.currentTarget.getBoundingClientRect(),
+    )
+    if (didUpdateTarget) {
+      event.preventDefault()
+      event.stopPropagation()
+      event.dataTransfer.dropEffect = 'move'
       return
     }
+  }
 
-    if (
-      reorderEnabled &&
-      draggedPath !== nodePath &&
-      draggedParentPath === parentPath
-    ) {
-      const position = resolveRowReorderPositionWithCenterBand(
-        event,
-        draggedKind === 'file' && nodeKind === 'directory' ? 0.12 : 0,
-      )
+  function updateTreeNodeDropTarget(
+    nodePath: string,
+    nodeKind: VisibleFileTreeNode['kind'],
+    parentPath: string | null,
+    clientY: number,
+    rect: Pick<DOMRect, 'top' | 'height'>,
+  ) {
+    const draggedPath = dragNodePathRef.current
+    const draggedParentPath = dragNodeParentPathRef.current
+    const draggedKind = dragNodeKindRef.current
+    if (!draggedPath || draggedKind == null) return false
+    if (reorderEnabled && draggedPath !== nodePath && draggedParentPath === parentPath) {
+      const band = draggedKind === 'file' && nodeKind === 'directory' ? 0.12 : 0
+      const position = resolveRowReorderPosition(rect, clientY, band)
       if (position) {
-        event.preventDefault()
-        event.stopPropagation()
-        event.dataTransfer.dropEffect = 'move'
         setDropDirectoryPath(null)
-        setReorderDropTarget({
-          targetPath: nodePath,
-          targetParentPath: parentPath,
-          position,
-        })
-        return
+        setReorderDropTarget({ targetPath: nodePath, targetParentPath: parentPath, position })
+        return true
       }
     }
-
-    if (
-      draggedKind === 'file' &&
-      nodeKind === 'directory' &&
-      draggedPath !== nodePath
-    ) {
-      handleDirectoryDragOver(nodePath, event)
+    if (draggedKind === 'file' && nodeKind === 'directory' && draggedPath !== nodePath) {
+      setReorderDropTarget(null)
+      setDropDirectoryPath(nodePath)
+      return true
     }
+    return false
   }
 
   async function handleTreeNodeDrop(
@@ -865,6 +959,7 @@ export const WorkspaceSidebarPane = memo(function WorkspaceSidebarPane({
         <div
           ref={fileTreePanelRef}
           className="panel__content panel__content--tree"
+          onDragOverCapture={handleFileTreeDragOverCapture}
         >
           <div ref={fileTreeHoverLayerRef} className="file-tree__hover-layer" aria-hidden="true" />
           {fileTree.length > 0 && visibleFileTree.length > 0 ? (
@@ -1050,12 +1145,19 @@ function resolveRowReorderPositionWithCenterBand(
   event: React.DragEvent<HTMLElement>,
   centerBandRatio: number,
 ) {
-  const rect = event.currentTarget.getBoundingClientRect()
-  if (!Number.isFinite(event.clientY) || event.clientY <= 0) {
+  return resolveRowReorderPosition(event.currentTarget.getBoundingClientRect(), event.clientY, centerBandRatio)
+}
+
+function resolveRowReorderPosition(
+  rect: Pick<DOMRect, 'top' | 'height'>,
+  clientY: number,
+  centerBandRatio: number,
+) {
+  if (!Number.isFinite(clientY) || clientY <= 0) {
     return null
   }
 
-  const ratio = (event.clientY - rect.top) / Math.max(rect.height, 1)
+  const ratio = (clientY - rect.top) / Math.max(rect.height, 1)
   const safeCenterBandRatio = Math.min(Math.max(centerBandRatio, 0), 0.48)
   const beforeThreshold = 0.5 - safeCenterBandRatio / 2
   const afterThreshold = 0.5 + safeCenterBandRatio / 2
@@ -1178,6 +1280,7 @@ export function WorkspaceFileTree({
     <ul
       className="file-tree"
       data-level={level}
+      data-tree-tail-parent-path={parentPath ?? ''}
       data-drag-active={dragNodePath != null ? 'true' : undefined}
       data-reorder-tail={
         reorderDropTarget?.position === 'tail' && reorderDropTarget.targetParentPath === parentPath
@@ -1205,6 +1308,9 @@ export function WorkspaceFileTree({
                 <>
                   <div
                     className="file-tree__row"
+                    data-tree-node-path={node.path}
+                    data-tree-node-kind={node.kind}
+                    data-tree-parent-path={parentPath ?? ''}
                     data-hidden={isHidden ? 'true' : undefined}
                     data-drop-target={dropDirectoryPath === node.path ? 'true' : undefined}
                     data-reorder-target={
@@ -1338,6 +1444,9 @@ export function WorkspaceFileTree({
             return (
               <div
                 className="file-tree__row"
+                data-tree-node-path={node.path}
+                data-tree-node-kind={node.kind}
+                data-tree-parent-path={parentPath ?? ''}
                 data-hidden={isHidden ? 'true' : undefined}
                 data-renaming={isNaming ? 'true' : undefined}
                 data-reorder-target={

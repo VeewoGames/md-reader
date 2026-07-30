@@ -14,6 +14,12 @@ dist-ssr
 .claw/
 *-patch.json
 
+# Local browser validation artifacts and recoverable interview scratch data
+.playwright-cli/
+browser-*.png
+output/playwright/
+docs/records/.grilling-temp/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
