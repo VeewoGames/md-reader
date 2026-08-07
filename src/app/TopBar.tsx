@@ -49,6 +49,8 @@ interface TopBarProps {
   regularViewState: RegularViewState
   statusMessage: string | null
   saveIndicator?: string | null
+  currentDocumentPath?: string | null
+  isDocumentLoading?: boolean
   onConnectProject: () => void
   onProjectChange: (projectId: string) => void
   onProfileChange: (profileId: string) => void
@@ -67,6 +69,7 @@ interface TopBarProps {
   onDocumentFontSizeChange?: (fontSize: number) => void
   onDocumentPageWidthChange?: (pageWidth: PageWidthMode) => void
   onDocumentLineHeightChange?: (lineHeight: DocumentLineHeight) => void
+  onRefreshDocument?: () => void | Promise<void>
 }
 
 const MODE_LABELS: Record<WorkspaceMode, string> = {
@@ -349,6 +352,8 @@ export function TopBar({
   regularViewState,
   statusMessage,
   saveIndicator,
+  currentDocumentPath = null,
+  isDocumentLoading = false,
   onConnectProject,
   onProjectChange,
   onProfileChange,
@@ -367,6 +372,7 @@ export function TopBar({
   onDocumentFontSizeChange,
   onDocumentPageWidthChange,
   onDocumentLineHeightChange,
+  onRefreshDocument,
 }: TopBarProps) {
   const [dragState, setDragState] = useState<'idle' | 'press_pending' | 'dragging' | 'settling'>('idle')
   const [dragTabId, setDragTabId] = useState<string | null>(null)
@@ -821,6 +827,19 @@ export function TopBar({
       ) : null}
 
       <div className="topbar__group topbar__group--end">
+        <button
+          type="button"
+          className="topbar__service-button"
+          aria-label="刷新当前文档"
+          title="刷新当前文档"
+          disabled={currentDocumentPath == null || isDocumentLoading}
+          aria-busy={isDocumentLoading}
+          onClick={() => void onRefreshDocument?.()}
+        >
+          <span className="topbar__icon" aria-hidden="true">
+            <RotateCw />
+          </span>
+        </button>
         <TopBarSelect
           ariaLabel="Profile 切换"
           className="topbar__field topbar__field--profile"

@@ -598,6 +598,16 @@ select {
   color: var(--text-strong);
 }
 
+.topbar__service-button[aria-busy='true'] .topbar__icon {
+  animation: topbar-refresh-spin 0.9s linear infinite;
+}
+
+@keyframes topbar-refresh-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .topbar__select-trigger,
 .topbar__action,
 .topbar__mode,

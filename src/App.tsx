@@ -366,6 +366,13 @@ type PendingWorkspaceAction =
   | { kind: 'restart-service' }
   | { kind: 'stop-service' }
 
+type PendingRefreshDocumentAction = {
+  tabId: string
+  projectId: string
+  profileId: string
+  documentPath: string
+}
+
 type PendingCloseTabAction = {
   kind: 'close-tab'
   tabId: string
@@ -424,6 +431,8 @@ function App() {
   const [workspaceSource, setWorkspaceSource] = useState<WorkspaceSource>('offline')
   const [isServiceActionPending, setIsServiceActionPending] = useState(false)
   const [pendingWorkspaceAction, setPendingWorkspaceAction] = useState<PendingWorkspaceAction | null>(null)
+  const [pendingRefreshDocumentAction, setPendingRefreshDocumentAction] =
+    useState<PendingRefreshDocumentAction | null>(null)
   const [pendingCloseTabAction, setPendingCloseTabAction] = useState<PendingCloseTabAction | null>(null)
   const [pendingDeleteDocumentAction, setPendingDeleteDocumentAction] =
     useState<PendingDeleteDocumentAction | null>(null)
@@ -2169,6 +2178,37 @@ function App() {
     })
   }
 
+  async function handleRefreshDocument() {
+    const projectId = activeProjectIdRef.current
+    const documentPath = currentDocumentPathRef.current
+    if (!projectId || !documentPath || isDocumentLoading) {
+      return
+    }
+
+    const project = projects.find((entry) => entry.id === projectId)
+    const tab = sessionRef.current.tabs.find((entry) => entry.documentPath === documentPath)
+    if (!project || !tab) {
+      return
+    }
+
+    const isDirty =
+      tab.persistedContent != null &&
+      tab.draftContent != null &&
+      tab.draftContent !== tab.persistedContent
+
+    if (isDirty) {
+      setPendingRefreshDocumentAction({
+        tabId: tab.id,
+        projectId,
+        profileId: activeProfileIdRef.current,
+        documentPath,
+      })
+      return
+    }
+
+    await loadDocumentContent(project, documentPath, activeProfileIdRef.current)
+  }
+
   async function handleTabSelect(tabId: string) {
     if (!activeProjectId) {
       return
@@ -2297,6 +2337,29 @@ function App() {
     } finally {
       setIsDocumentLoading(false)
     }
+  }
+
+  async function handleConfirmRefreshDocument() {
+    const action = pendingRefreshDocumentAction
+    if (!action) {
+      return
+    }
+
+    setPendingRefreshDocumentAction(null)
+    clearAutosaveTimer()
+    isComposingRef.current = false
+    discardTabDraft(action.tabId)
+
+    const project = projects.find((entry) => entry.id === action.projectId)
+    if (!project) {
+      return
+    }
+
+    await loadDocumentContent(project, action.documentPath, action.profileId)
+  }
+
+  function handleCancelRefreshDocument() {
+    setPendingRefreshDocumentAction(null)
   }
 
   async function handleToggleRegularLock() {
@@ -2638,6 +2701,7 @@ function App() {
         onConnectProject={handleConnectProject}
         onProjectChange={handleProjectChange}
         onProfileChange={handleProfileChange}
+        onRefreshDocument={handleRefreshDocument}
         onModeChange={handleModeChange}
         onToggleRegularLock={handleToggleRegularLock}
         onToggleFavoriteDocument={handleToggleFavoriteDocument}
@@ -2700,6 +2764,20 @@ function App() {
               <li key={tab.id}>{tab.documentPath.split('/').at(-1) ?? tab.documentPath}</li>
             ))}
           </ul>
+        </ActionDialog>
+      ) : null}
+      {pendingRefreshDocumentAction ? (
+        <ActionDialog
+          ariaLabel="刷新当前文档"
+          title="刷新当前文档"
+          description="当前文档存在未保存内容，重新读取会覆盖这部分编辑。"
+          tone="warning"
+          actions={[
+            { label: '取消', onClick: handleCancelRefreshDocument },
+            { label: '覆盖并刷新', onClick: handleConfirmRefreshDocument, tone: 'primary' },
+          ]}
+        >
+          <p className="app-dialog__path">{pendingRefreshDocumentAction.documentPath}</p>
         </ActionDialog>
       ) : null}
       {pendingCloseTabAction ? (

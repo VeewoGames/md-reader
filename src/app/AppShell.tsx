@@ -82,6 +82,7 @@ interface AppShellProps {
   onDocumentFontSizeChange?: (fontSize: number) => void
   onDocumentPageWidthChange?: (pageWidth: PageWidthMode) => void
   onDocumentLineHeightChange?: (lineHeight: DocumentLineHeight) => void
+  onRefreshDocument?: () => void | Promise<void>
   onEditingDocumentContentChange?: (content: string) => void
   onEditingCompositionStart?: () => void
   onEditingCompositionEnd?: () => void
@@ -130,6 +131,8 @@ export function AppShell(props: AppShellProps) {
         regularViewState={props.regularViewState}
         statusMessage={props.statusMessage}
         saveIndicator={props.saveIndicator}
+        currentDocumentPath={props.currentDocumentPath}
+        isDocumentLoading={props.isDocumentLoading}
         onConnectProject={props.onConnectProject}
         onProjectChange={props.onProjectChange}
         onProfileChange={props.onProfileChange}
@@ -148,6 +151,7 @@ export function AppShell(props: AppShellProps) {
         onDocumentFontSizeChange={props.onDocumentFontSizeChange}
         onDocumentPageWidthChange={props.onDocumentPageWidthChange}
         onDocumentLineHeightChange={props.onDocumentLineHeightChange}
+        onRefreshDocument={props.onRefreshDocument}
       />
       <WorkspaceLayout
         mode={props.mode}
