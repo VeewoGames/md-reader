@@ -21,6 +21,7 @@ export interface ResolveDocumentLinkOptions {
   currentDocumentPath: string
   href: string
   documentPaths: Iterable<string>
+  knownDocumentPaths?: ReadonlySet<string>
   contentRoots: Iterable<string>
 }
 
@@ -31,6 +32,7 @@ export function resolveDocumentLink({
   currentDocumentPath,
   href,
   documentPaths,
+  knownDocumentPaths,
   contentRoots,
 }: ResolveDocumentLinkOptions): DocumentLinkResolution {
   const rawHref = String(href ?? '').trim()
@@ -91,12 +93,8 @@ export function resolveDocumentLink({
     return invalid(rawHref, 'path-outside-content-roots')
   }
 
-  const knownDocumentPaths = new Set(
-    Array.from(documentPaths, normalizeKnownDocumentPath).filter(
-      (path): path is string => path != null,
-    ),
-  )
-  if (!knownDocumentPaths.has(targetPath.value)) {
+  const resolvedDocumentPaths = knownDocumentPaths ?? createKnownDocumentPathSet(documentPaths)
+  if (!resolvedDocumentPaths.has(targetPath.value)) {
     return invalid(rawHref, 'target-not-in-file-tree')
   }
 
@@ -105,6 +103,14 @@ export function resolveDocumentLink({
     documentPath: targetPath.value,
     headingId: fragment == null ? null : createHeadingSlug(fragment.value),
   }
+}
+
+export function createKnownDocumentPathSet(documentPaths: Iterable<string>): ReadonlySet<string> {
+  return new Set(
+    Array.from(documentPaths, normalizeKnownDocumentPath).filter(
+      (documentPath): documentPath is string => documentPath != null,
+    ),
+  )
 }
 
 function invalid(href: string, reason: DocumentLinkInvalidReason): DocumentLinkResolution {

@@ -1,12 +1,14 @@
-import { isValidElement, useEffect, useRef, type ComponentPropsWithoutRef, type MouseEvent, type ReactNode } from 'react'
+import { isValidElement, useCallback, useEffect, useMemo, useRef, type ComponentPropsWithoutRef, type MouseEvent, type ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 
-import { resolveDocumentLink, type DocumentLinkInvalidReason } from '../markdown/document-link'
+import { createKnownDocumentPathSet, resolveDocumentLink, type DocumentLinkInvalidReason } from '../markdown/document-link'
 import { remarkHeadingIds } from '../markdown/heading-outline'
 import { applyMarkdownTransforms } from '../markdown/markdown-transform'
 import { syncStrongOnlyParagraphClasses } from '../markdown/strong-only-paragraph'
 import { MermaidDiagram } from './mermaid-diagram'
+
+const REMARK_PLUGINS = [remarkGfm, remarkHeadingIds]
 
 interface ReadonlyMarkdownRendererImplProps {
   value: string
@@ -46,13 +48,14 @@ export function ReadonlyMarkdownRendererImpl({
   onCurrentDocumentAnchorNavigate,
   onInvalidDocumentLink,
 }: ReadonlyMarkdownRendererImplProps) {
-  const transformedValue = applyMarkdownTransforms(value)
+  const transformedValue = useMemo(() => applyMarkdownTransforms(value), [value])
+  const knownDocumentPaths = useMemo(() => createKnownDocumentPathSet(documentPaths), [documentPaths])
   const rootRef = useRef<HTMLDivElement | null>(null)
 
-  const renderLink = ({ href, children, ...anchorProps }: ComponentPropsWithoutRef<'a'>) => {
+  const renderLink = useCallback(({ href, children, ...anchorProps }: ComponentPropsWithoutRef<'a'>) => {
     const rawHref = href ?? ''
     const resolution = currentDocumentPath
-      ? resolveDocumentLink({ currentDocumentPath, href: rawHref, documentPaths, contentRoots })
+      ? resolveDocumentLink({ currentDocumentPath, href: rawHref, documentPaths, knownDocumentPaths, contentRoots })
       : { kind: 'external' as const, href: rawHref }
 
     if (resolution.kind === 'external') {
@@ -105,7 +108,17 @@ export function ReadonlyMarkdownRendererImpl({
         {children}
       </a>
     )
-  }
+  }, [
+    contentRoots,
+    currentDocumentPath,
+    documentPaths,
+    getDocumentLinkHref,
+    knownDocumentPaths,
+    onCurrentDocumentAnchorNavigate,
+    onDocumentLinkNavigate,
+    onInvalidDocumentLink,
+  ])
+  const components = useMemo(() => ({ pre: renderCodeBlock, a: renderLink }), [renderLink])
 
   useEffect(() => {
     syncStrongOnlyParagraphClasses(rootRef.current)
@@ -119,8 +132,8 @@ export function ReadonlyMarkdownRendererImpl({
       aria-label="只读 Markdown 渲染器"
     >
       <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkHeadingIds]}
-        components={{ pre: renderCodeBlock, a: renderLink }}
+        remarkPlugins={REMARK_PLUGINS}
+        components={components}
       >
         {transformedValue}
       </ReactMarkdown>

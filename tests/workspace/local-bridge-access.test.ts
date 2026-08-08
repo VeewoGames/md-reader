@@ -6,6 +6,7 @@ import {
   deleteDocumentNodeInBridge,
   duplicateDocumentNodeInBridge,
   getDocumentContentFromBridge,
+  getFileTreePathsFromBridge,
   getProfileFromBridge,
   getLocalBridgeHealth,
   listProjectsFromBridge,
@@ -20,6 +21,29 @@ import {
 } from '../../src/workspace/local-bridge-access'
 
 describe('local bridge access', () => {
+  it('notifies the caller when a tree is indexing before waiting for its completed snapshot', async () => {
+    const onIndexing = vi.fn()
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ status: 'indexing', refreshId: 'tree-7', requestedGeneration: 1 }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ status: 'ready', tree: ['docs/guide.md'], refreshId: 'tree-7' }),
+      })
+
+    const paths = await getFileTreePathsFromBridge('notes', 'Lans', { fetchImpl: fetchMock, onIndexing })
+
+    expect(onIndexing).toHaveBeenCalledWith({ status: 'indexing', refreshId: 'tree-7', requestedGeneration: 1 })
+    expect(paths).toEqual(['docs/guide.md'])
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      'http://127.0.0.1:8797/api/projects/notes/tree?profileId=Lans&mode=wait&refreshId=tree-7',
+    )
+  })
+
   it('reads local service health from the bridge endpoint', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,

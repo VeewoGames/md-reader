@@ -13,6 +13,7 @@ export function buildFileTree(paths: string[]): FileTreeNode[] {
     path: '',
     children: [],
   }
+  const nodesByPath = new Map<string, FileTreeNode>([[root.path, root]])
 
   for (const path of paths) {
     const segments = path.split('/').filter(Boolean)
@@ -21,7 +22,7 @@ export function buildFileTree(paths: string[]): FileTreeNode[] {
     for (const [index, segment] of segments.entries()) {
       const nextPath = segments.slice(0, index + 1).join('/')
       const isFile = index === segments.length - 1
-      const existing = current.children.find((child) => child.path === nextPath)
+      const existing = nodesByPath.get(nextPath)
 
       if (existing && existing.kind === 'directory') {
         current = existing
@@ -33,12 +34,14 @@ export function buildFileTree(paths: string[]): FileTreeNode[] {
       }
 
       if (isFile) {
-        current.children.push({
+        const file = {
           id: nextPath,
           kind: 'file',
           name: segment,
           path: nextPath,
-        })
+        } satisfies FileTreeNode
+        current.children.push(file)
+        nodesByPath.set(nextPath, file)
         continue
       }
 
@@ -51,6 +54,7 @@ export function buildFileTree(paths: string[]): FileTreeNode[] {
       }
 
       current.children.push(directory)
+      nodesByPath.set(nextPath, directory)
       current = directory
     }
   }

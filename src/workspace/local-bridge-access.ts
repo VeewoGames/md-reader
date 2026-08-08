@@ -30,6 +30,19 @@ export interface BridgeProjectProfilesPayload {
   profileIds: string[]
 }
 
+export type BridgeTreePayload =
+  | { status: 'ready'; tree: string[]; refreshId: string | null }
+  | { status: 'indexing' | 'refreshing'; refreshId: string; requestedGeneration?: number }
+
+export interface BridgeTreeRequestOptions extends FetchOptions {
+  mode?: 'prefer-cache' | 'wait' | 'force'
+  refreshId?: string
+}
+
+export interface FileTreeLoadOptions extends FetchOptions {
+  onIndexing?: (payload: Extract<BridgeTreePayload, { status: 'indexing' | 'refreshing' }>) => void | Promise<void>
+}
+
 interface BridgeErrorPayload {
   error?: string
   code?: string
@@ -178,15 +191,40 @@ export async function setActiveProjectWithBridge(
 export async function getFileTreePathsFromBridge(
   projectId: string,
   profileId: string,
-  options: FetchOptions = {},
+  options: FileTreeLoadOptions = {},
 ): Promise<string[]> {
+  const initial = await getFileTreeFromBridge(projectId, profileId, options)
+  if (initial.status === 'ready') return initial.tree
+  await options.onIndexing?.(initial)
+  const completed = await getFileTreeFromBridge(projectId, profileId, {
+    ...options,
+    mode: 'wait',
+    refreshId: initial.refreshId,
+  })
+  if (completed.status === 'ready') return completed.tree
+  throw new Error(`Tree refresh did not complete: ${completed.status}`)
+}
+
+export async function getFileTreeFromBridge(
+  projectId: string,
+  profileId: string,
+  options: BridgeTreeRequestOptions = {},
+): Promise<BridgeTreePayload> {
   const fetchImpl = getFetch(options.fetchImpl)
   const baseUrl = getBaseUrl(options.baseUrl)
+  const parameters = new URLSearchParams({
+    profileId,
+    mode: options.mode ?? 'prefer-cache',
+  })
+  if (options.refreshId) parameters.set('refreshId', options.refreshId)
   const response = await fetchImpl(
-    `${baseUrl}/api/projects/${encodeURIComponent(projectId)}/tree?profileId=${encodeURIComponent(profileId)}`,
+    `${baseUrl}/api/projects/${encodeURIComponent(projectId)}/tree?${parameters.toString()}`,
   )
-  const payload = await readJsonResponse<{ paths: string[] }>(response)
-  return payload.paths
+  const payload = await readJsonResponse<BridgeTreePayload & { paths?: string[] }>(response)
+  if (payload.status === 'ready') {
+    return { ...payload, tree: payload.tree ?? payload.paths ?? [] }
+  }
+  return payload
 }
 
 export async function getDocumentContentFromBridge(

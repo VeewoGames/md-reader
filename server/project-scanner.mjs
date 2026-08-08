@@ -1,7 +1,7 @@
 import path from "node:path";
 import { readdir } from "node:fs/promises";
 
-function isMarkdownFile(fileName) {
+export function isMarkdownFile(fileName) {
   return fileName.endsWith(".md") || fileName.endsWith(".mdx");
 }
 

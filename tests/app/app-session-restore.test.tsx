@@ -42,6 +42,7 @@ const bridgeMocks = vi.hoisted(() => ({
   getFileTreePathsFromBridge: vi.fn(),
   getDocumentContentFromBridge: vi.fn(),
   getProfileFromBridge: vi.fn(),
+  listProjectsFromBridge: vi.fn(),
   listProjectProfilesFromBridge: vi.fn(),
   saveProfileToBridge: vi.fn(),
   saveState: vi.fn(),
@@ -81,18 +82,7 @@ vi.mock('../../src/workspace/local-bridge-access', () => ({
     projectsLoaded: 1,
     port: 8797,
   })),
-  listProjectsFromBridge: vi.fn(async () => ({
-    activeProjectId: 'notes',
-    projects: [
-      {
-        id: 'notes',
-        name: 'Notes',
-        rootHandleKey: 'handle:notes',
-        contentRoots: ['docs'],
-        permissionState: 'granted',
-      },
-    ],
-  })),
+  listProjectsFromBridge: bridgeMocks.listProjectsFromBridge,
   listProjectProfilesFromBridge: bridgeMocks.listProjectProfilesFromBridge,
   getProfileFromBridge: bridgeMocks.getProfileFromBridge,
   saveProfileToBridge: bridgeMocks.saveProfileToBridge,
@@ -145,12 +135,25 @@ describe('App session restore', () => {
     bridgeMocks.getDocumentContentFromBridge.mockReset()
     bridgeMocks.getFileTreePathsFromBridge.mockReset()
     bridgeMocks.getProfileFromBridge.mockReset()
+    bridgeMocks.listProjectsFromBridge.mockReset()
     bridgeMocks.listProjectProfilesFromBridge.mockReset()
     bridgeMocks.saveProfileToBridge.mockReset()
     bridgeMocks.saveState.mockReset()
 
     bridgeMocks.listProjectProfilesFromBridge.mockResolvedValue({
       profileIds: ['default', 'Lans'],
+    })
+    bridgeMocks.listProjectsFromBridge.mockResolvedValue({
+      activeProjectId: 'notes',
+      projects: [
+        {
+          id: 'notes',
+          name: 'Notes',
+          rootHandleKey: 'handle:notes',
+          contentRoots: ['docs'],
+          permissionState: 'granted',
+        },
+      ],
     })
     bridgeMocks.getFileTreePathsFromBridge.mockResolvedValue(['docs/guide.md', 'docs/next.md'])
     bridgeMocks.getProfileFromBridge.mockResolvedValue({
@@ -220,6 +223,140 @@ describe('App session restore', () => {
         regularViewState: 'editable',
       }),
     )
+  })
+
+  it('commits the target project while its cold file tree continues indexing in the background', async () => {
+    const user = userEvent.setup()
+    let finishManualTree: ((paths: string[]) => void) | null = null
+    const manualTree = new Promise<string[]>((resolve) => {
+      finishManualTree = resolve
+    })
+
+    bridgeMocks.listProjectsFromBridge.mockResolvedValue({
+      activeProjectId: 'notes',
+      projects: [
+        {
+          id: 'notes',
+          name: 'Notes',
+          rootHandleKey: 'handle:notes',
+          contentRoots: ['docs'],
+          permissionState: 'granted',
+        },
+        {
+          id: 'manual',
+          name: 'Manual',
+          rootHandleKey: 'handle:manual',
+          contentRoots: ['docs'],
+          permissionState: 'granted',
+        },
+      ],
+    })
+    bridgeMocks.getFileTreePathsFromBridge.mockImplementation(
+      async (projectId: string, _profileId: string, options?: { onIndexing?: () => Promise<void> }) => {
+        if (projectId !== 'manual') return ['docs/guide.md', 'docs/next.md']
+        await options?.onIndexing?.()
+        return manualTree
+      },
+    )
+
+    render(<App />)
+
+    await waitFor(() => expect(screen.getByRole('combobox', { name: '项目切换' })).toHaveTextContent('Notes'))
+
+    await user.click(screen.getByRole('combobox', { name: '项目切换' }))
+    await user.click(screen.getByRole('option', { name: 'Manual' }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('combobox', { name: '项目切换' })).toHaveTextContent('Manual')
+      expect(screen.getAllByText('正在索引项目文件树…').length).toBeGreaterThan(0)
+    })
+
+    finishManualTree?.(['docs/manual.md'])
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'manual.md' })).toBeInTheDocument())
+  })
+
+  it('shows the target project identity before a warm tree request finishes', async () => {
+    const user = userEvent.setup()
+    let finishManualTree: ((paths: string[]) => void) | null = null
+    const manualTree = new Promise<string[]>((resolve) => {
+      finishManualTree = resolve
+    })
+
+    bridgeMocks.listProjectsFromBridge.mockResolvedValue({
+      activeProjectId: 'notes',
+      projects: [
+        {
+          id: 'notes',
+          name: 'Notes',
+          rootHandleKey: 'handle:notes',
+          contentRoots: ['docs'],
+          permissionState: 'granted',
+        },
+        {
+          id: 'manual',
+          name: 'Manual',
+          rootHandleKey: 'handle:manual',
+          contentRoots: ['docs'],
+          permissionState: 'granted',
+        },
+      ],
+    })
+    bridgeMocks.getFileTreePathsFromBridge.mockImplementation(async (projectId: string) =>
+      projectId === 'manual' ? manualTree : ['docs/guide.md', 'docs/next.md'],
+    )
+
+    render(<App />)
+
+    await waitFor(() => expect(screen.getByRole('combobox', { name: '项目切换' })).toHaveTextContent('Notes'))
+
+    await user.click(screen.getByRole('combobox', { name: '项目切换' }))
+    await user.click(screen.getByRole('option', { name: 'Manual' }))
+
+    expect(screen.getByRole('combobox', { name: '项目切换' })).toHaveTextContent('Manual')
+    expect(screen.getAllByText('正在切换项目…').length).toBeGreaterThan(0)
+
+    finishManualTree?.(['docs/manual.md'])
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'manual.md' })).toBeInTheDocument())
+  })
+
+  it('reuses loaded tab content when selecting documents from the file tree', async () => {
+    const user = userEvent.setup()
+
+    render(<App />)
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'guide.md' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'next.md' })).toBeInTheDocument()
+      expect(bridgeMocks.getDocumentContentFromBridge).toHaveBeenCalledWith(
+        'notes',
+        'default',
+        'docs/next.md',
+      )
+    })
+
+    await user.click(screen.getByRole('button', { name: 'guide.md' }))
+
+    await waitFor(() => {
+      expect(bridgeMocks.getDocumentContentFromBridge).toHaveBeenCalledWith(
+        'notes',
+        'default',
+        'docs/guide.md',
+      )
+    })
+
+    const readsAfterBothDocumentsLoaded = bridgeMocks.getDocumentContentFromBridge.mock.calls.length
+
+    await user.click(screen.getByRole('button', { name: 'next.md' }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('tab', { name: 'next' })).toHaveAttribute('aria-selected', 'true')
+    })
+    expect(bridgeMocks.getDocumentContentFromBridge).toHaveBeenCalledTimes(
+      readsAfterBothDocumentsLoaded,
+    )
+    expect(screen.queryByText('正在读取 Markdown 内容…')).not.toBeInTheDocument()
   })
 
   it('restores a previously collapsed root directory from the saved profile navigation state', async () => {

@@ -75,4 +75,20 @@ describe('resolveDocumentLink', () => {
   it('does not resolve an ambiguous root path by file name', () => {
     expect(resolve('/guide.md')).toEqual({ kind: 'invalid', href: '/guide.md', reason: 'path-outside-content-roots' })
   })
+
+  it('reuses a precomputed document-path index without iterating the full path collection', () => {
+    const unusedDocumentPaths = {
+      *[Symbol.iterator](): Iterator<string> {
+        throw new Error('document paths should not be rebuilt per link')
+      },
+    }
+
+    expect(resolveDocumentLink({
+      currentDocumentPath: 'docs/current.md',
+      href: './guide.md',
+      documentPaths: unusedDocumentPaths,
+      knownDocumentPaths: new Set(['docs/current.md', 'docs/guide.md']),
+      contentRoots: ['docs'],
+    })).toEqual({ kind: 'internal', documentPath: 'docs/guide.md', headingId: null })
+  })
 })

@@ -1,5 +1,5 @@
 import type { ProjectRegistryRecord } from './registry'
-import type { LocalBridgeHealth } from './local-bridge-access'
+import type { FileTreeLoadOptions, LocalBridgeHealth } from './local-bridge-access'
 
 export type WorkspaceSource = 'local-service' | 'offline'
 
@@ -13,7 +13,7 @@ interface BridgeProvider {
   listProjects: (profileId: string) => Promise<WorkspaceProjectsSnapshot>
   registerProject: (profileId: string, rootPath: string) => Promise<ProjectRegistryRecord>
   setActiveProject: (profileId: string, projectId: string) => Promise<void>
-  getFileTreePaths: (projectId: string, profileId: string) => Promise<string[]>
+  getFileTreePaths: (projectId: string, profileId: string, options?: FileTreeLoadOptions) => Promise<string[]>
 }
 
 interface WorkspaceProviderDeps {
@@ -53,8 +53,8 @@ export function createWorkspaceProvider({ bridge }: WorkspaceProviderDeps) {
     async setActiveProject(profileId: string, projectId: string): Promise<void> {
       await bridge.setActiveProject(profileId, projectId)
     },
-    async getFileTreePaths(projectId: string, profileId: string): Promise<string[]> {
-      return bridge.getFileTreePaths(projectId, profileId)
+    async getFileTreePaths(projectId: string, profileId: string, options?: FileTreeLoadOptions): Promise<string[]> {
+      return bridge.getFileTreePaths(projectId, profileId, options)
     },
   }
 }

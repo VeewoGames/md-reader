@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ComponentType } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType } from 'react'
 
 import type { DocumentLinkInvalidReason } from '../markdown/document-link'
 import { splitLeadingHtmlComments } from '../markdown/split-leading-html-comments'
@@ -38,7 +38,24 @@ export function ReadonlyMarkdownRenderer(props: ReadonlyMarkdownRendererProps) {
     useState<ComponentType<ReadonlyMarkdownRendererProps> | null>(() => cachedRendererComponent)
   const [loadError, setLoadError] = useState<Error | null>(null)
   const generationRef = useRef(0)
+  const latestPropsRef = useRef(props)
   const { editorValue } = splitLeadingHtmlComments(props.value)
+  const getDocumentLinkHref = useCallback((documentPath: string, headingId: string | null) => (
+    latestPropsRef.current.getDocumentLinkHref?.(documentPath, headingId) ?? '#'
+  ), [])
+  const onDocumentLinkNavigate = useCallback((documentPath: string, headingId: string | null) => (
+    latestPropsRef.current.onDocumentLinkNavigate?.(documentPath, headingId)
+  ), [])
+  const onCurrentDocumentAnchorNavigate = useCallback((headingId: string) => {
+    latestPropsRef.current.onCurrentDocumentAnchorNavigate?.(headingId)
+  }, [])
+  const onInvalidDocumentLink = useCallback((href: string, reason: DocumentLinkInvalidReason) => {
+    latestPropsRef.current.onInvalidDocumentLink?.(href, reason)
+  }, [])
+
+  useEffect(() => {
+    latestPropsRef.current = props
+  }, [props])
 
   useEffect(() => {
     if (cachedRendererComponent) {
@@ -72,9 +89,30 @@ export function ReadonlyMarkdownRenderer(props: ReadonlyMarkdownRendererProps) {
     }
   }, [])
 
-  if (LoadedRenderer) {
-    return <LoadedRenderer {...props} value={editorValue} />
-  }
+  const renderedDocument = useMemo(() => LoadedRenderer ? (
+    <LoadedRenderer
+      value={editorValue}
+      currentDocumentPath={props.currentDocumentPath}
+      documentPaths={props.documentPaths}
+      contentRoots={props.contentRoots}
+      getDocumentLinkHref={getDocumentLinkHref}
+      onDocumentLinkNavigate={onDocumentLinkNavigate}
+      onCurrentDocumentAnchorNavigate={onCurrentDocumentAnchorNavigate}
+      onInvalidDocumentLink={onInvalidDocumentLink}
+    />
+  ) : null, [
+    LoadedRenderer,
+    editorValue,
+    getDocumentLinkHref,
+    onCurrentDocumentAnchorNavigate,
+    onDocumentLinkNavigate,
+    onInvalidDocumentLink,
+    props.contentRoots,
+    props.currentDocumentPath,
+    props.documentPaths,
+  ])
+
+  if (renderedDocument) return renderedDocument
 
   if (loadError) {
     return (

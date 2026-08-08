@@ -20,6 +20,35 @@ afterEach(async () => {
 })
 
 describe('bridge server node operations', () => {
+  it('serves tree indexing, wait, and force through the bridge contract', async () => {
+    const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'md-reader-runtime-'))
+    const projectRoot = await mkdtemp(path.join(os.tmpdir(), 'md-reader-project-'))
+    tempDirs.push(runtimeHome, projectRoot)
+    await mkdir(path.join(projectRoot, 'docs'), { recursive: true })
+    await (await import('node:fs/promises')).writeFile(path.join(projectRoot, 'docs', 'guide.md'), '# Guide')
+    const project = await registerProject({ runtimeHome, profileId: 'default', rootPath: projectRoot })
+    const server = await startBridgeServer({ port: 0, runtimeHome, webMode: 'none' })
+    activeServers.push({ close: () => stopBridgeServer(server, { runtimeHome }) })
+    const { port } = server.address() as { port: number }
+    const base = `http://127.0.0.1:${port}/api/projects/${project.id}/tree?profileId=default`
+
+    const indexing = await fetch(`${base}&mode=prefer-cache`)
+    expect(indexing.status).toBe(202)
+    const indexingPayload = await indexing.json() as { refreshId: string; status: string }
+    expect(indexingPayload.status).toBe('indexing')
+
+    const ready = await fetch(`${base}&mode=wait&refreshId=${encodeURIComponent(indexingPayload.refreshId)}`)
+    expect(ready.status).toBe(200)
+    await expect(ready.json()).resolves.toMatchObject({ status: 'ready', tree: ['docs/guide.md'] })
+
+    const force = await fetch(`${base}&mode=force`)
+    expect(force.status).toBe(202)
+    const forcePayload = await force.json() as { refreshId: string; status: string }
+    expect(forcePayload.status).toBe('refreshing')
+    const forceReady = await fetch(`${base}&mode=wait&refreshId=${encodeURIComponent(forcePayload.refreshId)}`)
+    expect(forceReady.status).toBe(200)
+  })
+
   it('creates a document through the bridge node endpoint', async () => {
     const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'md-reader-runtime-'))
     const projectRoot = await mkdtemp(path.join(os.tmpdir(), 'md-reader-project-'))
@@ -48,6 +77,7 @@ describe('bridge server node operations', () => {
     )
 
     expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toMatchObject({ path: 'docs/guides/intro.md', treeStatus: 'dirty', tree: null })
     await expect(readFile(path.join(projectRoot, 'docs', 'guides', 'intro.md'), 'utf8')).resolves.toBe(
       '# Intro',
     )

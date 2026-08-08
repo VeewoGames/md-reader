@@ -33,6 +33,7 @@ interface AppShellProps {
   currentDocumentPath: string | null
   currentDocumentContent: string | null
   documentScrollTop?: number
+  documentScrollRestoreId?: number
   editingDocumentContent?: string | null
   saveIndicator?: string | null
   isDocumentLoading?: boolean
@@ -163,6 +164,7 @@ export function AppShell(props: AppShellProps) {
         currentDocumentPath={props.currentDocumentPath}
         currentDocumentContent={props.currentDocumentContent}
         documentScrollTop={props.documentScrollTop}
+        documentScrollRestoreId={props.documentScrollRestoreId}
         editingDocumentContent={props.editingDocumentContent}
         isDocumentLoading={props.isDocumentLoading}
         statusMessage={props.statusMessage}

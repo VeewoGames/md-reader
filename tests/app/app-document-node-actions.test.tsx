@@ -216,7 +216,7 @@ describe('App document node actions', () => {
       },
     ])
 
-    await user.click(screen.getByRole('menuitem', { name: '删除' }))
+    await user.click(screen.getByRole('menuitem', { name: '删除文档' }))
 
     const deleteDialog = screen.getByRole('dialog', { name: '删除文档' })
     expect(deleteDialog).toBeInTheDocument()

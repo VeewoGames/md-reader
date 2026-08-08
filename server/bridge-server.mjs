@@ -22,7 +22,7 @@ import {
 } from "./project-node-operations.mjs";
 import { readMarkdownDocument } from "./project-reader.mjs";
 import { DocumentConflictError, writeMarkdownDocument } from "./project-writer.mjs";
-import { scanMarkdownTree } from "./project-scanner.mjs";
+import { createProjectTreeCache } from "./project-tree-cache.mjs";
 import { createWebUiRuntime } from "./web-ui.mjs";
 
 const DEFAULT_PORT = 8797;
@@ -46,6 +46,7 @@ export async function startBridgeServer({
   webMode = "dev",
 } = {}) {
   await mkdir(runtimeHome, { recursive: true });
+  const projectTreeCache = createProjectTreeCache({ runtimeHome });
   const server = http.createServer();
   const webUiRuntime = await createWebUiRuntime({
     mode: webMode,
@@ -54,7 +55,7 @@ export async function startBridgeServer({
   });
   server.on("request", async (request, response) => {
     try {
-      await handleRequest(request, response, { runtimeHome, port, stateFile, server, webUiRuntime });
+      await handleRequest(request, response, { runtimeHome, port, stateFile, server, webUiRuntime, projectTreeCache });
     } catch (error) {
       sendJson(response, 500, {
         error: error instanceof Error ? error.message : String(error),
@@ -106,7 +107,7 @@ export async function stopBridgeServer(server, { stateFile, runtimeHome = defaul
   }
 }
 
-async function handleRequest(request, response, { runtimeHome, port, stateFile, server, webUiRuntime }) {
+async function handleRequest(request, response, { runtimeHome, port, stateFile, server, webUiRuntime, projectTreeCache }) {
   const url = new URL(request.url ?? "/", `http://127.0.0.1:${port}`);
 
   setCorsHeaders(response);
@@ -177,8 +178,23 @@ async function handleRequest(request, response, { runtimeHome, port, stateFile, 
       sendJson(response, 404, { error: `Unknown project: ${projectId}` });
       return;
     }
-    const paths = await scanMarkdownTree(project.rootPath, project.contentRoots);
-    sendJson(response, 200, { paths });
+    const result = await projectTreeCache.get(project, {
+      mode: url.searchParams.get("mode") ?? "prefer-cache",
+      refreshId: url.searchParams.get("refreshId") ?? undefined,
+    });
+    if (result.status === "ready") {
+      sendJson(response, 200, { status: "ready", tree: result.tree, paths: result.tree, refreshId: result.refreshId });
+      return;
+    }
+    if (result.status === "indexing" || result.status === "refreshing") {
+      sendJson(response, 202, result);
+      return;
+    }
+    if (result.status === "failed") {
+      sendJson(response, 503, { error: result.error.message, code: "TREE_REFRESH_FAILED", refreshId: result.refreshId });
+      return;
+    }
+    sendJson(response, 404, { error: "Unknown or expired refreshId" });
     return;
   }
 
@@ -340,8 +356,7 @@ async function handleRequest(request, response, { runtimeHome, port, stateFile, 
         sendJson(response, 404, { error: `Unknown document node action: ${action}` });
         return;
     }
-
-    sendJson(response, 200, payload);
+    sendJson(response, 200, await createNodeMutationResponse({ projectTreeCache, project, action, payload }));
     return;
   }
 
@@ -363,7 +378,7 @@ async function handleRequest(request, response, { runtimeHome, port, stateFile, 
 
     const body = await readJsonBody(request);
     const payload = await createDirectoryNode(project.rootPath, project.contentRoots, body.path ?? "");
-    sendJson(response, 200, payload);
+    sendJson(response, 200, await createNodeMutationResponse({ projectTreeCache, project, action, payload }));
     return;
   }
 
@@ -372,6 +387,20 @@ async function handleRequest(request, response, { runtimeHome, port, stateFile, 
   }
 
   sendJson(response, 404, { error: `Unknown route: ${request.method} ${url.pathname}` });
+}
+
+async function createNodeMutationResponse({ projectTreeCache, project, action, payload }) {
+  try {
+    const mutation = await projectTreeCache.markMutation(project);
+    return {
+      ...payload,
+      treeStatus: "dirty",
+      tree: null,
+      ...(action === "delete" ? { confirmedDelete: { ...mutation, path: payload.path, singleUse: true } } : {}),
+    };
+  } catch {
+    return { ...payload, treeStatus: "dirty", tree: null };
+  }
 }
 
 async function readJsonBody(request) {

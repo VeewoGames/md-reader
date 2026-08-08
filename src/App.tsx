@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { startTransition, useEffect, useMemo, useRef, useState } from 'react'
 
 import { ActionDialog } from './app/ActionDialog'
 import { AppShell } from './app/AppShell'
@@ -449,6 +449,7 @@ function App() {
   const [documentLineHeight, setDocumentLineHeight] = useState<DocumentLineHeight>(1.6)
   const [isWorkspaceBootstrapping, setIsWorkspaceBootstrapping] = useState(true)
   const [pendingHeadingId, setPendingHeadingId] = useState<string | null>(null)
+  const [documentScrollRestoreId, setDocumentScrollRestoreId] = useState(0)
   const activeTab = getActiveTab(session)
   const mode = session.mode
   const regularViewState = session.regularViewState
@@ -473,6 +474,7 @@ function App() {
         : visibleAfterHidden,
     [favoritePaths, showFavoritesOnly, visibleAfterHidden],
   )
+  const documentLinkPaths = useMemo(() => collectDocumentPaths(fileTree), [fileTree])
   const autosaveTimerRef = useRef<number | null>(null)
   const actionToastTimerRef = useRef<number | null>(null)
   const flushPromiseRef = useRef<Promise<boolean> | null>(null)
@@ -494,6 +496,8 @@ function App() {
   const navigationPersistenceRef = useRef(createNavigationPersistenceCoordinator())
   const scrollPositionTimerRef = useRef<number | null>(null)
   const latestScrollPositionsRef = useRef(new Map<string, number>())
+  const workspaceLoadRevisionRef = useRef(0)
+  const projectSwitchCommitRef = useRef(Promise.resolve())
 
   function clearScrollPositionTimer() {
     if (scrollPositionTimerRef.current != null) {
@@ -518,13 +522,13 @@ function App() {
     } as WorkspaceLocalState)
   }
 
-  function flushDocumentScrollPosition(documentPath?: string) {
+  async function flushDocumentScrollPosition(documentPath?: string): Promise<void> {
     clearScrollPositionTimer()
     const projectId = activeProjectIdRef.current
     const targetPath = documentPath ?? currentDocumentPathRef.current
     const scrollTop = targetPath ? latestScrollPositionsRef.current.get(targetPath) : null
     if (!projectId || !targetPath || scrollTop == null) return
-    void persistDocumentScrollPosition(projectId, targetPath, scrollTop)
+    await persistDocumentScrollPosition(projectId, targetPath, scrollTop)
   }
 
   function handleDocumentScrollTopChange(documentPath: string, scrollTop: number) {
@@ -538,7 +542,7 @@ function App() {
     })
     clearScrollPositionTimer()
     scrollPositionTimerRef.current = window.setTimeout(
-      () => flushDocumentScrollPosition(documentPath),
+      () => void flushDocumentScrollPosition(documentPath),
       250,
     )
   }
@@ -1358,6 +1362,121 @@ function App() {
     return true
   }
 
+  async function prepareLocalServiceWorkspace(
+    projectId: string,
+    profileId: string,
+    options?: Parameters<typeof workspaceProvider.getFileTreePaths>[2],
+  ) {
+    const project = projects.find((entry) => entry.id === projectId)
+    if (!project) return null
+
+    const [markdownPaths, profile, restoredState] = await Promise.all([
+      workspaceProvider.getFileTreePaths(project.id, profileId, options),
+      getProfileFromBridge(project.id, profileId, profileId),
+      localStateStore.getState(project.id),
+    ])
+    const localState = normalizeLocalStateSnapshot(restoredState as Awaited<
+      ReturnType<typeof localStateStore.getState>
+    > & { activeMode: 'regular' | 'split' | 'read' | 'edit'; lastKnownScrollTop?: number })
+    const reconciled = reconcileLocalStateWithFileTree(localState, markdownPaths).state
+    const activeDocumentPath = reconciled.activeDocumentPath && reconciled.openDocumentPaths.includes(reconciled.activeDocumentPath)
+      ? reconciled.activeDocumentPath
+      : reconciled.openDocumentPaths[0] ?? null
+    const session: WorkspaceSession = {
+      tabs: reconciled.openDocumentPaths.map((documentPath) => createWorkspaceTab(
+        documentPath,
+        reconciled.tabStateByDocument[documentPath]?.lastKnownScrollTop ?? 0,
+      )),
+      activeTabId: activeDocumentPath ? createTabId(activeDocumentPath) : null,
+      mode: normalizeWorkspaceMode(reconciled.activeMode),
+      regularViewState: reconciled.regularViewState ?? inferRegularViewStateFromMode(reconciled.activeMode),
+    }
+    const orderedFileTree = buildOrderedFileTree(markdownPaths, profile.navigation?.manualNodeOrderByParent ?? {})
+    const favoritePaths = pruneFavoritePaths(orderedFileTree, profile.navigation?.favoritePaths ?? [])
+    return { project, markdownPaths, profile, session, orderedFileTree, favoritePaths, activeDocumentPath }
+  }
+
+  async function switchLocalServiceProject(projectId: string) {
+    const requestedProject = projects.find((entry) => entry.id === projectId)
+    if (!requestedProject) return false
+
+    const revision = workspaceLoadRevisionRef.current + 1
+    workspaceLoadRevisionRef.current = revision
+    const previousActiveProjectId = activeProjectIdRef.current
+    performance.mark('project-switch-requested')
+    setActiveProjectId(projectId)
+    setStatusMessage('正在切换项目…')
+    window.requestAnimationFrame(() => {
+      if (revision === workspaceLoadRevisionRef.current) {
+        performance.mark('project-switch-identity-visible')
+      }
+    })
+
+    let prepared
+    try {
+      prepared = await prepareLocalServiceWorkspace(projectId, activeProfileIdRef.current, {
+        onIndexing: async () => {
+          if (revision !== workspaceLoadRevisionRef.current) return
+          const indexingCommit = projectSwitchCommitRef.current.then(async () => {
+            if (revision !== workspaceLoadRevisionRef.current) return
+            await workspaceProvider.setActiveProject(activeProfileIdRef.current, projectId)
+            if (revision !== workspaceLoadRevisionRef.current) return
+            setActiveProjectId(projectId)
+            setFileTree([])
+            setManualNodeOrderByParent({})
+            setFavoritePaths([])
+            resetSessionState()
+            setStatusMessage('正在索引项目文件树…')
+          })
+          projectSwitchCommitRef.current = indexingCommit.then(() => undefined, () => undefined)
+          await indexingCommit
+        },
+      })
+    } catch (error) {
+      if (revision === workspaceLoadRevisionRef.current) {
+        setActiveProjectId(previousActiveProjectId)
+        setStatusMessage(error instanceof Error ? `项目切换失败：${error.message}` : '项目切换失败')
+      }
+      return false
+    }
+    if (!prepared || revision !== workspaceLoadRevisionRef.current) return false
+
+    const commit = projectSwitchCommitRef.current.then(async () => {
+      if (revision !== workspaceLoadRevisionRef.current) return false
+      await workspaceProvider.setActiveProject(activeProfileIdRef.current, prepared.project.id)
+      setActiveProjectId(prepared.project.id)
+      setStatusMessage(`当前项目：${prepared.project.name}`)
+      window.requestAnimationFrame(() => performance.mark('project-tree-interactive'))
+      startTransition(() => {
+        setManualNodeOrderByParent(prepared.profile.navigation?.manualNodeOrderByParent ?? {})
+        setFavoritePaths(prepared.favoritePaths)
+        setFileTree(prepared.orderedFileTree)
+        sessionRef.current = prepared.session
+        setSession(prepared.session)
+      })
+      return true
+    })
+    projectSwitchCommitRef.current = commit.then(() => undefined, () => undefined)
+    try {
+      const didSwitch = await commit
+      if (didSwitch && prepared.activeDocumentPath) {
+        void loadDocumentContent(
+          prepared.project,
+          prepared.activeDocumentPath,
+          activeProfileIdRef.current,
+          () => revision === workspaceLoadRevisionRef.current,
+        )
+      }
+      return didSwitch
+    } catch (error) {
+      if (revision === workspaceLoadRevisionRef.current) {
+        setActiveProjectId(previousActiveProjectId)
+        setStatusMessage(error instanceof Error ? `项目切换失败：${error.message}` : '项目切换失败')
+      }
+      return false
+    }
+  }
+
   async function restoreLocalServiceWorkspace(profileId: string) {
     const health = await getLocalBridgeHealth()
     const snapshot = await workspaceProvider.listProjects(profileId)
@@ -1450,8 +1569,7 @@ function App() {
 
   async function continueWorkspaceAction(action: PendingWorkspaceAction) {
     if (action.kind === 'switch-project') {
-      await workspaceProvider.setActiveProject(activeProfileIdRef.current, action.projectId)
-      await loadLocalServiceProject(action.projectId)
+      await switchLocalServiceProject(action.projectId)
       return
     }
 
@@ -2193,13 +2311,18 @@ function App() {
       return
     }
 
-    flushDocumentScrollPosition()
+    await flushDocumentScrollPosition()
 
+    const existingTab = getTabByDocumentPath(session, path)
     const project = projects.find((entry) => entry.id === activeProjectId)
     if (project) {
       ensureTabExists(path)
-      await loadDocumentContent(project, path, activeProfileId)
+      if (existingTab?.persistedContent == null) {
+        await loadDocumentContent(project, path, activeProfileId)
+      }
     }
+
+    setDocumentScrollRestoreId((current) => current + 1)
 
     setSession((current) => ({
       ...current,
@@ -2272,7 +2395,7 @@ function App() {
       return
     }
 
-    flushDocumentScrollPosition()
+    await flushDocumentScrollPosition()
 
     setSession((current) => ({
       ...current,
@@ -2283,6 +2406,8 @@ function App() {
     if (project && nextTab.persistedContent == null) {
       await loadDocumentContent(project, nextTab.documentPath, activeProfileId)
     }
+
+    setDocumentScrollRestoreId((current) => current + 1)
 
     const localState = normalizeLocalStateSnapshot(
       (await localStateStore.getState(activeProjectId)) as Awaited<
@@ -2354,14 +2479,17 @@ function App() {
     project: ProjectRegistryRecord,
     documentPath: string,
     profileId: string,
+    shouldApply: () => boolean = () => true,
   ) {
     setIsDocumentLoading(true)
 
     try {
       const document = await getDocumentContentFromBridge(project.id, profileId, documentPath)
+      if (!shouldApply()) return false
       applyLoadedDocument(document.path, document.content, document.mtimeMs, `当前项目：${project.name}`)
       return true
     } catch (error) {
+      if (!shouldApply()) return false
       if (isMissingDocumentLoadError(error)) {
         await purgeMissingDocumentPath(project, profileId, documentPath)
         return false
@@ -2389,7 +2517,9 @@ function App() {
       setStatusMessage(error instanceof Error ? `读取文档失败：${error.message}` : '读取文档失败')
       return false
     } finally {
-      setIsDocumentLoading(false)
+      if (shouldApply()) {
+        setIsDocumentLoading(false)
+      }
     }
   }
 
@@ -2739,7 +2869,12 @@ function App() {
         showHiddenItems={showHiddenItems}
         currentDocumentPath={currentDocumentPath}
         currentDocumentContent={currentDocumentContent}
-        documentScrollTop={activeTab?.lastKnownScrollTop ?? 0}
+        documentScrollTop={
+          (currentDocumentPath
+            ? latestScrollPositionsRef.current.get(currentDocumentPath)
+            : undefined) ?? activeTab?.lastKnownScrollTop ?? 0
+        }
+        documentScrollRestoreId={documentScrollRestoreId}
         editingDocumentContent={editingDocumentContent}
         saveIndicator={getSaveIndicator(activeTab)}
         isDocumentLoading={isDocumentLoading}
@@ -2787,7 +2922,7 @@ function App() {
         onEditingDocumentContentChange={setDraftDocumentContent}
         onEditingCompositionStart={handleEditingCompositionStart}
         onEditingCompositionEnd={handleEditingCompositionEnd}
-        documentLinkPaths={collectDocumentPaths(fileTree)}
+        documentLinkPaths={documentLinkPaths}
         documentLinkContentRoots={projects.find((project) => project.id === activeProjectId)?.contentRoots ?? ['.']}
         getDocumentLinkHref={getDocumentLinkHref}
         onDocumentLinkNavigate={handleDocumentLinkNavigate}

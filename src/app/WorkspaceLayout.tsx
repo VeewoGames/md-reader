@@ -183,6 +183,7 @@ interface WorkspaceLayoutProps {
   currentDocumentPath: string | null
   currentDocumentContent: string | null
   documentScrollTop?: number
+  documentScrollRestoreId?: number
   editingDocumentContent?: string | null
   isDocumentLoading?: boolean
   statusMessage: string | null
@@ -1568,6 +1569,7 @@ export function WorkspaceLayout({
   currentDocumentPath,
   currentDocumentContent,
   documentScrollTop = 0,
+  documentScrollRestoreId = 0,
   editingDocumentContent,
   isDocumentLoading,
   statusMessage,
@@ -1621,7 +1623,8 @@ export function WorkspaceLayout({
   const [activeHeadingId, setActiveHeadingId] = useState<string | null>(null)
   const documentRef = useRef<HTMLElement | null>(null)
   const canvasRef = useRef<HTMLDivElement | null>(null)
-  const restoredDocumentPathRef = useRef<string | null>(null)
+  const restoredScrollRequestRef = useRef(-1)
+  const sessionScrollTopByDocumentRef = useRef(new Map<string, number>())
   const outlineRef = useRef<HTMLDivElement | null>(null)
   const outlinePerfItemRef = useRef<HTMLSpanElement | null>(null)
   const outlinePerfFrameRef = useRef<HTMLSpanElement | null>(null)
@@ -2012,15 +2015,18 @@ export function WorkspaceLayout({
     setActiveHeadingId(findActiveHeadingId(headingTargets, anchorTop))
   })
 
+  const reportDocumentScrollTopChange = useEffectEvent((documentPath: string, scrollTop: number) => {
+    onDocumentScrollTopChange?.(documentPath, scrollTop)
+  })
+
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
     const scrollCanvas: HTMLDivElement = canvas
-
-    if (documentHeadings.length > 0) syncActiveHeading()
     let frameId = 0
 
     function handleScroll() {
+      if (isDocumentLoading) return
       if (frameId !== 0) {
         return
       }
@@ -2029,7 +2035,8 @@ export function WorkspaceLayout({
         frameId = 0
         syncActiveHeading()
         if (currentDocumentPath) {
-          onDocumentScrollTopChange?.(currentDocumentPath, scrollCanvas.scrollTop)
+          sessionScrollTopByDocumentRef.current.set(currentDocumentPath, scrollCanvas.scrollTop)
+          reportDocumentScrollTopChange(currentDocumentPath, scrollCanvas.scrollTop)
         }
       })
     }
@@ -2044,24 +2051,57 @@ export function WorkspaceLayout({
       canvas.removeEventListener('scroll', handleScroll)
       window.removeEventListener('resize', handleScroll)
     }
-  }, [currentDocumentPath, documentHeadings, onDocumentScrollTopChange, syncActiveHeading])
+  }, [
+    currentDocumentPath,
+    documentHeadings,
+    isDocumentLoading,
+  ])
 
   useEffect(() => {
-    if (!currentDocumentPath || restoredDocumentPathRef.current === currentDocumentPath) return
+    if (
+      !currentDocumentPath ||
+      isDocumentLoading ||
+      restoredScrollRequestRef.current === documentScrollRestoreId
+    ) return
     if (pendingHeadingId) {
-      restoredDocumentPathRef.current = currentDocumentPath
+      restoredScrollRequestRef.current = documentScrollRestoreId
       return
     }
     const canvas = canvasRef.current
     if (!canvas) return
-    const frameId = window.requestAnimationFrame(() => {
-      if (restoredDocumentPathRef.current === currentDocumentPath) return
+    const savedTop = sessionScrollTopByDocumentRef.current.get(currentDocumentPath) ?? documentScrollTop
+    let frameId = 0
+    let attempts = 0
+    const restoreWhenReady = () => {
+      if (restoredScrollRequestRef.current === documentScrollRestoreId) return
+      if (savedTop <= 0) {
+        restoredScrollRequestRef.current = documentScrollRestoreId
+        return
+      }
       const maxTop = Math.max(0, canvas.scrollHeight - canvas.clientHeight)
-      canvas.scrollTo({ top: Math.max(0, Math.min(documentScrollTop, maxTop)), behavior: 'auto' })
-      restoredDocumentPathRef.current = currentDocumentPath
-    })
+      attempts += 1
+      if (savedTop > maxTop && attempts < 30) {
+        frameId = window.requestAnimationFrame(restoreWhenReady)
+        return
+      }
+      const nextTop = Math.max(0, Math.min(savedTop, maxTop))
+      if (typeof canvas.scrollTo === 'function') {
+        canvas.scrollTo({ top: nextTop, behavior: 'auto' })
+      } else {
+        canvas.scrollTop = nextTop
+      }
+      restoredScrollRequestRef.current = documentScrollRestoreId
+    }
+    frameId = window.requestAnimationFrame(restoreWhenReady)
     return () => window.cancelAnimationFrame(frameId)
-  }, [currentDocumentContent, currentDocumentPath, documentScrollTop, pendingHeadingId])
+  }, [
+    currentDocumentContent,
+    currentDocumentPath,
+    documentScrollRestoreId,
+    documentScrollTop,
+    isDocumentLoading,
+    pendingHeadingId,
+  ])
 
   useEffect(() => {
     if (!activeHeadingId) {
