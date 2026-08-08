@@ -182,6 +182,7 @@ interface WorkspaceLayoutProps {
   availableDirectoryPaths?: string[]
   currentDocumentPath: string | null
   currentDocumentContent: string | null
+  documentScrollTop?: number
   editingDocumentContent?: string | null
   isDocumentLoading?: boolean
   statusMessage: string | null
@@ -193,6 +194,7 @@ interface WorkspaceLayoutProps {
   hasProjects: boolean
   isWorkspaceBootstrapping?: boolean
   onDocumentSelect: (path: string) => void
+  onDocumentScrollTopChange?: (documentPath: string, scrollTop: number) => void
   onCreateDocument?: (directoryPath?: string) => void | Promise<void>
   onCreateDirectory?: (directoryPath?: string) => void | Promise<void>
   onCopyDocumentLink?: (path: string) => void | Promise<void>
@@ -1565,6 +1567,7 @@ export function WorkspaceLayout({
   fileTree,
   currentDocumentPath,
   currentDocumentContent,
+  documentScrollTop = 0,
   editingDocumentContent,
   isDocumentLoading,
   statusMessage,
@@ -1577,6 +1580,7 @@ export function WorkspaceLayout({
   hasProjects,
   isWorkspaceBootstrapping = false,
   onDocumentSelect,
+  onDocumentScrollTopChange,
   onCreateDocument = () => {},
   onCreateDirectory = () => {},
   onCopyDocumentLink = () => {},
@@ -1617,6 +1621,7 @@ export function WorkspaceLayout({
   const [activeHeadingId, setActiveHeadingId] = useState<string | null>(null)
   const documentRef = useRef<HTMLElement | null>(null)
   const canvasRef = useRef<HTMLDivElement | null>(null)
+  const restoredDocumentPathRef = useRef<string | null>(null)
   const outlineRef = useRef<HTMLDivElement | null>(null)
   const outlinePerfItemRef = useRef<HTMLSpanElement | null>(null)
   const outlinePerfFrameRef = useRef<HTMLSpanElement | null>(null)
@@ -2008,11 +2013,11 @@ export function WorkspaceLayout({
   })
 
   useEffect(() => {
-    if (documentHeadings.length === 0) {
-      return
-    }
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const scrollCanvas: HTMLDivElement = canvas
 
-    syncActiveHeading()
+    if (documentHeadings.length > 0) syncActiveHeading()
     let frameId = 0
 
     function handleScroll() {
@@ -2023,20 +2028,40 @@ export function WorkspaceLayout({
       frameId = window.requestAnimationFrame(() => {
         frameId = 0
         syncActiveHeading()
+        if (currentDocumentPath) {
+          onDocumentScrollTopChange?.(currentDocumentPath, scrollCanvas.scrollTop)
+        }
       })
     }
 
-    canvasRef.current?.addEventListener('scroll', handleScroll, { passive: true })
+    canvas.addEventListener('scroll', handleScroll, { passive: true })
     window.addEventListener('resize', handleScroll)
 
     return () => {
       if (frameId !== 0) {
         window.cancelAnimationFrame(frameId)
       }
-      canvasRef.current?.removeEventListener('scroll', handleScroll)
+      canvas.removeEventListener('scroll', handleScroll)
       window.removeEventListener('resize', handleScroll)
     }
-  }, [documentHeadings, syncActiveHeading])
+  }, [currentDocumentPath, documentHeadings, onDocumentScrollTopChange, syncActiveHeading])
+
+  useEffect(() => {
+    if (!currentDocumentPath || restoredDocumentPathRef.current === currentDocumentPath) return
+    if (pendingHeadingId) {
+      restoredDocumentPathRef.current = currentDocumentPath
+      return
+    }
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const frameId = window.requestAnimationFrame(() => {
+      if (restoredDocumentPathRef.current === currentDocumentPath) return
+      const maxTop = Math.max(0, canvas.scrollHeight - canvas.clientHeight)
+      canvas.scrollTo({ top: Math.max(0, Math.min(documentScrollTop, maxTop)), behavior: 'auto' })
+      restoredDocumentPathRef.current = currentDocumentPath
+    })
+    return () => window.cancelAnimationFrame(frameId)
+  }, [currentDocumentContent, currentDocumentPath, documentScrollTop, pendingHeadingId])
 
   useEffect(() => {
     if (!activeHeadingId) {

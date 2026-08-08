@@ -492,6 +492,56 @@ function App() {
   const actionToastIdRef = useRef(0)
   const navigationRequestRef = useRef(0)
   const navigationPersistenceRef = useRef(createNavigationPersistenceCoordinator())
+  const scrollPositionTimerRef = useRef<number | null>(null)
+  const latestScrollPositionsRef = useRef(new Map<string, number>())
+
+  function clearScrollPositionTimer() {
+    if (scrollPositionTimerRef.current != null) {
+      window.clearTimeout(scrollPositionTimerRef.current)
+      scrollPositionTimerRef.current = null
+    }
+  }
+
+  async function persistDocumentScrollPosition(projectId: string, documentPath: string, scrollTop: number) {
+    const localState = normalizeLocalStateSnapshot(
+      (await localStateStore.getState(projectId)) as Awaited<ReturnType<typeof localStateStore.getState>> & {
+        activeMode: 'regular' | 'split' | 'read' | 'edit'
+        lastKnownScrollTop?: number
+      },
+    )
+    await localStateStore.saveState(projectId, {
+      ...localState,
+      tabStateByDocument: {
+        ...localState.tabStateByDocument,
+        [documentPath]: { lastKnownScrollTop: scrollTop },
+      },
+    } as WorkspaceLocalState)
+  }
+
+  function flushDocumentScrollPosition(documentPath?: string) {
+    clearScrollPositionTimer()
+    const projectId = activeProjectIdRef.current
+    const targetPath = documentPath ?? currentDocumentPathRef.current
+    const scrollTop = targetPath ? latestScrollPositionsRef.current.get(targetPath) : null
+    if (!projectId || !targetPath || scrollTop == null) return
+    void persistDocumentScrollPosition(projectId, targetPath, scrollTop)
+  }
+
+  function handleDocumentScrollTopChange(documentPath: string, scrollTop: number) {
+    if (!Number.isFinite(scrollTop) || scrollTop < 0) return
+    latestScrollPositionsRef.current.set(documentPath, scrollTop)
+    setSession((current) => {
+      const tab = getTabByDocumentPath(current, documentPath)
+      return tab && tab.lastKnownScrollTop !== scrollTop
+        ? replaceTab(current, { ...tab, lastKnownScrollTop: scrollTop })
+        : current
+    })
+    clearScrollPositionTimer()
+    scrollPositionTimerRef.current = window.setTimeout(
+      () => flushDocumentScrollPosition(documentPath),
+      250,
+    )
+  }
 
   function clearSaveFailureStatus(projectId: string | null) {
     setStatusMessage((current) => {
@@ -2143,6 +2193,8 @@ function App() {
       return
     }
 
+    flushDocumentScrollPosition()
+
     const project = projects.find((entry) => entry.id === activeProjectId)
     if (project) {
       ensureTabExists(path)
@@ -2219,6 +2271,8 @@ function App() {
     if (!nextTab || nextTab.id === session.activeTabId) {
       return
     }
+
+    flushDocumentScrollPosition()
 
     setSession((current) => ({
       ...current,
@@ -2685,6 +2739,7 @@ function App() {
         showHiddenItems={showHiddenItems}
         currentDocumentPath={currentDocumentPath}
         currentDocumentContent={currentDocumentContent}
+        documentScrollTop={activeTab?.lastKnownScrollTop ?? 0}
         editingDocumentContent={editingDocumentContent}
         saveIndicator={getSaveIndicator(activeTab)}
         isDocumentLoading={isDocumentLoading}
@@ -2715,6 +2770,7 @@ function App() {
         onRestartService={handleRestartService}
         onStopService={handleStopService}
         onDocumentSelect={handleDocumentSelect}
+        onDocumentScrollTopChange={handleDocumentScrollTopChange}
         onCreateDocument={handleCreateDocument}
         onCreateDirectory={handleCreateDirectory}
         onCopyDocumentLink={handleCopyDocumentLink}

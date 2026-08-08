@@ -32,6 +32,7 @@ interface AppShellProps {
   availableDirectoryPaths: string[]
   currentDocumentPath: string | null
   currentDocumentContent: string | null
+  documentScrollTop?: number
   editingDocumentContent?: string | null
   saveIndicator?: string | null
   isDocumentLoading?: boolean
@@ -63,6 +64,7 @@ interface AppShellProps {
   onRestartService?: () => void
   onStopService?: () => void
   onDocumentSelect: (path: string) => void
+  onDocumentScrollTopChange?: (documentPath: string, scrollTop: number) => void
   onCreateDocument?: (directoryPath?: string) => void | Promise<void>
   onCreateDirectory?: (directoryPath?: string) => void | Promise<void>
   onCopyDocumentLink?: (path: string) => void | Promise<void>
@@ -160,6 +162,7 @@ export function AppShell(props: AppShellProps) {
         availableDirectoryPaths={props.availableDirectoryPaths}
         currentDocumentPath={props.currentDocumentPath}
         currentDocumentContent={props.currentDocumentContent}
+        documentScrollTop={props.documentScrollTop}
         editingDocumentContent={props.editingDocumentContent}
         isDocumentLoading={props.isDocumentLoading}
         statusMessage={props.statusMessage}
@@ -171,6 +174,7 @@ export function AppShell(props: AppShellProps) {
         hasProjects={props.projects.length > 0}
         isWorkspaceBootstrapping={props.isWorkspaceBootstrapping}
         onDocumentSelect={props.onDocumentSelect}
+        onDocumentScrollTopChange={props.onDocumentScrollTopChange}
         onCreateDocument={props.onCreateDocument}
         onCreateDirectory={props.onCreateDirectory}
         onCopyDocumentLink={props.onCopyDocumentLink}
