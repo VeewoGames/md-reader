@@ -2296,6 +2296,11 @@ select {
   transition: none;
 }
 
+/* Leaf-only groups do not need to reserve space for a directory chevron. */
+.file-tree[data-has-expandable-directories='false'] > .file-tree__item > .file-tree__row > .file-tree__file {
+  padding-left: 8px;
+}
+
 .file-tree__file--renaming {
   cursor: text;
   background: rgba(31, 111, 235, 0.08);

@@ -1279,10 +1279,15 @@ export function WorkspaceFileTree({
   onDirectoryDragLeave: (directoryPath: string, event?: React.DragEvent<HTMLElement>) => void
   onDirectoryDrop: (directoryPath: string, event: React.DragEvent<HTMLElement>) => void
 }) {
+  const hasExpandableDirectDirectory = nodes.some(
+    (node) => node.kind === 'directory' && node.children.length > 0,
+  )
+
   return (
     <ul
       className="file-tree"
       data-level={level}
+      data-has-expandable-directories={hasExpandableDirectDirectory ? 'true' : 'false'}
       data-tree-tail-parent-path={parentPath ?? ''}
       data-drag-active={dragNodePath != null ? 'true' : undefined}
       data-reorder-tail={

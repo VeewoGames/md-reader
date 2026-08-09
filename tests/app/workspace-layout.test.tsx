@@ -1210,11 +1210,21 @@ describe('WorkspaceLayout outline navigation', () => {
     )
 
     const searchInput = screen.getByRole('searchbox', { name: '搜索文件' })
+    const docsFileGroup = screen.getByRole('button', { name: 'guide.md' }).closest('.file-tree')
 
     expect(screen.getByRole('button', { name: 'guide.md' })).toBeInTheDocument()
+    expect(docsFileGroup).toHaveAttribute('data-has-expandable-directories', 'true')
     expect(screen.queryByRole('button', { name: 'reference.md' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'meeting.md' })).toBeInTheDocument()
 
+    await user.type(searchInput, 'guide')
+
+    expect(screen.getByRole('button', { name: 'guide.md' }).closest('.file-tree')).toHaveAttribute(
+      'data-has-expandable-directories',
+      'false',
+    )
+
+    await user.clear(searchInput)
     await user.type(searchInput, 'ref')
 
     expect(screen.queryByRole('button', { name: 'guide.md' })).not.toBeInTheDocument()
@@ -1230,7 +1240,37 @@ describe('WorkspaceLayout outline navigation', () => {
     await user.clear(searchInput)
 
     expect(screen.getByRole('button', { name: 'guide.md' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'guide.md' }).closest('.file-tree')).toHaveAttribute(
+      'data-has-expandable-directories',
+      'true',
+    )
     expect(screen.getByRole('button', { name: 'meeting.md' })).toBeInTheDocument()
+  })
+
+  it('marks leaf-only file groups as compact without removing their tree level', () => {
+    render(
+      <WorkspaceLayout
+        mode="regular"
+        regularViewState="locked"
+        fileTree={createVisibleTree(['docs/guide.md', 'docs/reference.md'])}
+        currentDocumentPath="docs/guide.md"
+        currentDocumentContent={'# 标题\n\n正文'}
+        statusMessage="当前项目：Notes"
+        sidebarWidth={280}
+        outlineWidth={320}
+        hasProjects
+        onDocumentSelect={() => {}}
+        onSidebarWidthChange={() => {}}
+        onSidebarWidthCommit={() => {}}
+        onOutlineWidthChange={() => {}}
+        onOutlineWidthCommit={() => {}}
+      />,
+    )
+
+    const fileGroup = screen.getByRole('button', { name: 'guide.md' }).closest('.file-tree')
+
+    expect(fileGroup).toHaveAttribute('data-has-expandable-directories', 'false')
+    expect(fileGroup).toHaveAttribute('data-level', '1')
   })
 
   it('restores the full file tree when the native search clear action fires', async () => {
