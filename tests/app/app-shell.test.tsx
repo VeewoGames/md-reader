@@ -37,6 +37,32 @@ vi.mock('../../src/document-renderer/readonly-markdown-renderer', () => ({
   ),
 }))
 
+vi.mock('../../src/workspace/local-bridge-access', () => ({
+  BridgeDocumentConflictError: class BridgeDocumentConflictError extends Error {},
+  BridgeDocumentSavedCacheInvalidationError: class BridgeDocumentSavedCacheInvalidationError extends Error {},
+  createDirectoryNodeInBridge: vi.fn(),
+  createDocumentNodeInBridge: vi.fn(),
+  deleteDocumentNodeInBridge: vi.fn(),
+  duplicateDocumentNodeInBridge: vi.fn(),
+  getDocumentContentFromBridge: vi.fn(),
+  getFileTreePathsFromBridge: vi.fn(),
+  getLocalBridgeHealth: vi.fn(async () => ({ ok: false, mode: 'offline', projectsLoaded: 0, port: 8797 })),
+  getProfileFromBridge: vi.fn(),
+  getProjectTreeSnapshotFromBridge: vi.fn(),
+  listProjectProfilesFromBridge: vi.fn(),
+  listProjectsFromBridge: vi.fn(),
+  moveDocumentNodeInBridge: vi.fn(),
+  refreshFileTreeFromBridge: vi.fn(),
+  refreshProjectTreeSnapshotFromBridge: vi.fn(),
+  registerProjectWithBridge: vi.fn(),
+  renameDocumentNodeInBridge: vi.fn(),
+  restartLocalBridgeService: vi.fn(),
+  saveDocumentContentToBridge: vi.fn(),
+  saveProfileToBridge: vi.fn(),
+  setActiveProjectWithBridge: vi.fn(),
+  stopLocalBridgeService: vi.fn(),
+}))
+
 import App from '../../src/App'
 import { AppShell } from '../../src/app/AppShell'
 import { buildFileTree, createVisibleFileTree } from '../../src/workspace/file-tree'

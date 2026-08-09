@@ -61,10 +61,10 @@ describe('project tree cache', () => {
 
     resolveScan(['docs/guide.mdx', 'README.md'])
     const waited = await cache.get(project, { mode: 'wait', refreshId: first.refreshId })
-    expect(waited).toMatchObject({ status: 'ready', tree: ['README.md', 'docs/guide.mdx'] })
+    expect(waited).toMatchObject({ status: 'ready', tree: ['docs/guide.mdx', 'README.md'] })
 
     const raw = JSON.parse(await readFile(cache.getSnapshotPath(project), 'utf8'))
-    expect(raw).toMatchObject({ complete: true, paths: ['README.md', 'docs/guide.mdx'] })
+    expect(raw.entries.map((entry: { path: string }) => entry.path)).toEqual(['docs/guide.mdx', 'README.md'])
   })
 
   it('retains a terminal refresh result for multiple waiters and rejects expired ids', async () => {
@@ -202,7 +202,7 @@ describe('project tree cache', () => {
     const retry = await cache.get(project)
     expect(retry).toMatchObject({ status: 'ready', refreshId: expect.any(String) })
     await cache.get(project, { mode: 'wait', refreshId: retry.refreshId })
-    expect(JSON.parse(await readFile(cache.getSnapshotPath(project), 'utf8')).paths).toEqual(['guide.md'])
+    expect(JSON.parse(await readFile(cache.getSnapshotPath(project), 'utf8')).entries.map((entry: { path: string }) => entry.path)).toEqual(['guide.md'])
   })
 
   it('keeps the previous complete disk snapshot when a newer replacement fails', async () => {
@@ -270,7 +270,7 @@ describe('project tree cache', () => {
       projectFingerprint: fingerprint,
       complete: true,
       paths: unsafePaths,
-      snapshotRevision: createSnapshotRevision({ projectFingerprint: fingerprint, paths: unsafePaths }),
+      snapshotRevision: 'invalid',
     }))
 
     const result = await cache.get(project)

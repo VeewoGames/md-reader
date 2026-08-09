@@ -40,6 +40,7 @@ const documents = new Map([
 
 const bridgeMocks = vi.hoisted(() => ({
   getFileTreePathsFromBridge: vi.fn(),
+  refreshFileTreeFromBridge: vi.fn(),
   getDocumentContentFromBridge: vi.fn(),
   getProfileFromBridge: vi.fn(),
   listProjectsFromBridge: vi.fn(),
@@ -87,6 +88,13 @@ vi.mock('../../src/workspace/local-bridge-access', () => ({
   getProfileFromBridge: bridgeMocks.getProfileFromBridge,
   saveProfileToBridge: bridgeMocks.saveProfileToBridge,
   getFileTreePathsFromBridge: bridgeMocks.getFileTreePathsFromBridge,
+  refreshFileTreeFromBridge: bridgeMocks.refreshFileTreeFromBridge,
+  getProjectTreeSnapshotFromBridge: async (...args: Parameters<typeof bridgeMocks.getFileTreePathsFromBridge>) => ({
+    entries: (await bridgeMocks.getFileTreePathsFromBridge(...args)).map((path: string) => ({ path, createdAtMs: 0, modifiedAtMs: 0, recentAtMs: 0 })),
+  }),
+  refreshProjectTreeSnapshotFromBridge: async (...args: Parameters<typeof bridgeMocks.refreshFileTreeFromBridge>) => ({
+    entries: (await bridgeMocks.refreshFileTreeFromBridge(...args)).map((path: string) => ({ path, createdAtMs: 0, modifiedAtMs: 0, recentAtMs: 0 })),
+  }),
   getDocumentContentFromBridge: bridgeMocks.getDocumentContentFromBridge,
   saveDocumentContentToBridge: vi.fn(),
   registerProjectWithBridge: vi.fn(),
@@ -134,6 +142,7 @@ describe('App session restore', () => {
 
     bridgeMocks.getDocumentContentFromBridge.mockReset()
     bridgeMocks.getFileTreePathsFromBridge.mockReset()
+    bridgeMocks.refreshFileTreeFromBridge.mockReset()
     bridgeMocks.getProfileFromBridge.mockReset()
     bridgeMocks.listProjectsFromBridge.mockReset()
     bridgeMocks.listProjectProfilesFromBridge.mockReset()
@@ -156,6 +165,7 @@ describe('App session restore', () => {
       ],
     })
     bridgeMocks.getFileTreePathsFromBridge.mockResolvedValue(['docs/guide.md', 'docs/next.md'])
+    bridgeMocks.refreshFileTreeFromBridge.mockResolvedValue(['docs/guide.md', 'docs/next.md'])
     bridgeMocks.getProfileFromBridge.mockResolvedValue({
       id: 'default',
       appearance: {
@@ -222,6 +232,23 @@ describe('App session restore', () => {
         activeMode: 'split',
         regularViewState: 'editable',
       }),
+    )
+  })
+
+  it('refreshes the current project tree from an external scan', async () => {
+    const user = userEvent.setup()
+    bridgeMocks.refreshFileTreeFromBridge.mockResolvedValue(['docs/guide.md', 'docs/next.md', 'docs/external.md'])
+
+    render(<App />)
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'guide.md' })).toBeInTheDocument())
+    await user.click(screen.getByRole('button', { name: '刷新文件树' }))
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'external.md' })).toBeInTheDocument())
+    expect(bridgeMocks.refreshFileTreeFromBridge).toHaveBeenCalledWith(
+      'notes',
+      'default',
+      expect.objectContaining({ onIndexing: expect.any(Function) }),
     )
   })
 
@@ -315,6 +342,7 @@ describe('App session restore', () => {
 
     expect(screen.getByRole('combobox', { name: '项目切换' })).toHaveTextContent('Manual')
     expect(screen.getAllByText('正在切换项目…').length).toBeGreaterThan(0)
+    expect(screen.queryByRole('button', { name: 'guide.md' })).not.toBeInTheDocument()
 
     finishManualTree?.(['docs/manual.md'])
 

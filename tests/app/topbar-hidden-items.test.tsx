@@ -8,15 +8,17 @@ function renderTopBar({
   mode = 'regular',
   showHiddenItems = false,
   onToggleShowHiddenItems = () => {},
+  onRefreshFileTree = () => {},
 }: {
   mode?: 'regular' | 'split'
   showHiddenItems?: boolean
   onToggleShowHiddenItems?: () => void
+  onRefreshFileTree?: () => void
 } = {}) {
   return render(
     <TopBar
       projects={[]}
-      activeProjectId={null}
+      activeProjectId="notes"
       profileIds={['default']}
       activeProfileId="default"
       tabs={[]}
@@ -33,11 +35,25 @@ function renderTopBar({
       onToggleShowHiddenItems={onToggleShowHiddenItems}
       onTabSelect={() => {}}
       onTabClose={() => {}}
+      onRefreshFileTree={onRefreshFileTree}
     />,
   )
 }
 
 describe('TopBar hidden items toggle', () => {
+  it('places file tree refresh directly before current document refresh', async () => {
+    const user = userEvent.setup()
+    const onRefreshFileTree = vi.fn()
+    renderTopBar({ onRefreshFileTree })
+
+    const treeRefresh = screen.getByRole('button', { name: '刷新文件树' })
+    const documentRefresh = screen.getByRole('button', { name: '刷新当前文档' })
+
+    expect(treeRefresh.compareDocumentPosition(documentRefresh) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0)
+    await user.click(treeRefresh)
+    expect(onRefreshFileTree).toHaveBeenCalledTimes(1)
+  })
+
   it('renders the hidden items toggle next to the regular lock button', () => {
     renderTopBar({ mode: 'regular', showHiddenItems: false })
 

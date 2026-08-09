@@ -30,6 +30,7 @@ describe('workspace provider', () => {
         registerProject: vi.fn(),
         setActiveProject: vi.fn(),
         getFileTreePaths: vi.fn(),
+        refreshFileTree: vi.fn(),
       },
     })
 
@@ -55,6 +56,7 @@ describe('workspace provider', () => {
         registerProject: vi.fn(),
         setActiveProject: vi.fn(),
         getFileTreePaths: vi.fn(),
+        refreshFileTree: vi.fn(),
       },
     })
 

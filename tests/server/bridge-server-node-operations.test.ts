@@ -39,7 +39,12 @@ describe('bridge server node operations', () => {
 
     const ready = await fetch(`${base}&mode=wait&refreshId=${encodeURIComponent(indexingPayload.refreshId)}`)
     expect(ready.status).toBe(200)
-    await expect(ready.json()).resolves.toMatchObject({ status: 'ready', tree: ['docs/guide.md'] })
+    await expect(ready.json()).resolves.toMatchObject({
+      status: 'ready',
+      snapshot: {
+        entries: [expect.objectContaining({ path: 'docs/guide.md' })],
+      },
+    })
 
     const force = await fetch(`${base}&mode=force`)
     expect(force.status).toBe(202)

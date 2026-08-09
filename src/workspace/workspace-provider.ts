@@ -1,5 +1,5 @@
 import type { ProjectRegistryRecord } from './registry'
-import type { FileTreeLoadOptions, LocalBridgeHealth } from './local-bridge-access'
+import type { FileTreeLoadOptions, LocalBridgeHealth, ProjectTreeSnapshot } from './local-bridge-access'
 
 export type WorkspaceSource = 'local-service' | 'offline'
 
@@ -14,6 +14,9 @@ interface BridgeProvider {
   registerProject: (profileId: string, rootPath: string) => Promise<ProjectRegistryRecord>
   setActiveProject: (profileId: string, projectId: string) => Promise<void>
   getFileTreePaths: (projectId: string, profileId: string, options?: FileTreeLoadOptions) => Promise<string[]>
+  refreshFileTree: (projectId: string, profileId: string, options?: FileTreeLoadOptions) => Promise<string[]>
+  getProjectTreeSnapshot?: (projectId: string, profileId: string, options?: FileTreeLoadOptions) => Promise<ProjectTreeSnapshot>
+  refreshProjectTreeSnapshot?: (projectId: string, profileId: string, options?: FileTreeLoadOptions) => Promise<ProjectTreeSnapshot>
 }
 
 interface WorkspaceProviderDeps {
@@ -55,6 +58,31 @@ export function createWorkspaceProvider({ bridge }: WorkspaceProviderDeps) {
     },
     async getFileTreePaths(projectId: string, profileId: string, options?: FileTreeLoadOptions): Promise<string[]> {
       return bridge.getFileTreePaths(projectId, profileId, options)
+    },
+    async refreshFileTree(projectId: string, profileId: string, options?: FileTreeLoadOptions): Promise<string[]> {
+      return bridge.refreshFileTree(projectId, profileId, options)
+    },
+    async getProjectTreeSnapshot(projectId: string, profileId: string, options?: FileTreeLoadOptions): Promise<ProjectTreeSnapshot> {
+      if (bridge.getProjectTreeSnapshot) return bridge.getProjectTreeSnapshot(projectId, profileId, options)
+      return {
+        entries: (await bridge.getFileTreePaths(projectId, profileId, options)).map((path) => ({
+          path,
+          createdAtMs: 0,
+          modifiedAtMs: 0,
+          recentAtMs: 0,
+        })),
+      }
+    },
+    async refreshProjectTreeSnapshot(projectId: string, profileId: string, options?: FileTreeLoadOptions): Promise<ProjectTreeSnapshot> {
+      if (bridge.refreshProjectTreeSnapshot) return bridge.refreshProjectTreeSnapshot(projectId, profileId, options)
+      return {
+        entries: (await bridge.refreshFileTree(projectId, profileId, options)).map((path) => ({
+          path,
+          createdAtMs: 0,
+          modifiedAtMs: 0,
+          recentAtMs: 0,
+        })),
+      }
     },
   }
 }

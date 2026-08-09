@@ -49,6 +49,7 @@ vi.mock('../../src/workspace/local-state', () => ({
 
 vi.mock('../../src/workspace/local-bridge-access', () => ({
   BridgeDocumentConflictError: class BridgeDocumentConflictError extends Error {},
+  BridgeDocumentSavedCacheInvalidationError: class BridgeDocumentSavedCacheInvalidationError extends Error {},
   getLocalBridgeHealth: vi.fn(async () => ({
     ok: true,
     mode: 'local-service',
@@ -71,6 +72,12 @@ vi.mock('../../src/workspace/local-bridge-access', () => ({
   getProfileFromBridge: bridgeMocks.getProfileFromBridge,
   saveProfileToBridge: bridgeMocks.saveProfileToBridge,
   getFileTreePathsFromBridge: vi.fn(async () => ['docs/guide.md', 'docs/private.md']),
+  getProjectTreeSnapshotFromBridge: vi.fn(async () => ({ entries: [
+    { path: 'docs/guide.md', createdAtMs: 1, modifiedAtMs: 1, recentAtMs: 1 },
+    { path: 'docs/private.md', createdAtMs: 1, modifiedAtMs: 1, recentAtMs: 1 },
+  ] })),
+  refreshFileTreeFromBridge: vi.fn(async () => ['docs/guide.md', 'docs/private.md']),
+  refreshProjectTreeSnapshotFromBridge: vi.fn(async () => ({ entries: [] })),
   getDocumentContentFromBridge: vi.fn(async (_projectId, _profileId, documentPath: string) => ({
     path: documentPath,
     content: '# Private\n\nBody',
@@ -225,10 +232,10 @@ describe('App hidden items state', () => {
 
     await waitFor(() => {
       expect(screen.getByTestId('favorite-paths')).toHaveTextContent('docs/private.md')
+      expect(screen.getByTestId('show-hidden-items')).toHaveTextContent('false')
+      expect(screen.getByTestId('show-favorites-only')).toHaveTextContent('false')
+      expect(screen.getByTestId('visible-tree')).not.toHaveTextContent('docs/private.md')
     })
-    expect(screen.getByTestId('show-hidden-items')).toHaveTextContent('false')
-    expect(screen.getByTestId('show-favorites-only')).toHaveTextContent('false')
-    expect(screen.getByTestId('visible-tree')).not.toHaveTextContent('docs/private.md')
 
     await user.click(screen.getByRole('button', { name: 'toggle-hidden-items' }))
     await user.click(screen.getByRole('button', { name: 'toggle-favorites-only' }))

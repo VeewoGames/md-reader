@@ -1,6 +1,7 @@
 import type {
   FileTreeDirectoryNode,
   FileTreeNode,
+  VisibleFileTreeFileNode,
   VisibleFileTreeNode,
   VisibleFileTreeResult,
 } from './file-tree-types'
@@ -60,6 +61,27 @@ export function buildFileTree(paths: string[]): FileTreeNode[] {
   }
 
   return root.children
+}
+
+export function collectRecentFileTreeNodes(
+  nodes: VisibleFileTreeNode[],
+  recentAtMsByPath: ReadonlyMap<string, number>,
+  limit?: number,
+): VisibleFileTreeFileNode[] {
+  const files: VisibleFileTreeFileNode[] = []
+  const visit = (items: VisibleFileTreeNode[]) => {
+    for (const node of items) {
+      if (node.kind === 'file') files.push(node)
+      else visit(node.children)
+    }
+  }
+  visit(nodes)
+  const sortedFiles = files.sort((left, right) => {
+    const timeDelta = (recentAtMsByPath.get(right.path) ?? Number.NEGATIVE_INFINITY) -
+      (recentAtMsByPath.get(left.path) ?? Number.NEGATIVE_INFINITY)
+    return timeDelta || left.path.localeCompare(right.path)
+  })
+  return limit == null ? sortedFiles : sortedFiles.slice(0, Math.max(0, limit))
 }
 
 export function filterFileTree(nodes: FileTreeNode[], query: string): FileTreeNode[] {

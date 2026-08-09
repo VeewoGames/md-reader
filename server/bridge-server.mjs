@@ -183,7 +183,7 @@ async function handleRequest(request, response, { runtimeHome, port, stateFile, 
       refreshId: url.searchParams.get("refreshId") ?? undefined,
     });
     if (result.status === "ready") {
-      sendJson(response, 200, { status: "ready", tree: result.tree, paths: result.tree, refreshId: result.refreshId });
+      sendJson(response, 200, { status: "ready", snapshot: result.snapshot, refreshId: result.refreshId });
       return;
     }
     if (result.status === "indexing" || result.status === "refreshing") {
@@ -283,7 +283,18 @@ async function handleRequest(request, response, { runtimeHome, port, stateFile, 
         body.expectedMtimeMs,
         body.expectedContentHash ?? null,
       );
-      sendJson(response, 200, document);
+      try {
+        await projectTreeCache.markMutation(project);
+      } catch (error) {
+        sendJson(response, 503, {
+          error: error instanceof Error ? error.message : String(error),
+          code: "DOCUMENT_SAVED_CACHE_INVALIDATION_FAILED",
+          document,
+          treeEntry: document.treeEntry,
+        });
+        return;
+      }
+      sendJson(response, 200, { ...document, treeEntry: document.treeEntry, treeStatus: "dirty" });
     } catch (error) {
       if (error instanceof DocumentConflictError) {
         sendJson(response, 409, {

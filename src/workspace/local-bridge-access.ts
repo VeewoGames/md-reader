@@ -18,6 +18,8 @@ export interface BridgeDocumentPayload {
   content: string
   mtimeMs: number
   size: number
+  treeEntry?: ProjectTreeDocumentEntry
+  treeStatus?: 'dirty'
 }
 
 export interface BridgeNodePayload {
@@ -26,12 +28,23 @@ export interface BridgeNodePayload {
   size?: number
 }
 
+export interface ProjectTreeDocumentEntry {
+  path: string
+  createdAtMs: number
+  modifiedAtMs: number
+  recentAtMs: number
+}
+
+export interface ProjectTreeSnapshot {
+  entries: ProjectTreeDocumentEntry[]
+}
+
 export interface BridgeProjectProfilesPayload {
   profileIds: string[]
 }
 
 export type BridgeTreePayload =
-  | { status: 'ready'; tree: string[]; refreshId: string | null }
+  | { status: 'ready'; snapshot: ProjectTreeSnapshot; refreshId: string | null }
   | { status: 'indexing' | 'refreshing'; refreshId: string; requestedGeneration?: number }
 
 export interface BridgeTreeRequestOptions extends FetchOptions {
@@ -50,6 +63,8 @@ interface BridgeErrorPayload {
   path?: string
   currentMtimeMs?: number | null
   currentContentHash?: string | null
+  document?: BridgeDocumentPayload
+  treeEntry?: ProjectTreeDocumentEntry
 }
 
 export class BridgeDocumentConflictError extends Error {
@@ -67,6 +82,19 @@ export class BridgeDocumentConflictError extends Error {
     this.path = payload.path ?? null
     this.currentMtimeMs = payload.currentMtimeMs ?? null
     this.currentContentHash = payload.currentContentHash ?? null
+  }
+}
+
+export class BridgeDocumentSavedCacheInvalidationError extends Error {
+  readonly document: BridgeDocumentPayload
+
+  constructor(payload: BridgeErrorPayload) {
+    super(payload.error ?? '文件已保存，但最近索引同步失败')
+    this.name = 'BridgeDocumentSavedCacheInvalidationError'
+    if (!payload.document || !payload.treeEntry) {
+      throw new Error('Invalid saved-document cache invalidation payload')
+    }
+    this.document = { ...payload.document, treeEntry: payload.treeEntry }
   }
 }
 
@@ -95,6 +123,8 @@ async function readJsonResponse<T>(response: Response): Promise<T> {
       const payload = (await response.json()) as BridgeErrorPayload
       if (payload?.code === 'DOCUMENT_CONFLICT') {
         structuredError = new BridgeDocumentConflictError(payload)
+      } else if (payload?.code === 'DOCUMENT_SAVED_CACHE_INVALIDATION_FAILED') {
+        structuredError = new BridgeDocumentSavedCacheInvalidationError(payload)
       } else if (payload?.error) {
         errorMessage = payload.error
       }
@@ -194,14 +224,34 @@ export async function getFileTreePathsFromBridge(
   options: FileTreeLoadOptions = {},
 ): Promise<string[]> {
   const initial = await getFileTreeFromBridge(projectId, profileId, options)
-  if (initial.status === 'ready') return initial.tree
+  if (initial.status === 'ready') return initial.snapshot.entries.map((entry) => entry.path)
   await options.onIndexing?.(initial)
   const completed = await getFileTreeFromBridge(projectId, profileId, {
     ...options,
     mode: 'wait',
     refreshId: initial.refreshId,
   })
-  if (completed.status === 'ready') return completed.tree
+  if (completed.status === 'ready') return completed.snapshot.entries.map((entry) => entry.path)
+  throw new Error(`Tree refresh did not complete: ${completed.status}`)
+}
+
+export async function refreshFileTreeFromBridge(
+  projectId: string,
+  profileId: string,
+  options: FileTreeLoadOptions = {},
+): Promise<string[]> {
+  const initial = await getFileTreeFromBridge(projectId, profileId, {
+    ...options,
+    mode: 'force',
+  })
+  if (initial.status === 'ready') return initial.snapshot.entries.map((entry) => entry.path)
+  await options.onIndexing?.(initial)
+  const completed = await getFileTreeFromBridge(projectId, profileId, {
+    ...options,
+    mode: 'wait',
+    refreshId: initial.refreshId,
+  })
+  if (completed.status === 'ready') return completed.snapshot.entries.map((entry) => entry.path)
   throw new Error(`Tree refresh did not complete: ${completed.status}`)
 }
 
@@ -220,11 +270,41 @@ export async function getFileTreeFromBridge(
   const response = await fetchImpl(
     `${baseUrl}/api/projects/${encodeURIComponent(projectId)}/tree?${parameters.toString()}`,
   )
-  const payload = await readJsonResponse<BridgeTreePayload & { paths?: string[] }>(response)
-  if (payload.status === 'ready') {
-    return { ...payload, tree: payload.tree ?? payload.paths ?? [] }
-  }
-  return payload
+  return readJsonResponse<BridgeTreePayload>(response)
+}
+
+export async function getProjectTreeSnapshotFromBridge(
+  projectId: string,
+  profileId: string,
+  options: FileTreeLoadOptions = {},
+): Promise<ProjectTreeSnapshot> {
+  const initial = await getFileTreeFromBridge(projectId, profileId, options)
+  if (initial.status === 'ready') return initial.snapshot
+  await options.onIndexing?.(initial)
+  const completed = await getFileTreeFromBridge(projectId, profileId, {
+    ...options,
+    mode: 'wait',
+    refreshId: initial.refreshId,
+  })
+  if (completed.status === 'ready') return completed.snapshot
+  throw new Error(`Tree refresh did not complete: ${completed.status}`)
+}
+
+export async function refreshProjectTreeSnapshotFromBridge(
+  projectId: string,
+  profileId: string,
+  options: FileTreeLoadOptions = {},
+): Promise<ProjectTreeSnapshot> {
+  const initial = await getFileTreeFromBridge(projectId, profileId, { ...options, mode: 'force' })
+  if (initial.status === 'ready') return initial.snapshot
+  await options.onIndexing?.(initial)
+  const completed = await getFileTreeFromBridge(projectId, profileId, {
+    ...options,
+    mode: 'wait',
+    refreshId: initial.refreshId,
+  })
+  if (completed.status === 'ready') return completed.snapshot
+  throw new Error(`Tree refresh did not complete: ${completed.status}`)
 }
 
 export async function getDocumentContentFromBridge(

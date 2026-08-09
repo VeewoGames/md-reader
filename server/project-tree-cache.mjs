@@ -3,9 +3,10 @@ import path from "node:path";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 
 import { normalizeRootPath } from "./project-registry.mjs";
-import { isMarkdownFile, scanMarkdownTree } from "./project-scanner.mjs";
+import { scanMarkdownTree } from "./project-scanner.mjs";
+import { createProjectTreeDocumentEntry, isMarkdownFile, normalizeProjectTreeDocumentPath } from "./project-tree-entry.mjs";
 
-const SNAPSHOT_VERSION = 1;
+const SNAPSHOT_VERSION = 2;
 const DEFAULT_FRESH_AFTER_MS = 30_000;
 const DEFAULT_REFRESH_RESULT_TTL_MS = 5 * 60_000;
 const DEFAULT_MAX_TERMINAL_RECORDS = 128;
@@ -27,6 +28,31 @@ export function canonicalizeTreePaths(paths) {
   });
 }
 
+export function canonicalizeTreeEntries(entries) {
+  const byPath = new Map();
+  for (const candidate of entries ?? []) {
+    const normalizedPath = normalizeProjectTreeDocumentPath(typeof candidate === "string" ? candidate : candidate?.path);
+    if (!normalizedPath) throw new Error(`Invalid project tree entry path: ${candidate?.path}`);
+    if (typeof candidate === "string") {
+      byPath.set(normalizedPath, createProjectTreeDocumentEntry(normalizedPath, { mtimeMs: 0, birthtimeMs: 0 }));
+      continue;
+    }
+    const entry = createProjectTreeDocumentEntry(normalizedPath, {
+      mtimeMs: candidate?.modifiedAtMs,
+      birthtimeMs: candidate?.createdAtMs,
+    });
+    if (Number(candidate?.recentAtMs) !== entry.recentAtMs) {
+      throw new Error(`Invalid project tree recent time: ${normalizedPath}`);
+    }
+    const existing = byPath.get(normalizedPath);
+    if (existing && JSON.stringify(existing) !== JSON.stringify(entry)) {
+      throw new Error(`Conflicting project tree entries: ${normalizedPath}`);
+    }
+    byPath.set(normalizedPath, entry);
+  }
+  return [...byPath.values()].sort((left, right) => left.path.localeCompare(right.path));
+}
+
 export function createProjectFingerprint(project) {
   const contentRoots = [...(project.contentRoots ?? ["."])]
     .map((entry) => String(entry).replaceAll("\\", "/").replace(/^\.\//, "").replace(/\/+$/, "") || ".")
@@ -38,10 +64,11 @@ export function createProjectFingerprint(project) {
   return crypto.createHash("sha256").update(identity).digest("hex");
 }
 
-export function createSnapshotRevision({ projectFingerprint, paths }) {
+export function createSnapshotRevision({ projectFingerprint, entries, paths }) {
+  const canonicalEntries = canonicalizeTreeEntries(entries ?? paths ?? []);
   return crypto
     .createHash("sha256")
-    .update(JSON.stringify({ version: SNAPSHOT_VERSION, projectFingerprint, paths }))
+    .update(JSON.stringify({ version: SNAPSHOT_VERSION, projectFingerprint, entries: canonicalEntries }))
     .digest("hex");
 }
 
@@ -119,10 +146,10 @@ export function createProjectTreeCache({
             payload?.version !== SNAPSHOT_VERSION ||
             payload?.projectFingerprint !== entry.fingerprint ||
             payload?.complete !== true ||
-            !Array.isArray(payload.paths) ||
+            !Array.isArray(payload.entries) ||
             typeof payload.snapshotRevision !== "string" ||
-            canonicalizeTreePaths(payload.paths).join("\n") !== payload.paths.join("\n") ||
-            createSnapshotRevision({ projectFingerprint: entry.fingerprint, paths: payload.paths }) !== payload.snapshotRevision
+            JSON.stringify(canonicalizeTreeEntries(payload.entries)) !== JSON.stringify(payload.entries) ||
+            createSnapshotRevision({ projectFingerprint: entry.fingerprint, entries: payload.entries }) !== payload.snapshotRevision
           ) {
             return;
           }
@@ -201,7 +228,7 @@ export function createProjectTreeCache({
       while (true) {
         const scanGeneration = ++entry.generation;
         const scanEpoch = entry.mutationEpoch;
-        const scannedPaths = canonicalizeTreePaths(await scheduleScan(
+        const scannedEntries = canonicalizeTreeEntries(await scheduleScan(
           () => scan(project.rootPath, project.contentRoots),
           () => record.foreground,
         ));
@@ -213,8 +240,8 @@ export function createProjectTreeCache({
           version: SNAPSHOT_VERSION,
           projectFingerprint: entry.fingerprint,
           complete: true,
-          paths: scannedPaths,
-          snapshotRevision: createSnapshotRevision({ projectFingerprint: entry.fingerprint, paths: scannedPaths }),
+          entries: scannedEntries,
+          snapshotRevision: createSnapshotRevision({ projectFingerprint: entry.fingerprint, entries: scannedEntries }),
           generatedAt,
           lastVerifiedAt: generatedAt,
           mutationEpoch: entry.mutationEpoch,
@@ -259,7 +286,7 @@ export function createProjectTreeCache({
       }
       try {
         const snapshot = record.result ?? await record.promise;
-        return { status: "ready", tree: snapshot.paths, refreshId: record.refreshId };
+        return { status: "ready", snapshot: { entries: snapshot.entries }, tree: snapshot.entries.map((entry) => entry.path), refreshId: record.refreshId };
       } catch (error) {
         return { status: "failed", refreshId: record.refreshId, error };
       }
@@ -277,9 +304,9 @@ export function createProjectTreeCache({
         };
       }
       if (!entry.snapshot) return { status: force ? "refreshing" : "indexing", refreshId: record.refreshId, requestedGeneration: record.requestedGeneration };
-      return { status: "ready", tree: entry.snapshot.paths, refreshId: record.refreshId };
+      return { status: "ready", snapshot: { entries: entry.snapshot.entries }, tree: entry.snapshot.entries.map((entry) => entry.path), refreshId: record.refreshId };
     }
-    return { status: "ready", tree: entry.snapshot.paths, refreshId: null };
+    return { status: "ready", snapshot: { entries: entry.snapshot.entries }, tree: entry.snapshot.entries.map((entry) => entry.path), refreshId: null };
   }
 
   async function markMutation(project) {

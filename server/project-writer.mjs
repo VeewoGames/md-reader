@@ -2,6 +2,7 @@ import { readFile, stat, writeFile } from "node:fs/promises";
 
 import { createContentHash } from "./content-hash.mjs";
 import { resolveMarkdownDocumentPath } from "./project-reader.mjs";
+import { createProjectTreeDocumentEntry } from "./project-tree-entry.mjs";
 
 export class DocumentConflictError extends Error {
   constructor({ message, kind = "unknown", path, currentMtimeMs = null, currentContentHash = null }) {
@@ -56,7 +57,9 @@ export async function writeMarkdownDocument(
   return {
     path: normalizedPath,
     content: nextContent,
+    contentHash: createContentHash(nextContent),
     mtimeMs: nextMetadata.mtimeMs,
     size: nextMetadata.size,
+    treeEntry: createProjectTreeDocumentEntry(normalizedPath, nextMetadata),
   };
 }

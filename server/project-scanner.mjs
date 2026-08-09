@@ -1,9 +1,8 @@
 import path from "node:path";
-import { readdir } from "node:fs/promises";
+import { readdir, stat } from "node:fs/promises";
+import { createProjectTreeDocumentEntry, isMarkdownFile } from "./project-tree-entry.mjs";
 
-export function isMarkdownFile(fileName) {
-  return fileName.endsWith(".md") || fileName.endsWith(".mdx");
-}
+export { isMarkdownFile };
 
 function shouldSkipDirectory(name) {
   return name === ".git" || name === "node_modules" || name === ".md-reader";
@@ -24,7 +23,10 @@ async function walk(rootPath, currentPath, results) {
     }
 
     const absolutePath = path.join(currentPath, entry.name);
-    results.push(path.relative(rootPath, absolutePath).replaceAll("\\", "/"));
+    results.push(createProjectTreeDocumentEntry(
+      path.relative(rootPath, absolutePath).replaceAll("\\", "/"),
+      await stat(absolutePath),
+    ));
   }
 }
 
@@ -37,8 +39,8 @@ export async function scanMarkdownTree(projectRoot, contentRoots = ["."]) {
   }
 
   return results.sort((left, right) => {
-    const depthDelta = left.split("/").length - right.split("/").length;
+    const depthDelta = left.path.split("/").length - right.path.split("/").length;
     if (depthDelta !== 0) return depthDelta;
-    return left.localeCompare(right);
+    return left.path.localeCompare(right.path);
   });
 }

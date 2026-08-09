@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   buildFileTree,
+  collectRecentFileTreeNodes,
   createVisibleFileTree,
   filterFileTree,
   filterFileTreeByFavorites,
@@ -193,6 +194,43 @@ describe('createVisibleFileTree', () => {
           }),
         ],
       }),
+    ])
+  })
+})
+
+describe('collectRecentFileTreeNodes', () => {
+  it('flattens only visible documents and orders newest first with a stable path tie-breaker', () => {
+    const visibleTree = createVisibleFileTree({
+      sourceNodes: buildFileTree(['docs/older.md', 'docs/hidden.md', 'notes/newer.md', 'notes/same.md']),
+      hiddenPaths: ['docs/hidden.md'],
+      showHiddenItems: false,
+    }).visibleNodes
+
+    expect(collectRecentFileTreeNodes(visibleTree, new Map([
+      ['docs/older.md', 10],
+      ['notes/newer.md', 30],
+      ['notes/same.md', 30],
+    ])).map((node) => node.path)).toEqual([
+      'notes/newer.md',
+      'notes/same.md',
+      'docs/older.md',
+    ])
+  })
+
+  it('applies the limit after sorting', () => {
+    const visibleTree = createVisibleFileTree({
+      sourceNodes: buildFileTree(['docs/older.md', 'notes/newer.md', 'notes/newest.md']),
+      hiddenPaths: [],
+      showHiddenItems: false,
+    }).visibleNodes
+
+    expect(collectRecentFileTreeNodes(visibleTree, new Map([
+      ['docs/older.md', 10],
+      ['notes/newer.md', 20],
+      ['notes/newest.md', 30],
+    ]), 2).map((node) => node.path)).toEqual([
+      'notes/newest.md',
+      'notes/newer.md',
     ])
   })
 })

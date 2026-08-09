@@ -19,6 +19,7 @@ interface AppShellTab {
 interface AppShellProps {
   projects: ProjectRegistryRecord[]
   activeProjectId: string | null
+  pendingProjectId?: string | null
   profileIds: string[]
   activeProfileId: string
   tabs: AppShellTab[]
@@ -37,6 +38,9 @@ interface AppShellProps {
   editingDocumentContent?: string | null
   saveIndicator?: string | null
   isDocumentLoading?: boolean
+  isFileTreeRefreshing?: boolean
+  isProjectSwitching?: boolean
+  pendingProjectName?: string | null
   statusMessage: string | null
   actionToast?: WorkspaceActionToast | null
   sidebarWidth: number
@@ -53,9 +57,15 @@ interface AppShellProps {
   onToggleRegularLock: () => void
   favoritePaths?: string[]
   showFavoritesOnly?: boolean
+  showRecentOnly?: boolean
+  isCurrentDocumentOutsideRecent?: boolean
+  isCurrentDocumentHiddenInRecent?: boolean
+  isCurrentDocumentUnavailableInRecent?: boolean
   showHiddenItems?: boolean
   onToggleFavoriteDocument?: (path: string) => void
   onToggleShowFavoritesOnly?: () => void
+  onToggleShowRecentOnly?: () => void
+  onLocateCurrentDocumentInTree?: () => void | Promise<void>
   onToggleShowHiddenItems?: () => void
   onHidePath?: (path: string) => void
   onUnhidePath?: (path: string) => void
@@ -86,6 +96,7 @@ interface AppShellProps {
   onDocumentPageWidthChange?: (pageWidth: PageWidthMode) => void
   onDocumentLineHeightChange?: (lineHeight: DocumentLineHeight) => void
   onRefreshDocument?: () => void | Promise<void>
+  onRefreshFileTree?: () => void | Promise<void>
   onEditingDocumentContentChange?: (content: string) => void
   onEditingCompositionStart?: () => void
   onEditingCompositionEnd?: () => void
@@ -124,10 +135,11 @@ export function AppShell(props: AppShellProps) {
       <TopBar
         projects={props.projects}
         activeProjectId={props.activeProjectId}
+        pendingProjectId={props.pendingProjectId}
         profileIds={props.profileIds}
         activeProfileId={props.activeProfileId}
-        tabs={props.tabs}
-        activeTabId={props.activeTabId}
+        tabs={props.pendingProjectId ? [] : props.tabs}
+        activeTabId={props.pendingProjectId ? null : props.activeTabId}
         canManageService={props.canManageService}
         isServiceActionPending={props.isServiceActionPending}
         mode={props.mode}
@@ -136,6 +148,7 @@ export function AppShell(props: AppShellProps) {
         saveIndicator={props.saveIndicator}
         currentDocumentPath={props.currentDocumentPath}
         isDocumentLoading={props.isDocumentLoading}
+        isFileTreeRefreshing={props.isFileTreeRefreshing}
         onConnectProject={props.onConnectProject}
         onProjectChange={props.onProjectChange}
         onProfileChange={props.onProfileChange}
@@ -155,6 +168,7 @@ export function AppShell(props: AppShellProps) {
         onDocumentPageWidthChange={props.onDocumentPageWidthChange}
         onDocumentLineHeightChange={props.onDocumentLineHeightChange}
         onRefreshDocument={props.onRefreshDocument}
+        onRefreshFileTree={props.onRefreshFileTree}
       />
       <WorkspaceLayout
         mode={props.mode}
@@ -167,6 +181,8 @@ export function AppShell(props: AppShellProps) {
         documentScrollRestoreId={props.documentScrollRestoreId}
         editingDocumentContent={props.editingDocumentContent}
         isDocumentLoading={props.isDocumentLoading}
+        isProjectSwitching={props.isProjectSwitching}
+        pendingProjectName={props.pendingProjectName}
         statusMessage={props.statusMessage}
         actionToast={props.actionToast}
         sidebarWidth={props.sidebarWidth}
@@ -188,9 +204,15 @@ export function AppShell(props: AppShellProps) {
         onReorderFileTreeNode={props.onReorderFileTreeNode}
         favoritePaths={props.favoritePaths}
         showFavoritesOnly={props.showFavoritesOnly}
+        showRecentOnly={props.showRecentOnly}
+        isCurrentDocumentOutsideRecent={props.isCurrentDocumentOutsideRecent}
+        isCurrentDocumentHiddenInRecent={props.isCurrentDocumentHiddenInRecent}
+        isCurrentDocumentUnavailableInRecent={props.isCurrentDocumentUnavailableInRecent}
         showHiddenItems={props.showHiddenItems}
         onToggleFavoriteDocument={props.onToggleFavoriteDocument}
         onToggleShowFavoritesOnly={props.onToggleShowFavoritesOnly}
+        onToggleShowRecentOnly={props.onToggleShowRecentOnly}
+        onLocateCurrentDocumentInTree={props.onLocateCurrentDocumentInTree}
         onHidePath={props.onHidePath}
         onUnhidePath={props.onUnhidePath}
         onExpandedDirectoriesChange={props.onExpandedFileNodesChange}

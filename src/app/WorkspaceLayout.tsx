@@ -17,6 +17,7 @@ import {
   FilePlus2,
   FileText,
   FolderPlus,
+  History,
   Link2,
   Pencil,
   Star,
@@ -186,6 +187,8 @@ interface WorkspaceLayoutProps {
   documentScrollRestoreId?: number
   editingDocumentContent?: string | null
   isDocumentLoading?: boolean
+  isProjectSwitching?: boolean
+  pendingProjectName?: string | null
   statusMessage: string | null
   actionToast?: WorkspaceActionToast | null
   sidebarWidth: number
@@ -207,9 +210,15 @@ interface WorkspaceLayoutProps {
   onReorderFileTreeNode?: (payload: FileTreeReorderPayload) => void | Promise<void>
   favoritePaths?: string[]
   showFavoritesOnly?: boolean
+  showRecentOnly?: boolean
+  isCurrentDocumentOutsideRecent?: boolean
+  isCurrentDocumentHiddenInRecent?: boolean
+  isCurrentDocumentUnavailableInRecent?: boolean
   showHiddenItems?: boolean
   onToggleFavoriteDocument?: (path: string) => void
   onToggleShowFavoritesOnly?: () => void
+  onToggleShowRecentOnly?: () => void
+  onLocateCurrentDocumentInTree?: () => void | Promise<void>
   onHidePath?: (path: string) => void
   onUnhidePath?: (path: string) => void
   onExpandedDirectoriesChange?: (paths: string[]) => void | Promise<void>
@@ -286,8 +295,13 @@ export interface WorkspaceSidebarPaneProps {
   hasPersistedExpandedDirectories?: boolean
   hasProjects: boolean
   isWorkspaceBootstrapping?: boolean
+  isProjectSwitching?: boolean
   favoritePaths?: string[]
   showFavoritesOnly?: boolean
+  showRecentOnly?: boolean
+  isCurrentDocumentOutsideRecent?: boolean
+  isCurrentDocumentHiddenInRecent?: boolean
+  isCurrentDocumentUnavailableInRecent?: boolean
   showHiddenItems?: boolean
   onDocumentSelect: (path: string) => void
   onCreateDocument?: (directoryPath?: string) => void | Promise<void>
@@ -301,6 +315,8 @@ export interface WorkspaceSidebarPaneProps {
   onReorderFileTreeNode?: (payload: FileTreeReorderPayload) => void | Promise<void>
   onToggleFavoriteDocument?: (path: string) => void
   onToggleShowFavoritesOnly?: () => void
+  onToggleShowRecentOnly?: () => void
+  onLocateCurrentDocumentInTree?: () => void | Promise<void>
   onHidePath?: (path: string) => void
   onUnhidePath?: (path: string) => void
   onExpandedDirectoriesChange?: (paths: string[]) => void | Promise<void>
@@ -381,8 +397,13 @@ export const WorkspaceSidebarPane = memo(function WorkspaceSidebarPane({
   hasPersistedExpandedDirectories = false,
   hasProjects,
   isWorkspaceBootstrapping = false,
+  isProjectSwitching = false,
   favoritePaths = EMPTY_PATHS,
   showFavoritesOnly = false,
+  showRecentOnly = false,
+  isCurrentDocumentOutsideRecent = false,
+  isCurrentDocumentHiddenInRecent = false,
+  isCurrentDocumentUnavailableInRecent = false,
   showHiddenItems = false,
   onDocumentSelect,
   onCreateDocument = () => {},
@@ -396,6 +417,8 @@ export const WorkspaceSidebarPane = memo(function WorkspaceSidebarPane({
   onReorderFileTreeNode = () => {},
   onToggleFavoriteDocument = () => {},
   onToggleShowFavoritesOnly = () => {},
+  onToggleShowRecentOnly = () => {},
+  onLocateCurrentDocumentInTree,
   onHidePath = () => {},
   onUnhidePath = () => {},
   onExpandedDirectoriesChange,
@@ -421,7 +444,7 @@ export const WorkspaceSidebarPane = memo(function WorkspaceSidebarPane({
   const dragPointerRef = useRef<{ x: number; y: number } | null>(null)
   const deferredFileSearchQuery = useDeferredValue(fileSearchQuery)
   const isFilteringFiles = deferredFileSearchQuery.trim().length > 0
-  const reorderEnabled = !isFilteringFiles && !showFavoritesOnly
+  const reorderEnabled = !isFilteringFiles && !showFavoritesOnly && !showRecentOnly
   const visibleFileTree = filterFileTree(
     fileTree,
     deferredFileSearchQuery,
@@ -732,6 +755,10 @@ export const WorkspaceSidebarPane = memo(function WorkspaceSidebarPane({
   }
 
   function handleDirectoryDragOver(directoryPath: string, event: React.DragEvent<HTMLElement>) {
+    if (!reorderEnabled) {
+      return
+    }
+
     const dragTypes = listDragTypes(event.dataTransfer)
     const hasDraggedDocument =
       dragTypes.includes(DOCUMENT_DRAG_MIME) ||
@@ -761,6 +788,10 @@ export const WorkspaceSidebarPane = memo(function WorkspaceSidebarPane({
   }
 
   async function handleDirectoryDrop(directoryPath: string, event: React.DragEvent<HTMLElement>) {
+    if (!reorderEnabled) {
+      return
+    }
+
     const sourcePath =
       event.dataTransfer.getData(DOCUMENT_DRAG_MIME) ||
       event.dataTransfer.getData('text/plain') ||
@@ -917,9 +948,18 @@ export const WorkspaceSidebarPane = memo(function WorkspaceSidebarPane({
   }
 
   return (
-    <aside className="workspace__sidebar workspace__sidebar--left">
+    <aside className="workspace__sidebar workspace__sidebar--left" aria-hidden={isProjectSwitching || undefined}>
       <div id="workspace-file-tree" className="panel panel--sidebar">
         <div className="panel__search panel__search--with-favorites">
+          <button
+            type="button"
+            className="panel__recent-toggle"
+            aria-label="按最近时间查看文档"
+            aria-pressed={showRecentOnly}
+            onClick={onToggleShowRecentOnly}
+          >
+            <History aria-hidden="true" />
+          </button>
           <button
             type="button"
             className="panel__favorite-toggle"
@@ -965,11 +1005,32 @@ export const WorkspaceSidebarPane = memo(function WorkspaceSidebarPane({
           onDragOverCapture={handleFileTreeDragOverCapture}
         >
           <div ref={fileTreeHoverLayerRef} className="file-tree__hover-layer" aria-hidden="true" />
+          {showRecentOnly && (isCurrentDocumentOutsideRecent || isCurrentDocumentHiddenInRecent || isCurrentDocumentUnavailableInRecent) ? (
+            <div className="file-tree__recent-status" role="status">
+              {isCurrentDocumentHiddenInRecent ? (
+                <span>当前文件已隐藏，未显示在最近列表中</span>
+              ) : isCurrentDocumentUnavailableInRecent ? (
+                <span>当前文件已不存在或不可访问</span>
+              ) : (
+                <>
+                  <span>当前文件不在最近 50 项中</span>
+                  <button
+                    type="button"
+                    onClick={() => void onLocateCurrentDocumentInTree?.()}
+                    aria-label="在目录中定位当前文件"
+                  >
+                    在目录中定位
+                  </button>
+                </>
+              )}
+            </div>
+          ) : null}
           {fileTree.length > 0 && visibleFileTree.length > 0 ? (
             <WorkspaceFileTree
               nodes={visibleFileTree}
               level={0}
               parentPath={null}
+              isRecentView={showRecentOnly}
               searchActive={isFilteringFiles}
               reorderEnabled={reorderEnabled}
               currentDocumentPath={currentDocumentPath}
@@ -1181,6 +1242,7 @@ export function WorkspaceFileTree({
   nodes,
   level,
   parentPath,
+  isRecentView,
   searchActive,
   reorderEnabled,
   currentDocumentPath,
@@ -1224,6 +1286,7 @@ export function WorkspaceFileTree({
   nodes: VisibleFileTreeNode[]
   level: number
   parentPath: string | null
+  isRecentView: boolean
   searchActive: boolean
   reorderEnabled: boolean
   currentDocumentPath: string | null
@@ -1395,6 +1458,7 @@ export function WorkspaceFileTree({
                         nodes={node.children}
                         level={level + 1}
                         parentPath={node.path}
+                        isRecentView={false}
                         searchActive={searchActive}
                         reorderEnabled={reorderEnabled}
                         currentDocumentPath={currentDocumentPath}
@@ -1511,7 +1575,7 @@ export function WorkspaceFileTree({
                 ) : (
                   <button
                     type="button"
-                    className="file-tree__file"
+                    className={isRecentView ? 'file-tree__file file-tree__file--recent' : 'file-tree__file'}
                     data-favorited={isFavorited ? 'true' : undefined}
                     data-dragging={dragNodePath === node.path ? 'true' : undefined}
                     aria-current={currentDocumentPath === node.path ? 'page' : undefined}
@@ -1520,7 +1584,14 @@ export function WorkspaceFileTree({
                     <span className="file-tree__file-icon" aria-hidden="true">
                       <FileText />
                     </span>
-                    <span className="file-tree__file-name">{node.name}</span>
+                    <span className="file-tree__file-copy">
+                      <span className="file-tree__file-name">{node.name}</span>
+                      {isRecentView ? (
+                        <span className="file-tree__file-path" aria-hidden="true">
+                          {node.path.includes('/') ? node.path.slice(0, node.path.lastIndexOf('/')) : '根目录'}
+                        </span>
+                      ) : null}
+                    </span>
                   </button>
                 )}
                 <div className="file-tree__actions">
@@ -1577,6 +1648,8 @@ export function WorkspaceLayout({
   documentScrollRestoreId = 0,
   editingDocumentContent,
   isDocumentLoading,
+  isProjectSwitching = false,
+  pendingProjectName = null,
   statusMessage,
   actionToast,
   sidebarWidth,
@@ -1599,9 +1672,15 @@ export function WorkspaceLayout({
   onReorderFileTreeNode = () => {},
   favoritePaths = [],
   showFavoritesOnly = false,
+  showRecentOnly = false,
+  isCurrentDocumentOutsideRecent = false,
+  isCurrentDocumentHiddenInRecent = false,
+  isCurrentDocumentUnavailableInRecent = false,
   showHiddenItems = false,
   onToggleFavoriteDocument = () => {},
   onToggleShowFavoritesOnly = () => {},
+  onToggleShowRecentOnly = () => {},
+  onLocateCurrentDocumentInTree,
   onHidePath = () => {},
   onUnhidePath = () => {},
   onExpandedDirectoriesChange,
@@ -2383,8 +2462,13 @@ export function WorkspaceLayout({
         hasPersistedExpandedDirectories={hasPersistedExpandedDirectories}
         hasProjects={hasProjects}
         isWorkspaceBootstrapping={isWorkspaceBootstrapping}
+        isProjectSwitching={isProjectSwitching}
         favoritePaths={favoritePaths}
         showFavoritesOnly={showFavoritesOnly}
+        showRecentOnly={showRecentOnly}
+        isCurrentDocumentOutsideRecent={isCurrentDocumentOutsideRecent}
+        isCurrentDocumentHiddenInRecent={isCurrentDocumentHiddenInRecent}
+        isCurrentDocumentUnavailableInRecent={isCurrentDocumentUnavailableInRecent}
         showHiddenItems={showHiddenItems}
         onDocumentSelect={onDocumentSelect}
         onCreateDocument={onCreateDocument}
@@ -2398,6 +2482,8 @@ export function WorkspaceLayout({
         onReorderFileTreeNode={onReorderFileTreeNode}
         onToggleFavoriteDocument={onToggleFavoriteDocument}
         onToggleShowFavoritesOnly={onToggleShowFavoritesOnly}
+        onToggleShowRecentOnly={onToggleShowRecentOnly}
+        onLocateCurrentDocumentInTree={onLocateCurrentDocumentInTree}
         onHidePath={onHidePath}
         onUnhidePath={onUnhidePath}
         onExpandedDirectoriesChange={onExpandedDirectoriesChange}
@@ -2415,7 +2501,7 @@ export function WorkspaceLayout({
         onPointerDown={beginSidebarResize}
       />
 
-      <section className="workspace__center">
+      <section className="workspace__center" aria-hidden={isProjectSwitching || undefined}>
         <div className="panel panel--canvas">
           <div ref={canvasRef} className="panel__content panel__content--canvas">
             {currentDocumentPath ? (
@@ -2451,7 +2537,7 @@ export function WorkspaceLayout({
         onPointerDown={beginOutlineResize}
       />
 
-      <aside className="workspace__sidebar workspace__sidebar--right">
+      <aside className="workspace__sidebar workspace__sidebar--right" aria-hidden={isProjectSwitching || undefined}>
         <div id="workspace-outline" ref={outlineRef} className="panel panel--outline">
           <div className="panel__content panel__content--outline">
             {!currentDocumentPath ? (
@@ -2492,6 +2578,12 @@ export function WorkspaceLayout({
           <span ref={outlinePerfStatsRef}>nodes: 0, links: 0, code: 0</span>
           <span ref={outlinePerfFrameHealthRef}>frame health: waiting</span>
           <span ref={outlinePerfLongTaskRef}>long tasks: waiting</span>
+        </div>
+      ) : null}
+      {isProjectSwitching ? (
+        <div className="workspace__project-switching" role="status" aria-live="polite">
+          <strong>正在切换到 {pendingProjectName ?? '目标项目'}…</strong>
+          <span>正在准备文件树和文档状态</span>
         </div>
       ) : null}
       {renderActionToast()}

@@ -22,8 +22,18 @@ describe('project scanner', () => {
     await writeFile(path.join(projectRoot, 'docs', 'guide.mdx'), '# guide')
     await writeFile(path.join(projectRoot, 'docs', 'nested', 'notes.txt'), 'ignore me')
 
-    const paths = await scanMarkdownTree(projectRoot, ['.'])
+    const entries = await scanMarkdownTree(projectRoot, ['.'])
 
-    expect(paths).toEqual(['README.md', 'docs/guide.mdx'])
+    expect(entries.map((entry) => entry.path)).toEqual(['README.md', 'docs/guide.mdx'])
+    expect(entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: 'README.md',
+          createdAtMs: expect.any(Number),
+          modifiedAtMs: expect.any(Number),
+          recentAtMs: expect.any(Number),
+        }),
+      ]),
+    )
   })
 })

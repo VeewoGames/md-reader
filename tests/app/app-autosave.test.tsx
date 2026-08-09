@@ -75,6 +75,7 @@ vi.mock('../../src/workspace/local-state', () => ({
 
 vi.mock('../../src/workspace/local-bridge-access', () => ({
   BridgeDocumentConflictError: class BridgeDocumentConflictError extends Error {},
+  BridgeDocumentSavedCacheInvalidationError: class BridgeDocumentSavedCacheInvalidationError extends Error {},
   getLocalBridgeHealth: vi.fn(async () => ({
     ok: true,
     mode: 'local-service',
@@ -97,6 +98,12 @@ vi.mock('../../src/workspace/local-bridge-access', () => ({
   getProfileFromBridge: bridgeMocks.getProfileFromBridge,
   saveProfileToBridge: bridgeMocks.saveProfileToBridge,
   getFileTreePathsFromBridge: vi.fn(async () => ['docs/guide.md', 'docs/next.md']),
+  getProjectTreeSnapshotFromBridge: vi.fn(async () => ({ entries: [
+    { path: 'docs/guide.md', createdAtMs: 1, modifiedAtMs: 1, recentAtMs: 1 },
+    { path: 'docs/next.md', createdAtMs: 1, modifiedAtMs: 1, recentAtMs: 1 },
+  ] })),
+  refreshFileTreeFromBridge: vi.fn(async () => ['docs/guide.md', 'docs/next.md']),
+  refreshProjectTreeSnapshotFromBridge: vi.fn(async () => ({ entries: [] })),
   getDocumentContentFromBridge: bridgeMocks.getDocumentContentFromBridge,
   saveDocumentContentToBridge: bridgeMocks.saveDocumentContentToBridge,
   registerProjectWithBridge: vi.fn(),

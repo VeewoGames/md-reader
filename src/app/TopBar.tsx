@@ -3,6 +3,7 @@ import {
   ChevronDown,
   Eye,
   EyeOff,
+  FolderSync,
   Lock,
   LockOpen,
   PanelTop,
@@ -39,6 +40,7 @@ interface TopBarTab {
 interface TopBarProps {
   projects: ProjectRegistryRecord[]
   activeProjectId: string | null
+  pendingProjectId?: string | null
   profileIds: string[]
   activeProfileId: string
   tabs: TopBarTab[]
@@ -51,6 +53,7 @@ interface TopBarProps {
   saveIndicator?: string | null
   currentDocumentPath?: string | null
   isDocumentLoading?: boolean
+  isFileTreeRefreshing?: boolean
   onConnectProject: () => void
   onProjectChange: (projectId: string) => void
   onProfileChange: (profileId: string) => void
@@ -70,6 +73,7 @@ interface TopBarProps {
   onDocumentPageWidthChange?: (pageWidth: PageWidthMode) => void
   onDocumentLineHeightChange?: (lineHeight: DocumentLineHeight) => void
   onRefreshDocument?: () => void | Promise<void>
+  onRefreshFileTree?: () => void | Promise<void>
 }
 
 const MODE_LABELS: Record<WorkspaceMode, string> = {
@@ -342,6 +346,7 @@ function TopBarSelect({
 export function TopBar({
   projects,
   activeProjectId,
+  pendingProjectId = null,
   profileIds,
   activeProfileId,
   tabs,
@@ -354,6 +359,7 @@ export function TopBar({
   saveIndicator,
   currentDocumentPath = null,
   isDocumentLoading = false,
+  isFileTreeRefreshing = false,
   onConnectProject,
   onProjectChange,
   onProfileChange,
@@ -373,6 +379,7 @@ export function TopBar({
   onDocumentPageWidthChange,
   onDocumentLineHeightChange,
   onRefreshDocument,
+  onRefreshFileTree,
 }: TopBarProps) {
   const [dragState, setDragState] = useState<'idle' | 'press_pending' | 'dragging' | 'settling'>('idle')
   const [dragTabId, setDragTabId] = useState<string | null>(null)
@@ -710,7 +717,7 @@ export function TopBar({
           className="topbar__field topbar__field--project"
           options={projectOptions}
           placeholder="选择项目"
-          value={activeProjectId ?? ''}
+          value={pendingProjectId ?? activeProjectId ?? ''}
           onChange={onProjectChange}
         />
 
@@ -827,6 +834,19 @@ export function TopBar({
       ) : null}
 
       <div className="topbar__group topbar__group--end">
+        <button
+          type="button"
+          className="topbar__service-button"
+          aria-label="刷新文件树"
+          title="刷新文件树"
+          disabled={activeProjectId == null || isFileTreeRefreshing}
+          aria-busy={isFileTreeRefreshing}
+          onClick={() => void onRefreshFileTree?.()}
+        >
+          <span className="topbar__icon" aria-hidden="true">
+            <FolderSync />
+          </span>
+        </button>
         <button
           type="button"
           className="topbar__service-button"

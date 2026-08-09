@@ -937,6 +937,24 @@ select {
   overflow: hidden;
 }
 
+.workspace__project-switching {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  z-index: 20;
+  display: grid;
+  place-content: center;
+  gap: 8px;
+  min-height: 100%;
+  padding: 32px;
+  text-align: center;
+  background: rgba(249, 246, 241, 0.97);
+  color: var(--text-strong);
+}
+
+.workspace__project-switching span {
+  color: var(--text-muted);
+}
+
 .workspace__sidebar,
 .workspace__center {
   min-height: 0;
@@ -1016,12 +1034,13 @@ select {
 
 .panel__search--with-favorites {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  grid-template-columns: auto auto minmax(0, 1fr) auto auto;
   gap: 10px;
   align-items: center;
 }
 
-.panel__favorite-toggle {
+.panel__favorite-toggle,
+.panel__recent-toggle {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1036,13 +1055,15 @@ select {
   cursor: pointer;
 }
 
-.panel__favorite-toggle svg {
+.panel__favorite-toggle svg,
+.panel__recent-toggle svg {
   width: 15px;
   height: 15px;
   stroke-width: 2;
 }
 
-.panel__favorite-toggle[aria-pressed='true'] {
+.panel__favorite-toggle[aria-pressed='true'],
+.panel__recent-toggle[aria-pressed='true'] {
   color: #9b6514;
   background: rgba(234, 193, 109, 0.22);
   border-color: rgba(190, 139, 69, 0.3);
@@ -2294,6 +2315,63 @@ select {
   cursor: pointer;
   min-width: 0;
   transition: none;
+}
+
+.file-tree__file {
+  min-width: 0;
+}
+
+.file-tree__file-copy {
+  display: grid;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.file-tree__file--recent {
+  align-items: flex-start;
+  min-height: 46px;
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
+.file-tree__file-path {
+  display: block;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 11px;
+  opacity: 0.5;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-tree__recent-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 8px 8px;
+  padding: 7px 9px;
+  border-radius: 8px;
+  background: rgba(127, 105, 82, 0.08);
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.file-tree__recent-status button {
+  flex: 0 0 auto;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-strong);
+  cursor: pointer;
+  font: inherit;
+}
+
+.file-tree__recent-status button:hover,
+.file-tree__recent-status button:focus-visible {
+  background: rgba(127, 105, 82, 0.12);
 }
 
 /* Leaf-only groups do not need to reserve space for a directory chevron. */

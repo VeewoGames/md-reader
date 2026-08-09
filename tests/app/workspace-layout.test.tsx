@@ -109,6 +109,20 @@ function renderMockMarkdown(lines: string[], attachHeadingIds = false) {
   })
 }
 
+function createRecentTree(paths: string[]) {
+  return paths.map((path) => ({
+    id: `file:${path}`,
+    kind: 'file' as const,
+    name: path.split('/').at(-1) ?? path,
+    path,
+    meta: {
+      isExplicitlyHidden: false,
+      isHiddenByAncestor: false,
+      isVisibleInCurrentMode: true,
+    },
+  }))
+}
+
 describe('file tree edge auto-scroll calculation', () => {
   const rect = { top: 100, bottom: 500 } as DOMRect
 
@@ -158,6 +172,74 @@ describe('WorkspaceSidebarPane edge auto-scroll', () => {
       />,
     )
   }
+
+  it('renders the recent toggle with path subtitles while preserving document button names', async () => {
+    const user = userEvent.setup()
+    const onToggleShowRecentOnly = vi.fn()
+
+    render(
+      <WorkspaceSidebarPane
+        fileTree={createRecentTree(['docs/guide.md', 'notes/guide.md'])}
+        availableDirectoryPaths={[]}
+        currentDocumentPath={null}
+        hasProjects
+        showRecentOnly
+        onDocumentSelect={noop}
+        onToggleShowRecentOnly={onToggleShowRecentOnly}
+      />,
+    )
+
+    const recentToggle = screen.getByRole('button', { name: '按最近时间查看文档' })
+    expect(recentToggle).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getAllByRole('button', { name: 'guide.md' })).toHaveLength(2)
+    expect(screen.getByText('docs')).toHaveAttribute('aria-hidden', 'true')
+    expect(screen.getByText('notes')).toHaveAttribute('aria-hidden', 'true')
+
+    await user.click(recentToggle)
+    expect(onToggleShowRecentOnly).toHaveBeenCalledTimes(1)
+  })
+
+  it('offers directory locating only when the current document falls outside the recent limit', async () => {
+    const user = userEvent.setup()
+    const onLocateCurrentDocumentInTree = vi.fn()
+
+    render(
+      <WorkspaceSidebarPane
+        fileTree={createRecentTree(['docs/recent.md'])}
+        availableDirectoryPaths={[]}
+        currentDocumentPath="docs/older.md"
+        hasProjects
+        showRecentOnly
+        isCurrentDocumentOutsideRecent
+        onDocumentSelect={noop}
+        onLocateCurrentDocumentInTree={onLocateCurrentDocumentInTree}
+      />,
+    )
+
+    expect(screen.getByRole('status')).toHaveTextContent('当前文件不在最近 50 项中')
+    await user.click(screen.getByRole('button', { name: '在目录中定位当前文件' }))
+    expect(onLocateCurrentDocumentInTree).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([
+    ['isCurrentDocumentHiddenInRecent', '当前文件已隐藏，未显示在最近列表中'],
+    ['isCurrentDocumentUnavailableInRecent', '当前文件已不存在或不可访问'],
+  ] as const)('does not offer locating for %s', (stateKey, message) => {
+    render(
+      <WorkspaceSidebarPane
+        fileTree={createRecentTree(['docs/recent.md'])}
+        availableDirectoryPaths={[]}
+        currentDocumentPath="docs/older.md"
+        hasProjects
+        showRecentOnly
+        {...{ [stateKey]: true }}
+        onDocumentSelect={noop}
+      />,
+    )
+
+    expect(screen.getByRole('status')).toHaveTextContent(message)
+    expect(screen.queryByRole('button', { name: '在目录中定位当前文件' })).not.toBeInTheDocument()
+  })
 
   it('scrolls, recomputes the target under the stationary pointer, and stops when dragging ends', async () => {
     const frames: FrameRequestCallback[] = []

@@ -49,12 +49,19 @@ vi.mock('../../src/workspace/local-state', () => ({
 
 vi.mock('../../src/workspace/local-bridge-access', () => ({
   BridgeDocumentConflictError: class BridgeDocumentConflictError extends Error {},
+  BridgeDocumentSavedCacheInvalidationError: class BridgeDocumentSavedCacheInvalidationError extends Error {},
   createDirectoryNodeInBridge: bridgeMocks.createDirectoryNodeInBridge,
   createDocumentNodeInBridge: bridgeMocks.createDocumentNodeInBridge,
   deleteDocumentNodeInBridge: bridgeMocks.deleteDocumentNodeInBridge,
   duplicateDocumentNodeInBridge: bridgeMocks.duplicateDocumentNodeInBridge,
   getDocumentContentFromBridge: bridgeMocks.getDocumentContentFromBridge,
   getFileTreePathsFromBridge: vi.fn(async () => ['docs/guide.md', 'docs/guide-副本.md']),
+  getProjectTreeSnapshotFromBridge: vi.fn(async () => ({
+    entries: [
+      { path: 'docs/guide.md', createdAtMs: 100, modifiedAtMs: 100, recentAtMs: 100 },
+      { path: 'docs/guide-副本.md', createdAtMs: 100, modifiedAtMs: 100, recentAtMs: 100 },
+    ],
+  })),
   getLocalBridgeHealth: vi.fn(async () => ({
     ok: true,
     mode: 'local-service',
@@ -68,6 +75,13 @@ vi.mock('../../src/workspace/local-bridge-access', () => ({
   registerProjectWithBridge: vi.fn(),
   renameDocumentNodeInBridge: bridgeMocks.renameDocumentNodeInBridge,
   restartLocalBridgeService: vi.fn(),
+  refreshFileTreeFromBridge: vi.fn(async () => ['docs/guide.md', 'docs/guide-副本.md']),
+  refreshProjectTreeSnapshotFromBridge: vi.fn(async () => ({
+    entries: [
+      { path: 'docs/guide.md', createdAtMs: 100, modifiedAtMs: 100, recentAtMs: 100 },
+      { path: 'docs/guide-副本.md', createdAtMs: 100, modifiedAtMs: 100, recentAtMs: 100 },
+    ],
+  })),
   saveDocumentContentToBridge: vi.fn(),
   saveProfileToBridge: vi.fn(async (_projectId, profile) => profile),
   setActiveProjectWithBridge: vi.fn(),

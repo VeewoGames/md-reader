@@ -7,6 +7,7 @@ import {
   duplicateDocumentNodeInBridge,
   getDocumentContentFromBridge,
   getFileTreePathsFromBridge,
+  refreshFileTreeFromBridge,
   getProfileFromBridge,
   getLocalBridgeHealth,
   listProjectsFromBridge,
@@ -31,7 +32,7 @@ describe('local bridge access', () => {
       })
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ status: 'ready', tree: ['docs/guide.md'], refreshId: 'tree-7' }),
+        json: async () => ({ status: 'ready', snapshot: { entries: [{ path: 'docs/guide.md', createdAtMs: 1, modifiedAtMs: 1, recentAtMs: 1 }] }, refreshId: 'tree-7' }),
       })
 
     const paths = await getFileTreePathsFromBridge('notes', 'Lans', { fetchImpl: fetchMock, onIndexing })
@@ -41,6 +42,33 @@ describe('local bridge access', () => {
     expect(fetchMock).toHaveBeenNthCalledWith(
       2,
       'http://127.0.0.1:8797/api/projects/notes/tree?profileId=Lans&mode=wait&refreshId=tree-7',
+    )
+  })
+
+  it('forces a tree refresh and waits for the refreshed snapshot', async () => {
+    const onIndexing = vi.fn()
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ status: 'refreshing', refreshId: 'tree-8', requestedGeneration: 2 }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ status: 'ready', snapshot: { entries: [{ path: 'docs/new.md', createdAtMs: 1, modifiedAtMs: 1, recentAtMs: 1 }] }, refreshId: 'tree-8' }),
+      })
+
+    await expect(refreshFileTreeFromBridge('notes', 'Lans', { fetchImpl: fetchMock, onIndexing })).resolves.toEqual([
+      'docs/new.md',
+    ])
+    expect(onIndexing).toHaveBeenCalledWith({ status: 'refreshing', refreshId: 'tree-8', requestedGeneration: 2 })
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      'http://127.0.0.1:8797/api/projects/notes/tree?profileId=Lans&mode=force',
+    )
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      'http://127.0.0.1:8797/api/projects/notes/tree?profileId=Lans&mode=wait&refreshId=tree-8',
     )
   })
 

@@ -6,7 +6,14 @@ import type { WorkspaceActionToast } from './app/WorkspaceLayout'
 import type { RegularViewState, WorkspaceMode } from './app/TopBar'
 import { createBrowserKeyValueStore } from './shared/key-value-store'
 import { STORAGE_KEYS } from './shared/storage-keys'
-import { buildFileTree, createVisibleFileTree, filterFileTreeByFavorites } from './workspace/file-tree'
+import {
+  buildFileTree,
+  collectRecentFileTreeNodes,
+  createVisibleFileTree,
+  filterFileTreeByFavorites,
+  isPathExplicitlyHidden,
+  isPathHiddenByAncestor,
+} from './workspace/file-tree'
 import {
   appendNodeToManualOrder,
   applyManualTreeOrder,
@@ -19,6 +26,7 @@ import {
 } from './workspace/file-tree-order'
 import { createContentHash } from './shared/content-hash'
 import type { FileTreeNode } from './workspace/file-tree-types'
+import type { ProjectTreeDocumentEntry } from './workspace/local-bridge-access'
 import {
   getActiveTab,
   type TabSaveState,
@@ -31,10 +39,14 @@ import {
   deleteDocumentNodeInBridge,
   duplicateDocumentNodeInBridge,
   BridgeDocumentConflictError,
+  BridgeDocumentSavedCacheInvalidationError,
   moveDocumentNodeInBridge,
   getDocumentContentFromBridge,
   getProfileFromBridge,
   getFileTreePathsFromBridge,
+  getProjectTreeSnapshotFromBridge,
+  refreshFileTreeFromBridge,
+  refreshProjectTreeSnapshotFromBridge,
   getLocalBridgeHealth,
   listProjectsFromBridge,
   listProjectProfilesFromBridge,
@@ -71,11 +83,15 @@ const workspaceProvider = createWorkspaceProvider({
     registerProject: registerProjectWithBridge,
     setActiveProject: setActiveProjectWithBridge,
     getFileTreePaths: getFileTreePathsFromBridge,
+    refreshFileTree: refreshFileTreeFromBridge,
+    getProjectTreeSnapshot: getProjectTreeSnapshotFromBridge,
+    refreshProjectTreeSnapshot: refreshProjectTreeSnapshotFromBridge,
   },
 })
 
 const AUTOSAVE_DEBOUNCE_MS = 1200
 const MARKDOWN_TITLE_EXTENSION_PATTERN = /\.(md|mdx)$/i
+const RECENT_DOCUMENT_LIMIT = 50
 
 export type DeepLinkTarget = { projectId: string; profileId: string; documentPath: string; headingId: string | null }
 
@@ -313,6 +329,12 @@ function getDocumentDirectoryPath(documentPath: string | null): string {
   return documentPath.split('/').slice(0, -1).join('/')
 }
 
+function getDocumentAncestorDirectoryPaths(documentPath: string): string[] {
+  const directoryPath = getDocumentDirectoryPath(documentPath)
+  const segments = directoryPath.split('/').filter(Boolean)
+  return segments.map((_, index) => segments.slice(0, index + 1).join('/'))
+}
+
 function joinNodePath(directoryPath: string, name: string): string {
   const trimmedName = name.trim()
   return directoryPath ? `${directoryPath}/${trimmedName}` : trimmedName
@@ -418,16 +440,20 @@ function getSaveIndicator(
 function App() {
   const [projects, setProjects] = useState<ProjectRegistryRecord[]>([])
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null)
+  const [pendingProjectId, setPendingProjectId] = useState<string | null>(null)
   const [profileIds, setProfileIds] = useState(['default'])
   const [activeProfileId, setActiveProfileId] = useState('default')
   const [session, setSession] = useState<WorkspaceSession>(createEmptySession)
   const [fileTree, setFileTree] = useState<FileTreeNode[]>([])
+  const [treeEntriesByPath, setTreeEntriesByPath] = useState<Map<string, ProjectTreeDocumentEntry>>(() => new Map())
   const [hiddenPaths, setHiddenPaths] = useState<string[]>([])
   const [favoritePaths, setFavoritePaths] = useState<string[]>([])
   const [manualNodeOrderByParent, setManualNodeOrderByParent] = useState<ManualNodeOrderByParent>({})
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(false)
+  const [showRecentOnly, setShowRecentOnly] = useState(false)
   const [showHiddenItems, setShowHiddenItems] = useState(false)
   const [isDocumentLoading, setIsDocumentLoading] = useState(false)
+  const [isFileTreeRefreshing, setIsFileTreeRefreshing] = useState(false)
   const [workspaceSource, setWorkspaceSource] = useState<WorkspaceSource>('offline')
   const [isServiceActionPending, setIsServiceActionPending] = useState(false)
   const [pendingWorkspaceAction, setPendingWorkspaceAction] = useState<PendingWorkspaceAction | null>(null)
@@ -467,12 +493,44 @@ function App() {
       }),
     [fileTree, hiddenPaths, showHiddenItems],
   )
+  const strictVisibleNodes = useMemo(
+    () => createVisibleFileTree({ sourceNodes: fileTree, hiddenPaths, showHiddenItems: false }).visibleNodes,
+    [fileTree, hiddenPaths],
+  )
+  const recentAtMsByPath = useMemo(
+    () => new Map([...treeEntriesByPath].map(([path, entry]) => [path, entry.recentAtMs])),
+    [treeEntriesByPath],
+  )
+  const recentFileNodes = useMemo(
+    () => collectRecentFileTreeNodes(strictVisibleNodes, recentAtMsByPath, RECENT_DOCUMENT_LIMIT),
+    [recentAtMsByPath, strictVisibleNodes],
+  )
+  const hiddenPathSet = useMemo(() => new Set(hiddenPaths), [hiddenPaths])
+  const strictVisibleDocumentPaths = useMemo(
+    () => new Set(collectDocumentPaths(strictVisibleNodes)),
+    [strictVisibleNodes],
+  )
+  const isCurrentDocumentHiddenInRecent =
+    currentDocumentPath != null &&
+    (isPathExplicitlyHidden(currentDocumentPath, hiddenPathSet) ||
+      isPathHiddenByAncestor(currentDocumentPath, hiddenPathSet))
+  const isCurrentDocumentUnavailableInRecent =
+    currentDocumentPath != null &&
+    !isCurrentDocumentHiddenInRecent &&
+    !strictVisibleDocumentPaths.has(currentDocumentPath)
+  const isCurrentDocumentOutsideRecent =
+    currentDocumentPath != null &&
+    !isCurrentDocumentHiddenInRecent &&
+    !isCurrentDocumentUnavailableInRecent &&
+    !recentFileNodes.some((node) => node.path === currentDocumentPath)
   const visibleFileTree = useMemo(
     () =>
-      showFavoritesOnly
+      showRecentOnly
+        ? recentFileNodes
+        : showFavoritesOnly
         ? filterFileTreeByFavorites(visibleAfterHidden, favoritePaths)
         : visibleAfterHidden,
-    [favoritePaths, showFavoritesOnly, visibleAfterHidden],
+    [favoritePaths, recentFileNodes, showFavoritesOnly, showRecentOnly, visibleAfterHidden],
   )
   const documentLinkPaths = useMemo(() => collectDocumentPaths(fileTree), [fileTree])
   const autosaveTimerRef = useRef<number | null>(null)
@@ -794,6 +852,7 @@ function App() {
       setFavoritePaths([])
       setManualNodeOrderByParent({})
       setShowFavoritesOnly(false)
+      setShowRecentOnly(false)
       setShowHiddenItems(false)
       setDocumentFontSize(16)
       setDocumentPageWidth('narrow')
@@ -828,6 +887,7 @@ function App() {
       setFavoritePaths(profile.navigation?.favoritePaths ?? [])
       setManualNodeOrderByParent(profile.navigation?.manualNodeOrderByParent ?? {})
       setShowFavoritesOnly(false)
+      setShowRecentOnly(false)
       setShowHiddenItems(false)
       setDocumentFontSize(profile.appearance?.fontSize ?? 16)
       setDocumentPageWidth(profile.appearance?.pageWidth ?? 'narrow')
@@ -1099,9 +1159,24 @@ function App() {
           saveErrorMessage: null,
         })
       })
+      if (document.treeEntry) {
+        setTreeEntriesByPath((current) => new Map(current).set(document.treeEntry!.path, document.treeEntry!))
+      }
       clearSaveFailureStatus(projectId)
       return true
     } catch (error) {
+      if (error instanceof BridgeDocumentSavedCacheInvalidationError) {
+        const document = error.document
+        setSession((current) => {
+          const currentTab = current.tabs.find((entry) => entry.id === tabId)
+          if (currentTab == null) return current
+          const nextDraftContent = currentTab.draftContent === tab.draftContent ? document.content : currentTab.draftContent
+          return replaceTab(current, { ...currentTab, persistedContent: document.content, draftContent: nextDraftContent, mtimeMs: document.mtimeMs, saveState: nextDraftContent === document.content ? 'clean' : 'typing', saveErrorMessage: error.message })
+        })
+        if (document.treeEntry) setTreeEntriesByPath((current) => new Map(current).set(document.treeEntry!.path, document.treeEntry!))
+        setStatusMessage(`文件已保存，但最近索引同步失败：${error.message}`)
+        return true
+      }
       const message = formatSaveErrorMessage(error instanceof Error ? error.message : '保存失败')
 
       setSession((current) => {
@@ -1176,6 +1251,7 @@ function App() {
       const applySavedDocument = (document: {
         content: string
         mtimeMs: number
+        treeEntry?: ProjectTreeDocumentEntry
       }) => {
         if (requestRevision <= lastAckedSaveRevisionRef.current) {
           return
@@ -1192,6 +1268,9 @@ function App() {
             saveErrorMessage: null,
             saveState: editingDocumentContentRef.current === document.content ? 'clean' : 'typing',
           })
+          if (document.treeEntry) {
+            setTreeEntriesByPath((current) => new Map(current).set(document.treeEntry!.path, document.treeEntry!))
+          }
           clearSaveFailureStatus(projectId)
         }
       }
@@ -1209,6 +1288,12 @@ function App() {
             expectedContentHash,
           )
         } catch (error) {
+          if (error instanceof BridgeDocumentSavedCacheInvalidationError) {
+            applySavedDocument(error.document)
+            if (error.document.treeEntry) setTreeEntriesByPath((current) => new Map(current).set(error.document.treeEntry!.path, error.document.treeEntry!))
+            setStatusMessage(`文件已保存，但最近索引同步失败：${error.message}`)
+            return true
+          }
           if (!(error instanceof BridgeDocumentConflictError)) {
             throw error
           }
@@ -1247,6 +1332,7 @@ function App() {
     nextProjects = projects,
     nextProfileId = activeProfileId,
     deepLink?: DeepLinkTarget,
+    shouldApply: () => boolean = () => true,
   ) {
     const project = nextProjects.find((entry) => entry.id === projectId)
 
@@ -1258,10 +1344,13 @@ function App() {
       return false
     }
 
-    const markdownPaths = await workspaceProvider.getFileTreePaths(project.id, nextProfileId)
+    const snapshot = await workspaceProvider.getProjectTreeSnapshot(project.id, nextProfileId)
+    if (!shouldApply()) return false
+    const markdownPaths = snapshot.entries.map((entry) => entry.path)
     if (deepLink && !markdownPaths.includes(deepLink.documentPath)) {
       setActiveProjectId(project.id)
       setFileTree(buildOrderedFileTree(markdownPaths, {}))
+      setTreeEntriesByPath(new Map(snapshot.entries.map((entry) => [entry.path, entry])))
       resetSessionState()
       return false
     }
@@ -1278,6 +1367,7 @@ function App() {
             ReturnType<typeof localStateStore.getState>
           > & { activeMode: 'regular' | 'split' | 'read' | 'edit'; lastKnownScrollTop?: number },
         )
+    if (!shouldApply()) return false
     const { state: localState, changed: localStateChanged } = reconcileLocalStateWithFileTree(
       restoredLocalState,
       markdownPaths,
@@ -1317,6 +1407,7 @@ function App() {
     setManualNodeOrderByParent(profile.navigation?.manualNodeOrderByParent ?? {})
     setFavoritePaths(nextFavoritePaths)
     setFileTree(orderedFileTree)
+    setTreeEntriesByPath(new Map(snapshot.entries.map((entry) => [entry.path, entry])))
     sessionRef.current = restoredSession
     setSession(restoredSession)
     setStatusMessage(
@@ -1347,7 +1438,7 @@ function App() {
     }
 
     if (nextActiveDocumentPath) {
-      const loaded = await loadDocumentContent(project, nextActiveDocumentPath, nextProfileId)
+      const loaded = await loadDocumentContent(project, nextActiveDocumentPath, nextProfileId, shouldApply)
       if (!loaded) {
         if (deepLink) resetSessionState()
         return false
@@ -1365,16 +1456,17 @@ function App() {
   async function prepareLocalServiceWorkspace(
     projectId: string,
     profileId: string,
-    options?: Parameters<typeof workspaceProvider.getFileTreePaths>[2],
+    options?: Parameters<typeof workspaceProvider.getProjectTreeSnapshot>[2],
   ) {
     const project = projects.find((entry) => entry.id === projectId)
     if (!project) return null
 
-    const [markdownPaths, profile, restoredState] = await Promise.all([
-      workspaceProvider.getFileTreePaths(project.id, profileId, options),
+    const [snapshot, profile, restoredState] = await Promise.all([
+      workspaceProvider.getProjectTreeSnapshot(project.id, profileId, options),
       getProfileFromBridge(project.id, profileId, profileId),
       localStateStore.getState(project.id),
     ])
+    const markdownPaths = snapshot.entries.map((entry) => entry.path)
     const localState = normalizeLocalStateSnapshot(restoredState as Awaited<
       ReturnType<typeof localStateStore.getState>
     > & { activeMode: 'regular' | 'split' | 'read' | 'edit'; lastKnownScrollTop?: number })
@@ -1393,7 +1485,7 @@ function App() {
     }
     const orderedFileTree = buildOrderedFileTree(markdownPaths, profile.navigation?.manualNodeOrderByParent ?? {})
     const favoritePaths = pruneFavoritePaths(orderedFileTree, profile.navigation?.favoritePaths ?? [])
-    return { project, markdownPaths, profile, session, orderedFileTree, favoritePaths, activeDocumentPath }
+    return { project, markdownPaths, snapshot, profile, session, orderedFileTree, favoritePaths, activeDocumentPath }
   }
 
   async function switchLocalServiceProject(projectId: string) {
@@ -1402,9 +1494,8 @@ function App() {
 
     const revision = workspaceLoadRevisionRef.current + 1
     workspaceLoadRevisionRef.current = revision
-    const previousActiveProjectId = activeProjectIdRef.current
     performance.mark('project-switch-requested')
-    setActiveProjectId(projectId)
+    setPendingProjectId(projectId)
     setStatusMessage('正在切换项目…')
     window.requestAnimationFrame(() => {
       if (revision === workspaceLoadRevisionRef.current) {
@@ -1417,24 +1508,12 @@ function App() {
       prepared = await prepareLocalServiceWorkspace(projectId, activeProfileIdRef.current, {
         onIndexing: async () => {
           if (revision !== workspaceLoadRevisionRef.current) return
-          const indexingCommit = projectSwitchCommitRef.current.then(async () => {
-            if (revision !== workspaceLoadRevisionRef.current) return
-            await workspaceProvider.setActiveProject(activeProfileIdRef.current, projectId)
-            if (revision !== workspaceLoadRevisionRef.current) return
-            setActiveProjectId(projectId)
-            setFileTree([])
-            setManualNodeOrderByParent({})
-            setFavoritePaths([])
-            resetSessionState()
-            setStatusMessage('正在索引项目文件树…')
-          })
-          projectSwitchCommitRef.current = indexingCommit.then(() => undefined, () => undefined)
-          await indexingCommit
+          setStatusMessage('正在索引项目文件树…')
         },
       })
     } catch (error) {
       if (revision === workspaceLoadRevisionRef.current) {
-        setActiveProjectId(previousActiveProjectId)
+        setPendingProjectId(null)
         setStatusMessage(error instanceof Error ? `项目切换失败：${error.message}` : '项目切换失败')
       }
       return false
@@ -1444,16 +1523,18 @@ function App() {
     const commit = projectSwitchCommitRef.current.then(async () => {
       if (revision !== workspaceLoadRevisionRef.current) return false
       await workspaceProvider.setActiveProject(activeProfileIdRef.current, prepared.project.id)
-      setActiveProjectId(prepared.project.id)
-      setStatusMessage(`当前项目：${prepared.project.name}`)
-      window.requestAnimationFrame(() => performance.mark('project-tree-interactive'))
       startTransition(() => {
+        setActiveProjectId(prepared.project.id)
+        setPendingProjectId(null)
+        setStatusMessage(`当前项目：${prepared.project.name}`)
         setManualNodeOrderByParent(prepared.profile.navigation?.manualNodeOrderByParent ?? {})
         setFavoritePaths(prepared.favoritePaths)
         setFileTree(prepared.orderedFileTree)
+        setTreeEntriesByPath(new Map(prepared.snapshot.entries.map((entry) => [entry.path, entry])))
         sessionRef.current = prepared.session
         setSession(prepared.session)
       })
+      window.requestAnimationFrame(() => performance.mark('project-tree-interactive'))
       return true
     })
     projectSwitchCommitRef.current = commit.then(() => undefined, () => undefined)
@@ -1470,7 +1551,7 @@ function App() {
       return didSwitch
     } catch (error) {
       if (revision === workspaceLoadRevisionRef.current) {
-        setActiveProjectId(previousActiveProjectId)
+        setPendingProjectId(null)
         setStatusMessage(error instanceof Error ? `项目切换失败：${error.message}` : '项目切换失败')
       }
       return false
@@ -1574,6 +1655,8 @@ function App() {
     }
 
     if (action.kind === 'switch-profile') {
+      const revision = workspaceLoadRevisionRef.current + 1
+      workspaceLoadRevisionRef.current = revision
       setActiveProfileId(action.profileId)
 
       if (workspaceSource !== 'local-service') {
@@ -1586,6 +1669,7 @@ function App() {
       }
 
       const snapshot = await workspaceProvider.listProjects(action.profileId)
+      if (revision !== workspaceLoadRevisionRef.current) return
       let nextSnapshot = snapshot
 
       if (!nextSnapshot.activeProjectId) {
@@ -1601,6 +1685,7 @@ function App() {
           )
           await workspaceProvider.setActiveProject(action.profileId, registeredProject.id)
           nextSnapshot = await workspaceProvider.listProjects(action.profileId)
+          if (revision !== workspaceLoadRevisionRef.current) return
         }
       }
 
@@ -1618,6 +1703,8 @@ function App() {
         nextSnapshot.activeProjectId,
         nextSnapshot.projects,
         action.profileId,
+        undefined,
+        () => revision === workspaceLoadRevisionRef.current,
       )
       return
     }
@@ -1703,10 +1790,12 @@ function App() {
   }
 
   async function refreshProjectTree(projectId: string, profileId: string) {
-    const markdownPaths = await workspaceProvider.getFileTreePaths(projectId, profileId)
+    const snapshot = await workspaceProvider.getProjectTreeSnapshot(projectId, profileId)
+    const markdownPaths = snapshot.entries.map((entry) => entry.path)
     const nextFileTree = buildOrderedFileTree(markdownPaths, manualNodeOrderByParent)
     const nextFavoritePaths = pruneFavoritePaths(nextFileTree, favoritePaths)
     setFileTree(nextFileTree)
+    setTreeEntriesByPath(new Map(snapshot.entries.map((entry) => [entry.path, entry])))
 
     if (nextFavoritePaths.length !== favoritePaths.length) {
       setFavoritePaths(nextFavoritePaths)
@@ -1714,6 +1803,55 @@ function App() {
     }
 
     return markdownPaths
+  }
+
+  async function getMarkdownPathsFromSnapshot(projectId: string, profileId: string) {
+    const snapshot = await workspaceProvider.getProjectTreeSnapshot(projectId, profileId)
+    setTreeEntriesByPath(new Map(snapshot.entries.map((entry) => [entry.path, entry])))
+    return snapshot.entries.map((entry) => entry.path)
+  }
+
+  async function handleRefreshFileTree() {
+    const projectId = activeProjectIdRef.current
+    const profileId = activeProfileIdRef.current
+    const refreshRevision = workspaceLoadRevisionRef.current
+    if (!projectId || pendingProjectId != null || isFileTreeRefreshing) return
+
+    setIsFileTreeRefreshing(true)
+    setStatusMessage('正在刷新文件树…')
+    try {
+      const snapshot = await workspaceProvider.refreshProjectTreeSnapshot(projectId, profileId, {
+        onIndexing: () => setStatusMessage('正在刷新文件树…'),
+      })
+      const markdownPaths = snapshot.entries.map((entry) => entry.path)
+      if (
+        activeProjectIdRef.current !== projectId ||
+        activeProfileIdRef.current !== profileId ||
+        workspaceLoadRevisionRef.current !== refreshRevision
+      ) {
+        return
+      }
+
+      const nextFileTree = buildOrderedFileTree(markdownPaths, manualNodeOrderByParent)
+      const nextFavoritePaths = pruneFavoritePaths(nextFileTree, favoritePaths)
+      setFileTree(nextFileTree)
+      setTreeEntriesByPath(new Map(snapshot.entries.map((entry) => [entry.path, entry])))
+      if (nextFavoritePaths.length !== favoritePaths.length) {
+        setFavoritePaths(nextFavoritePaths)
+        await saveActiveProfileNavigation({ favoritePaths: nextFavoritePaths })
+      }
+      setStatusMessage('文件树已刷新')
+    } catch (error) {
+      if (
+        activeProjectIdRef.current === projectId &&
+        activeProfileIdRef.current === profileId &&
+        workspaceLoadRevisionRef.current === refreshRevision
+      ) {
+        setStatusMessage(error instanceof Error ? `刷新文件树失败：${error.message}` : '刷新文件树失败')
+      }
+    } finally {
+      setIsFileTreeRefreshing(false)
+    }
   }
 
   async function purgeMissingDocumentPath(
@@ -1958,7 +2096,7 @@ function App() {
         await createDirectoryNodeInBridge(projectId, profileId, targetPath)
       }
 
-      const nextMarkdownPaths = await workspaceProvider.getFileTreePaths(projectId, profileId)
+      const nextMarkdownPaths = await getMarkdownPathsFromSnapshot(projectId, profileId)
       const nextManualNodeOrderByParent = appendNodeToManualOrder(manualNodeOrderByParent, targetPath)
       await persistManualNodeOrder(nextManualNodeOrderByParent, {
         refreshPaths: nextMarkdownPaths,
@@ -2119,7 +2257,7 @@ function App() {
 
       const targetPath = joinNodePath(getDocumentDirectoryPath(documentPath), trimmedDuplicateName)
       await duplicateDocumentNodeInBridge(projectId, profileId, documentPath, targetPath)
-      const nextMarkdownPaths = await workspaceProvider.getFileTreePaths(projectId, profileId)
+      const nextMarkdownPaths = await getMarkdownPathsFromSnapshot(projectId, profileId)
       const nextManualNodeOrderByParent = appendNodeToManualOrder(manualNodeOrderByParent, targetPath)
       await persistManualNodeOrder(nextManualNodeOrderByParent, {
         refreshPaths: nextMarkdownPaths,
@@ -2156,7 +2294,7 @@ function App() {
 
       const result = await renameDocumentNodeInBridge(projectId, profileId, documentPath, trimmedNextName)
       await rewriteDocumentPathState(documentPath, result.path)
-      const nextMarkdownPaths = await workspaceProvider.getFileTreePaths(projectId, profileId)
+      const nextMarkdownPaths = await getMarkdownPathsFromSnapshot(projectId, profileId)
       setFileTree(
         buildOrderedFileTree(
           nextMarkdownPaths,
@@ -2212,7 +2350,7 @@ function App() {
       }
 
       await removeDocumentPathState(action.documentPath)
-      const nextMarkdownPaths = await workspaceProvider.getFileTreePaths(projectId, profileId)
+      const nextMarkdownPaths = await getMarkdownPathsFromSnapshot(projectId, profileId)
       setFileTree(
         buildOrderedFileTree(
           nextMarkdownPaths,
@@ -2255,7 +2393,7 @@ function App() {
         result.path,
       )
       await rewriteDocumentPathState(sourcePath, result.path, nextManualNodeOrderByParent)
-      const nextMarkdownPaths = await workspaceProvider.getFileTreePaths(projectId, profileId)
+      const nextMarkdownPaths = await getMarkdownPathsFromSnapshot(projectId, profileId)
       setFileTree(
         buildOrderedFileTree(
           nextMarkdownPaths,
@@ -2293,7 +2431,7 @@ function App() {
         fileTree,
       )
       const nextManualNodeOrderByParent = reorderManualNodeOrder(normalizedManualNodeOrder, payload)
-      const nextMarkdownPaths = await workspaceProvider.getFileTreePaths(projectId, profileId)
+      const nextMarkdownPaths = await getMarkdownPathsFromSnapshot(projectId, profileId)
       await persistManualNodeOrder(nextManualNodeOrderByParent, {
         refreshPaths: nextMarkdownPaths,
       })
@@ -2728,7 +2866,35 @@ function App() {
   }
 
   function handleToggleShowFavoritesOnly() {
-    setShowFavoritesOnly((current) => !current)
+    setShowFavoritesOnly((current) => {
+      const next = !current
+      if (next) setShowRecentOnly(false)
+      return next
+    })
+  }
+
+  async function handleLocateCurrentDocumentInTree() {
+    if (
+      !currentDocumentPath ||
+      isCurrentDocumentHiddenInRecent ||
+      isCurrentDocumentUnavailableInRecent
+    ) {
+      return
+    }
+
+    setShowRecentOnly(false)
+    const nextExpandedFileNodes = Array.from(
+      new Set([...expandedFileNodes, ...getDocumentAncestorDirectoryPaths(currentDocumentPath)]),
+    ).sort()
+    await handleExpandedFileNodesChange(nextExpandedFileNodes)
+  }
+
+  function handleToggleShowRecentOnly() {
+    setShowRecentOnly((current) => {
+      const next = !current
+      if (next) setShowFavoritesOnly(false)
+      return next
+    })
   }
 
   function handleToggleShowHiddenItems() {
@@ -2848,6 +3014,7 @@ function App() {
       <AppShell
         projects={projects}
         activeProjectId={activeProjectId}
+        pendingProjectId={pendingProjectId}
         profileIds={profileIds}
         activeProfileId={activeProfileId}
         tabs={session.tabs.map((tab) => ({
@@ -2866,6 +3033,10 @@ function App() {
         availableDirectoryPaths={availableDirectoryPaths}
         favoritePaths={favoritePaths}
         showFavoritesOnly={showFavoritesOnly}
+        showRecentOnly={showRecentOnly}
+        isCurrentDocumentOutsideRecent={isCurrentDocumentOutsideRecent}
+        isCurrentDocumentHiddenInRecent={isCurrentDocumentHiddenInRecent}
+        isCurrentDocumentUnavailableInRecent={isCurrentDocumentUnavailableInRecent}
         showHiddenItems={showHiddenItems}
         currentDocumentPath={currentDocumentPath}
         currentDocumentContent={currentDocumentContent}
@@ -2878,6 +3049,9 @@ function App() {
         editingDocumentContent={editingDocumentContent}
         saveIndicator={getSaveIndicator(activeTab)}
         isDocumentLoading={isDocumentLoading}
+        isFileTreeRefreshing={isFileTreeRefreshing}
+        isProjectSwitching={pendingProjectId != null}
+        pendingProjectName={projects.find((project) => project.id === pendingProjectId)?.name ?? null}
         statusMessage={statusMessage}
         actionToast={actionToast}
         sidebarWidth={sidebarWidth}
@@ -2892,10 +3066,13 @@ function App() {
         onProjectChange={handleProjectChange}
         onProfileChange={handleProfileChange}
         onRefreshDocument={handleRefreshDocument}
+        onRefreshFileTree={handleRefreshFileTree}
         onModeChange={handleModeChange}
         onToggleRegularLock={handleToggleRegularLock}
         onToggleFavoriteDocument={handleToggleFavoriteDocument}
         onToggleShowFavoritesOnly={handleToggleShowFavoritesOnly}
+        onToggleShowRecentOnly={handleToggleShowRecentOnly}
+        onLocateCurrentDocumentInTree={handleLocateCurrentDocumentInTree}
         onToggleShowHiddenItems={handleToggleShowHiddenItems}
         onHidePath={handleHidePath}
         onUnhidePath={handleUnhidePath}
