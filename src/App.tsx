@@ -90,6 +90,7 @@ const workspaceProvider = createWorkspaceProvider({
 })
 
 const AUTOSAVE_DEBOUNCE_MS = 1200
+const PROJECT_SWITCH_PREPARE_TIMEOUT_MS = 60_000
 const MARKDOWN_TITLE_EXTENSION_PATTERN = /\.(md|mdx)$/i
 const RECENT_DOCUMENT_LIMIT = 50
 
@@ -1495,6 +1496,12 @@ function App() {
     const requestedProject = projects.find((entry) => entry.id === projectId)
     if (!requestedProject) return false
 
+    const health = await getLocalBridgeHealth()
+    if (!health.ok) {
+      setStatusMessage('本地服务不可用，请重新启动服务后重试')
+      return false
+    }
+
     const revision = workspaceLoadRevisionRef.current + 1
     workspaceLoadRevisionRef.current = revision
     performance.mark('project-switch-requested')
@@ -1507,19 +1514,32 @@ function App() {
     })
 
     let prepared
+    let switchTimeout: number | null = null
     try {
-      prepared = await prepareLocalServiceWorkspace(projectId, activeProfileIdRef.current, {
-        onIndexing: async () => {
-          if (revision !== workspaceLoadRevisionRef.current) return
-          setStatusMessage('正在索引项目文件树…')
-        },
-      })
+      prepared = await Promise.race([
+        prepareLocalServiceWorkspace(projectId, activeProfileIdRef.current, {
+          onIndexing: async () => {
+            if (revision !== workspaceLoadRevisionRef.current) return
+            setStatusMessage('正在索引项目文件树…')
+          },
+        }),
+        new Promise<never>((_, reject) => {
+          switchTimeout = window.setTimeout(
+            () => reject(new Error('项目准备超时：本地服务可能已停止或无响应，请重新启动服务后重试')),
+            PROJECT_SWITCH_PREPARE_TIMEOUT_MS,
+          )
+        }),
+      ])
     } catch (error) {
       if (revision === workspaceLoadRevisionRef.current) {
         setPendingProjectId(null)
         setStatusMessage(error instanceof Error ? `项目切换失败：${error.message}` : '项目切换失败')
       }
       return false
+    } finally {
+      if (switchTimeout != null) {
+        window.clearTimeout(switchTimeout)
+      }
     }
     if (!prepared || revision !== workspaceLoadRevisionRef.current) return false
 

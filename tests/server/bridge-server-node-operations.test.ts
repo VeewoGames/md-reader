@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import { startBridgeServer, stopBridgeServer } from '../../server/bridge-server.mjs'
 import { registerProject } from '../../server/project-registry.mjs'
+import { getServiceLogPath } from '../../server/service-log.mjs'
 
 const tempDirs: string[] = []
 const activeServers: Array<{ close: () => Promise<void> }> = []
@@ -20,6 +21,41 @@ afterEach(async () => {
 })
 
 describe('bridge server node operations', () => {
+  it('records lifecycle events without relying on detached process output', async () => {
+    const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'md-reader-runtime-'))
+    tempDirs.push(runtimeHome)
+    const server = await startBridgeServer({ port: 0, runtimeHome, webMode: 'none' })
+
+    await stopBridgeServer(server, { runtimeHome })
+
+    const events = (await readFile(getServiceLogPath(runtimeHome), 'utf8'))
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as { event: string })
+      .map((entry) => entry.event)
+    expect(events).toEqual(['started', 'stopped'])
+  })
+
+  it('keeps serving health when a registered project root is unavailable', async () => {
+    const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'md-reader-runtime-'))
+    const projectRoot = await mkdtemp(path.join(os.tmpdir(), 'md-reader-project-'))
+    tempDirs.push(runtimeHome)
+    const project = await registerProject({ runtimeHome, profileId: 'default', rootPath: projectRoot })
+    await rm(projectRoot, { recursive: true, force: true })
+    const server = await startBridgeServer({ port: 0, runtimeHome, webMode: 'none' })
+    activeServers.push({ close: () => stopBridgeServer(server, { runtimeHome }) })
+    const { port } = server.address() as { port: number }
+    const base = `http://127.0.0.1:${port}/api/projects/${project.id}/tree?profileId=default`
+
+    const indexing = await fetch(`${base}&mode=prefer-cache`)
+    const indexingPayload = await indexing.json() as { refreshId: string }
+    const failed = await fetch(`${base}&mode=wait&refreshId=${encodeURIComponent(indexingPayload.refreshId)}`)
+
+    expect(indexing.status).toBe(202)
+    expect(failed.status).toBe(503)
+    await expect(fetch(`http://127.0.0.1:${port}/api/health`)).resolves.toMatchObject({ ok: true })
+  })
+
   it('serves tree indexing, wait, and force through the bridge contract', async () => {
     const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'md-reader-runtime-'))
     const projectRoot = await mkdtemp(path.join(os.tmpdir(), 'md-reader-project-'))

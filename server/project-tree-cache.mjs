@@ -272,6 +272,10 @@ export function createProjectTreeCache({
     const record = createRefreshRecord(entry, requestedGeneration);
     record.foreground = force || !entry.snapshot;
     record.promise = runRefresh(project, entry, record);
+    // A caller may receive the initial indexing response before it begins waiting.
+    // Observe rejection now so a failed background scan cannot terminate Node before
+    // the caller asks for the terminal result through mode=wait.
+    record.promise.catch(() => undefined);
     return record;
   }
 

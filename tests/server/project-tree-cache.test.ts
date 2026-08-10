@@ -101,6 +101,21 @@ describe('project tree cache', () => {
     })
   })
 
+  it('keeps a failed background scan available to waiters without rejecting the process', async () => {
+    const runtimeHome = await createRuntimeHome()
+    const cache = createProjectTreeCache({
+      runtimeHome,
+      scan: async () => { throw new Error('missing project root') },
+    })
+
+    const initial = await cache.get(project)
+
+    await expect(cache.get(project, { mode: 'wait', refreshId: initial.refreshId })).resolves.toMatchObject({
+      status: 'failed',
+      error: expect.objectContaining({ message: 'missing project root' }),
+    })
+  })
+
   it('makes force wait for a generation that starts after an in-flight scan', async () => {
     const runtimeHome = await createRuntimeHome()
     const resolvers: Array<(paths: string[]) => void> = []

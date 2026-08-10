@@ -23,20 +23,35 @@ import {
 import { readMarkdownDocument } from "./project-reader.mjs";
 import { DocumentConflictError, writeMarkdownDocument } from "./project-writer.mjs";
 import { createProjectTreeCache } from "./project-tree-cache.mjs";
+import { appendServiceLog } from "./service-log.mjs";
 import { createWebUiRuntime } from "./web-ui.mjs";
 
 const DEFAULT_PORT = 8797;
 
 if (isMainModule()) {
   const options = parseArgs(process.argv.slice(2));
-  const server = await startBridgeServer(options);
-  process.stdout.write(`md-reader bridge is running at http://127.0.0.1:${options.port}/\n`);
-  const shutdown = async () => {
-    await stopBridgeServer(server, options);
-    process.exit(0);
-  };
-  process.on("SIGINT", shutdown);
-  process.on("SIGTERM", shutdown);
+  const runtimeHome = options.runtimeHome ?? defaultRuntimeHome();
+  try {
+    const server = await startBridgeServer(options);
+    process.stdout.write(`md-reader bridge is running at http://127.0.0.1:${options.port}/\n`);
+    const shutdown = async () => {
+      await stopBridgeServer(server, options);
+      process.exit(0);
+    };
+    process.on("SIGINT", shutdown);
+    process.on("SIGTERM", shutdown);
+    process.on("uncaughtException", async (error) => {
+      await appendServiceLog(runtimeHome, "uncaught_exception", { error: error.stack ?? String(error) });
+      process.exit(1);
+    });
+    process.on("unhandledRejection", async (reason) => {
+      await appendServiceLog(runtimeHome, "unhandled_rejection", { error: reason instanceof Error ? (reason.stack ?? reason.message) : String(reason) });
+      process.exit(1);
+    });
+  } catch (error) {
+    await appendServiceLog(runtimeHome, "startup_failed", { error: error instanceof Error ? (error.stack ?? error.message) : String(error) });
+    process.exitCode = 1;
+  }
 }
 
 export async function startBridgeServer({
@@ -57,6 +72,11 @@ export async function startBridgeServer({
     try {
       await handleRequest(request, response, { runtimeHome, port, stateFile, server, webUiRuntime, projectTreeCache });
     } catch (error) {
+      await appendServiceLog(runtimeHome, "request_failed", {
+        method: request.method ?? "GET",
+        path: request.url ?? "/",
+        error: error instanceof Error ? (error.stack ?? error.message) : String(error),
+      });
       sendJson(response, 500, {
         error: error instanceof Error ? error.message : String(error),
       });
@@ -87,6 +107,7 @@ export async function startBridgeServer({
 
   server.__mdReaderWebUiRuntime = webUiRuntime;
   server.__mdReaderWebMode = webUiRuntime.mode ?? webMode;
+  await appendServiceLog(runtimeHome, "started", { pid: process.pid, port, webMode: server.__mdReaderWebMode });
   return server;
 }
 
@@ -105,6 +126,7 @@ export async function stopBridgeServer(server, { stateFile, runtimeHome = defaul
   } catch {
     // ignore closeout cleanup failures
   }
+  await appendServiceLog(runtimeHome, "stopped", { pid: process.pid });
 }
 
 async function handleRequest(request, response, { runtimeHome, port, stateFile, server, webUiRuntime, projectTreeCache }) {
@@ -191,6 +213,12 @@ async function handleRequest(request, response, { runtimeHome, port, stateFile, 
       return;
     }
     if (result.status === "failed") {
+      await appendServiceLog(runtimeHome, "tree_refresh_failed", {
+        projectId,
+        profileId,
+        refreshId: result.refreshId,
+        error: result.error.message,
+      });
       sendJson(response, 503, { error: result.error.message, code: "TREE_REFRESH_FAILED", refreshId: result.refreshId });
       return;
     }

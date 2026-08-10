@@ -8,6 +8,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
 import { defaultRuntimeHome } from "./server/project-registry.mjs";
+import { appendServiceLog } from "./server/service-log.mjs";
 
 const execFileAsync = promisify(execFile);
 const scriptRoot = path.dirname(fileURLToPath(import.meta.url));
@@ -70,6 +71,10 @@ export async function ensureServiceRunning({ runtimeHome = defaultRuntimeHome(),
   }
 
   if (existing) {
+    await appendServiceLog(runtimeHome, "stale_state_recovered", {
+      pid: existing.pid ?? null,
+      port: existing.port ?? port,
+    });
     await clearServiceState(runtimeHome);
   }
 
