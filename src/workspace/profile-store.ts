@@ -12,6 +12,7 @@ export interface WorkspaceProfile {
     fontSize: number
     pageWidth: PageWidthMode
     lineHeight?: DocumentLineHeight
+    hideFileTitleDate?: boolean
   }
   layout: {
     sidebarWidth: number
@@ -37,6 +38,7 @@ export function createDefaultProfile(profileId = 'default'): WorkspaceProfile {
       fontSize: 16,
       pageWidth: 'narrow',
       lineHeight: 1.6,
+      hideFileTitleDate: false,
     },
     layout: {
       sidebarWidth: 280,

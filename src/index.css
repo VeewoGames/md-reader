@@ -552,6 +552,22 @@ select {
   gap: 8px;
 }
 
+.topbar__reading-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  color: var(--text-strong);
+  cursor: pointer;
+}
+
+.topbar__reading-checkbox input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: #1f6feb;
+}
+
 .topbar__reading-option {
   min-width: 60px;
   min-height: 30px;

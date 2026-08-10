@@ -69,9 +69,11 @@ interface TopBarProps {
   documentFontSize?: number
   documentPageWidth?: PageWidthMode
   documentLineHeight?: DocumentLineHeight
+  hideFileTitleDate?: boolean
   onDocumentFontSizeChange?: (fontSize: number) => void
   onDocumentPageWidthChange?: (pageWidth: PageWidthMode) => void
   onDocumentLineHeightChange?: (lineHeight: DocumentLineHeight) => void
+  onHideFileTitleDateChange?: (hideFileTitleDate: boolean) => void
   onRefreshDocument?: () => void | Promise<void>
   onRefreshFileTree?: () => void | Promise<void>
 }
@@ -102,16 +104,20 @@ function TopBarReadingPreferences({
   fontSize,
   pageWidth,
   lineHeight,
+  hideFileTitleDate,
   onFontSizeChange,
   onPageWidthChange,
   onLineHeightChange,
+  onHideFileTitleDateChange,
 }: {
   fontSize: number
   pageWidth: PageWidthMode
   lineHeight: DocumentLineHeight
+  hideFileTitleDate: boolean
   onFontSizeChange?: (fontSize: number) => void
   onPageWidthChange?: (pageWidth: PageWidthMode) => void
   onLineHeightChange?: (lineHeight: DocumentLineHeight) => void
+  onHideFileTitleDateChange?: (hideFileTitleDate: boolean) => void
 }) {
   const rootRef = useRef<HTMLDivElement | null>(null)
   const [isOpen, setIsOpen] = useState(false)
@@ -203,6 +209,17 @@ function TopBarReadingPreferences({
                 </button>
               ))}
             </div>
+          </section>
+
+          <section className="topbar__reading-section" aria-label="文件树显示">
+            <label className="topbar__reading-checkbox">
+              <input
+                type="checkbox"
+                checked={hideFileTitleDate}
+                onChange={(event) => onHideFileTitleDateChange?.(event.target.checked)}
+              />
+              <span>隐藏标题日期</span>
+            </label>
           </section>
         </div>
       ) : null}
@@ -375,9 +392,11 @@ export function TopBar({
   documentFontSize = 16,
   documentPageWidth = 'narrow',
   documentLineHeight = 1.6,
+  hideFileTitleDate = false,
   onDocumentFontSizeChange,
   onDocumentPageWidthChange,
   onDocumentLineHeightChange,
+  onHideFileTitleDateChange,
   onRefreshDocument,
   onRefreshFileTree,
 }: TopBarProps) {
@@ -928,9 +947,11 @@ export function TopBar({
               fontSize={documentFontSize}
               pageWidth={documentPageWidth}
               lineHeight={documentLineHeight}
+              hideFileTitleDate={hideFileTitleDate}
               onFontSizeChange={onDocumentFontSizeChange}
               onPageWidthChange={onDocumentPageWidthChange}
               onLineHeightChange={onDocumentLineHeightChange}
+              onHideFileTitleDateChange={onHideFileTitleDateChange}
             />
             <button
               type="button"

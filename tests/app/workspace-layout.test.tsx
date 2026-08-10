@@ -199,6 +199,28 @@ describe('WorkspaceSidebarPane edge auto-scroll', () => {
     expect(onToggleShowRecentOnly).toHaveBeenCalledTimes(1)
   })
 
+  it('hides date prefixes in both file lists without changing the document path used for selection', async () => {
+    const user = userEvent.setup()
+    const onDocumentSelect = vi.fn()
+
+    render(
+      <WorkspaceSidebarPane
+        fileTree={createRecentTree(['docs/2026-08-10-标题.md', 'docs/无日期.md'])}
+        availableDirectoryPaths={[]}
+        currentDocumentPath={null}
+        hasProjects
+        showRecentOnly
+        hideFileTitleDate
+        onDocumentSelect={onDocumentSelect}
+      />,
+    )
+
+    expect(screen.getByRole('button', { name: '标题.md' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '无日期.md' })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '标题.md' }))
+    expect(onDocumentSelect).toHaveBeenCalledWith('docs/2026-08-10-标题.md')
+  })
+
   it('offers directory locating only when the current document falls outside the recent limit', async () => {
     const user = userEvent.setup()
     const onLocateCurrentDocumentInTree = vi.fn()

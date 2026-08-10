@@ -33,6 +33,7 @@ describe('TopBar reading preferences', () => {
     const onFontSizeChange = vi.fn()
     const onPageWidthChange = vi.fn()
     const onLineHeightChange = vi.fn()
+    const onHideFileTitleDateChange = vi.fn()
 
     render(
       <AppShell
@@ -76,6 +77,7 @@ describe('TopBar reading preferences', () => {
         onDocumentFontSizeChange={onFontSizeChange}
         onDocumentPageWidthChange={onPageWidthChange}
         onDocumentLineHeightChange={onLineHeightChange}
+        onHideFileTitleDateChange={onHideFileTitleDateChange}
         onSidebarWidthChange={() => {}}
         onSidebarWidthCommit={() => {}}
         onOutlineWidthChange={() => {}}
@@ -92,13 +94,16 @@ describe('TopBar reading preferences', () => {
     expect(screen.getByRole('button', { name: '1.5' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '2.0' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '全屏' })).toBeInTheDocument()
+    expect(screen.getByRole('checkbox', { name: '隐藏标题日期' })).not.toBeChecked()
 
     await user.click(screen.getByRole('button', { name: '17 px' }))
     await user.click(screen.getByRole('button', { name: '全屏' }))
     await user.click(screen.getByRole('button', { name: '1.8' }))
+    await user.click(screen.getByRole('checkbox', { name: '隐藏标题日期' }))
 
     expect(onFontSizeChange).toHaveBeenCalledWith(17)
     expect(onPageWidthChange).toHaveBeenCalledWith('full')
     expect(onLineHeightChange).toHaveBeenCalledWith(1.8)
+    expect(onHideFileTitleDateChange).toHaveBeenCalledWith(true)
   })
 })

@@ -50,6 +50,7 @@ interface AppShellProps {
   documentFontSize?: number
   documentPageWidth?: PageWidthMode
   documentLineHeight?: DocumentLineHeight
+  hideFileTitleDate?: boolean
   onConnectProject: () => void
   onProjectChange: (projectId: string) => void
   onProfileChange: (profileId: string) => void
@@ -95,6 +96,7 @@ interface AppShellProps {
   onDocumentFontSizeChange?: (fontSize: number) => void
   onDocumentPageWidthChange?: (pageWidth: PageWidthMode) => void
   onDocumentLineHeightChange?: (lineHeight: DocumentLineHeight) => void
+  onHideFileTitleDateChange?: (hideFileTitleDate: boolean) => void
   onRefreshDocument?: () => void | Promise<void>
   onRefreshFileTree?: () => void | Promise<void>
   onEditingDocumentContentChange?: (content: string) => void
@@ -164,9 +166,11 @@ export function AppShell(props: AppShellProps) {
         documentFontSize={documentFontSize}
         documentPageWidth={documentPageWidth}
         documentLineHeight={documentLineHeight}
+        hideFileTitleDate={props.hideFileTitleDate}
         onDocumentFontSizeChange={props.onDocumentFontSizeChange}
         onDocumentPageWidthChange={props.onDocumentPageWidthChange}
         onDocumentLineHeightChange={props.onDocumentLineHeightChange}
+        onHideFileTitleDateChange={props.onHideFileTitleDateChange}
         onRefreshDocument={props.onRefreshDocument}
         onRefreshFileTree={props.onRefreshFileTree}
       />
@@ -189,6 +193,7 @@ export function AppShell(props: AppShellProps) {
         outlineWidth={props.outlineWidth}
         persistedExpandedDirectories={props.expandedFileNodes}
         hasPersistedExpandedDirectories={props.hasPersistedExpandedFileNodes}
+        hideFileTitleDate={props.hideFileTitleDate}
         hasProjects={props.projects.length > 0}
         isWorkspaceBootstrapping={props.isWorkspaceBootstrapping}
         onDocumentSelect={props.onDocumentSelect}

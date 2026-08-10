@@ -50,6 +50,7 @@ describe('profile store', () => {
 
     expect(restored.id).toBe('default')
     expect(restored.appearance.lineHeight).toBe(1.6)
+    expect(restored.appearance.hideFileTitleDate).toBe(false)
     expect(restored.layout.sidebarCollapsed).toBe(false)
     expect(restored.navigation.expandedFileNodes).toEqual([])
     expect(restored.navigation.hiddenPaths).toEqual([])

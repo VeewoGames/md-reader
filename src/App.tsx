@@ -473,6 +473,7 @@ function App() {
   const [documentFontSize, setDocumentFontSize] = useState(16)
   const [documentPageWidth, setDocumentPageWidth] = useState<PageWidthMode>('narrow')
   const [documentLineHeight, setDocumentLineHeight] = useState<DocumentLineHeight>(1.6)
+  const [hideFileTitleDate, setHideFileTitleDate] = useState(false)
   const [isWorkspaceBootstrapping, setIsWorkspaceBootstrapping] = useState(true)
   const [pendingHeadingId, setPendingHeadingId] = useState<string | null>(null)
   const [documentScrollRestoreId, setDocumentScrollRestoreId] = useState(0)
@@ -857,6 +858,7 @@ function App() {
       setDocumentFontSize(16)
       setDocumentPageWidth('narrow')
       setDocumentLineHeight(1.6)
+      setHideFileTitleDate(false)
       return
     }
 
@@ -892,6 +894,7 @@ function App() {
       setDocumentFontSize(profile.appearance?.fontSize ?? 16)
       setDocumentPageWidth(profile.appearance?.pageWidth ?? 'narrow')
       setDocumentLineHeight(profile.appearance?.lineHeight ?? 1.6)
+      setHideFileTitleDate(profile.appearance?.hideFileTitleDate ?? false)
     })()
 
     return () => {
@@ -2771,6 +2774,7 @@ function App() {
     fontSize?: number
     pageWidth?: PageWidthMode
     lineHeight?: DocumentLineHeight
+    hideFileTitleDate?: boolean
   }) {
     if (!activeProjectId) {
       return
@@ -2785,6 +2789,7 @@ function App() {
       fontSize: 16,
       pageWidth: 'narrow' as PageWidthMode,
       lineHeight: 1.6 as DocumentLineHeight,
+      hideFileTitleDate: false,
     }
 
     const nextProfile = {
@@ -2871,6 +2876,11 @@ function App() {
       if (next) setShowRecentOnly(false)
       return next
     })
+  }
+
+  async function handleHideFileTitleDateChange(nextHideFileTitleDate: boolean) {
+    setHideFileTitleDate(nextHideFileTitleDate)
+    await saveActiveProfileAppearance({ hideFileTitleDate: nextHideFileTitleDate })
   }
 
   async function handleLocateCurrentDocumentInTree() {
@@ -3061,6 +3071,7 @@ function App() {
         documentFontSize={documentFontSize}
         documentPageWidth={documentPageWidth}
         documentLineHeight={documentLineHeight}
+        hideFileTitleDate={hideFileTitleDate}
         isWorkspaceBootstrapping={isWorkspaceBootstrapping}
         onConnectProject={handleConnectProject}
         onProjectChange={handleProjectChange}
@@ -3096,6 +3107,7 @@ function App() {
         onDocumentFontSizeChange={handleDocumentFontSizeChange}
         onDocumentPageWidthChange={handleDocumentPageWidthChange}
         onDocumentLineHeightChange={handleDocumentLineHeightChange}
+        onHideFileTitleDateChange={handleHideFileTitleDateChange}
         onEditingDocumentContentChange={setDraftDocumentContent}
         onEditingCompositionStart={handleEditingCompositionStart}
         onEditingCompositionEnd={handleEditingCompositionEnd}

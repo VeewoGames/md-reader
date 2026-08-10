@@ -140,9 +140,11 @@ describe('App appearance preferences', () => {
     await user.click(screen.getByRole('button', { name: '17 px' }))
     await user.click(screen.getByRole('button', { name: '窄版' }))
     await user.click(screen.getByRole('button', { name: '1.8' }))
+    expect(screen.getByRole('checkbox', { name: '隐藏标题日期' })).not.toBeChecked()
+    await user.click(screen.getByRole('checkbox', { name: '隐藏标题日期' }))
 
     await waitFor(() => {
-      expect(bridgeMocks.saveProfileToBridge).toHaveBeenCalledTimes(3)
+      expect(bridgeMocks.saveProfileToBridge).toHaveBeenCalledTimes(4)
     })
 
     expect(bridgeMocks.saveProfileToBridge).toHaveBeenNthCalledWith(
@@ -177,6 +179,16 @@ describe('App appearance preferences', () => {
           fontSize: 18,
           pageWidth: 'wide',
           lineHeight: 1.8,
+        }),
+      }),
+      'default',
+    )
+    expect(bridgeMocks.saveProfileToBridge).toHaveBeenNthCalledWith(
+      4,
+      'notes',
+      expect.objectContaining({
+        appearance: expect.objectContaining({
+          hideFileTitleDate: true,
         }),
       }),
       'default',

@@ -12,6 +12,7 @@ function createDefaultProfile(profileId = "default") {
       fontSize: 16,
       pageWidth: "narrow",
       lineHeight: 1.6,
+      hideFileTitleDate: false,
     },
     layout: {
       sidebarWidth: 280,

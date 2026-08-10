@@ -215,6 +215,7 @@ interface WorkspaceLayoutProps {
   isCurrentDocumentHiddenInRecent?: boolean
   isCurrentDocumentUnavailableInRecent?: boolean
   showHiddenItems?: boolean
+  hideFileTitleDate?: boolean
   onToggleFavoriteDocument?: (path: string) => void
   onToggleShowFavoritesOnly?: () => void
   onToggleShowRecentOnly?: () => void
@@ -281,6 +282,10 @@ const EMPTY_PATHS: string[] = []
 const DOCUMENT_DRAG_MIME = 'application/x-md-reader-document-path'
 const TREE_NODE_DRAG_MIME = 'application/x-md-reader-tree-node-path'
 
+export function formatFileTreeDisplayName(fileName: string, hideFileTitleDate: boolean) {
+  return hideFileTitleDate ? fileName.replace(/^\d{4}-\d{2}-\d{2}-/, '') : fileName
+}
+
 type FileTreeReorderDropTarget = {
   targetPath: string | null
   targetParentPath: string | null
@@ -303,6 +308,7 @@ export interface WorkspaceSidebarPaneProps {
   isCurrentDocumentHiddenInRecent?: boolean
   isCurrentDocumentUnavailableInRecent?: boolean
   showHiddenItems?: boolean
+  hideFileTitleDate?: boolean
   onDocumentSelect: (path: string) => void
   onCreateDocument?: (directoryPath?: string) => void | Promise<void>
   onCreateDirectory?: (directoryPath?: string) => void | Promise<void>
@@ -405,6 +411,7 @@ export const WorkspaceSidebarPane = memo(function WorkspaceSidebarPane({
   isCurrentDocumentHiddenInRecent = false,
   isCurrentDocumentUnavailableInRecent = false,
   showHiddenItems = false,
+  hideFileTitleDate = false,
   onDocumentSelect,
   onCreateDocument = () => {},
   onCreateDirectory = () => {},
@@ -1047,6 +1054,7 @@ export const WorkspaceSidebarPane = memo(function WorkspaceSidebarPane({
               onMoveDocument={onMoveDocument}
               favoritePaths={favoritePaths}
               showHiddenItems={showHiddenItems}
+              hideFileTitleDate={hideFileTitleDate}
               onToggleFavoriteDocument={onToggleFavoriteDocument}
               onHidePath={onHidePath}
               onUnhidePath={onUnhidePath}
@@ -1259,6 +1267,7 @@ export function WorkspaceFileTree({
   onMoveDocument,
   favoritePaths,
   showHiddenItems,
+  hideFileTitleDate,
   onToggleFavoriteDocument,
   onHidePath,
   onUnhidePath,
@@ -1303,6 +1312,7 @@ export function WorkspaceFileTree({
   onMoveDocument: (sourcePath: string, targetDirectoryPath: string) => void | Promise<void>
   favoritePaths: string[]
   showHiddenItems: boolean
+  hideFileTitleDate: boolean
   onToggleFavoriteDocument: (path: string) => void
   onHidePath: (path: string) => void
   onUnhidePath: (path: string) => void
@@ -1475,6 +1485,7 @@ export function WorkspaceFileTree({
                         onMoveDocument={onMoveDocument}
                         favoritePaths={favoritePaths}
                         showHiddenItems={showHiddenItems}
+                        hideFileTitleDate={hideFileTitleDate}
                         onToggleFavoriteDocument={onToggleFavoriteDocument}
                         onHidePath={onHidePath}
                         onUnhidePath={onUnhidePath}
@@ -1585,7 +1596,7 @@ export function WorkspaceFileTree({
                       <FileText />
                     </span>
                     <span className="file-tree__file-copy">
-                      <span className="file-tree__file-name">{node.name}</span>
+                      <span className="file-tree__file-name">{formatFileTreeDisplayName(node.name, hideFileTitleDate)}</span>
                       {isRecentView ? (
                         <span className="file-tree__file-path" aria-hidden="true">
                           {node.path.includes('/') ? node.path.slice(0, node.path.lastIndexOf('/')) : '根目录'}
@@ -1677,6 +1688,7 @@ export function WorkspaceLayout({
   isCurrentDocumentHiddenInRecent = false,
   isCurrentDocumentUnavailableInRecent = false,
   showHiddenItems = false,
+  hideFileTitleDate = false,
   onToggleFavoriteDocument = () => {},
   onToggleShowFavoritesOnly = () => {},
   onToggleShowRecentOnly = () => {},
@@ -2470,6 +2482,7 @@ export function WorkspaceLayout({
         isCurrentDocumentHiddenInRecent={isCurrentDocumentHiddenInRecent}
         isCurrentDocumentUnavailableInRecent={isCurrentDocumentUnavailableInRecent}
         showHiddenItems={showHiddenItems}
+        hideFileTitleDate={hideFileTitleDate}
         onDocumentSelect={onDocumentSelect}
         onCreateDocument={onCreateDocument}
         onCreateDirectory={onCreateDirectory}

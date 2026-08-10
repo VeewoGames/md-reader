@@ -33,6 +33,7 @@ describe('project profiles', () => {
     expect(payload.profiles.default.navigation.hiddenPaths).toEqual([])
     expect(payload.profiles.default.navigation.favoritePaths).toEqual([])
     expect(payload.profiles.default.navigation.manualNodeOrderByParent).toEqual({})
+    expect(payload.profiles.default.appearance.hideFileTitleDate).toBe(false)
   })
 
   it('saves and reloads a named repo profile', async () => {
