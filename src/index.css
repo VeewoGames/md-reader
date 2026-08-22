@@ -2350,6 +2350,10 @@ select {
   padding-bottom: 4px;
 }
 
+.file-tree__file--recent .file-tree__file-icon {
+  margin-top: 4px;
+}
+
 .file-tree__file-path {
   display: block;
   overflow: hidden;
