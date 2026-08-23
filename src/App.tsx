@@ -1,4 +1,4 @@
-import { startTransition, useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { ActionDialog } from './app/ActionDialog'
 import { AppShell } from './app/AppShell'
@@ -1502,6 +1502,7 @@ function App() {
       return false
     }
 
+    const profileId = activeProfileIdRef.current
     const revision = workspaceLoadRevisionRef.current + 1
     workspaceLoadRevisionRef.current = revision
     performance.mark('project-switch-requested')
@@ -1517,7 +1518,7 @@ function App() {
     let switchTimeout: number | null = null
     try {
       prepared = await Promise.race([
-        prepareLocalServiceWorkspace(projectId, activeProfileIdRef.current, {
+        prepareLocalServiceWorkspace(projectId, profileId, {
           onIndexing: async () => {
             if (revision !== workspaceLoadRevisionRef.current) return
             setStatusMessage('正在索引项目文件树…')
@@ -1541,22 +1542,34 @@ function App() {
         window.clearTimeout(switchTimeout)
       }
     }
-    if (!prepared || revision !== workspaceLoadRevisionRef.current) return false
+    if (!prepared || revision !== workspaceLoadRevisionRef.current) {
+      if (!prepared && revision === workspaceLoadRevisionRef.current) {
+        setPendingProjectId(null)
+        setStatusMessage('项目切换失败：未能准备目标工作区')
+      }
+      return false
+    }
 
     const commit = projectSwitchCommitRef.current.then(async () => {
       if (revision !== workspaceLoadRevisionRef.current) return false
-      await workspaceProvider.setActiveProject(activeProfileIdRef.current, prepared.project.id)
-      startTransition(() => {
-        setActiveProjectId(prepared.project.id)
-        setPendingProjectId(null)
-        setStatusMessage(`当前项目：${prepared.project.name}`)
-        setManualNodeOrderByParent(prepared.profile.navigation?.manualNodeOrderByParent ?? {})
-        setFavoritePaths(prepared.favoritePaths)
-        setFileTree(prepared.orderedFileTree)
-        setTreeEntriesByPath(new Map(prepared.snapshot.entries.map((entry) => [entry.path, entry])))
-        sessionRef.current = prepared.session
-        setSession(prepared.session)
-      })
+      await workspaceProvider.setActiveProject(profileId, prepared.project.id)
+      if (revision !== workspaceLoadRevisionRef.current || activeProfileIdRef.current !== profileId) {
+        return false
+      }
+
+      // Project identity, tree and session are correctness state.  They must share
+      // the same default-priority commit as the pending-state cleanup, otherwise a
+      // subsequent document load can keep the previous workspace on screen.
+      activeProjectIdRef.current = prepared.project.id
+      sessionRef.current = prepared.session
+      setActiveProjectId(prepared.project.id)
+      setPendingProjectId(null)
+      setStatusMessage(`当前项目：${prepared.project.name}`)
+      setManualNodeOrderByParent(prepared.profile.navigation?.manualNodeOrderByParent ?? {})
+      setFavoritePaths(prepared.favoritePaths)
+      setFileTree(prepared.orderedFileTree)
+      setTreeEntriesByPath(new Map(prepared.snapshot.entries.map((entry) => [entry.path, entry])))
+      setSession(prepared.session)
       window.requestAnimationFrame(() => performance.mark('project-tree-interactive'))
       return true
     })
@@ -1567,8 +1580,11 @@ function App() {
         void loadDocumentContent(
           prepared.project,
           prepared.activeDocumentPath,
-          activeProfileIdRef.current,
-          () => revision === workspaceLoadRevisionRef.current,
+          profileId,
+          () =>
+            revision === workspaceLoadRevisionRef.current &&
+            activeProjectIdRef.current === prepared.project.id &&
+            activeProfileIdRef.current === profileId,
         )
       }
       return didSwitch
@@ -1680,6 +1696,7 @@ function App() {
     if (action.kind === 'switch-profile') {
       const revision = workspaceLoadRevisionRef.current + 1
       workspaceLoadRevisionRef.current = revision
+      setPendingProjectId(null)
       setActiveProfileId(action.profileId)
 
       if (workspaceSource !== 'local-service') {

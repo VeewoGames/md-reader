@@ -349,6 +349,52 @@ describe('App session restore', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'manual.md' })).toBeInTheDocument())
   })
 
+  it('clears a superseded project-switch pending state when the profile changes', async () => {
+    const user = userEvent.setup()
+    let resolveManualTree: ((paths: string[]) => void) | null = null
+    const manualTree = new Promise<string[]>((resolve) => {
+      resolveManualTree = resolve
+    })
+
+    bridgeMocks.listProjectsFromBridge.mockResolvedValue({
+      activeProjectId: 'notes',
+      projects: [
+        {
+          id: 'notes',
+          name: 'Notes',
+          rootHandleKey: 'handle:notes',
+          contentRoots: ['docs'],
+          permissionState: 'granted',
+        },
+        {
+          id: 'manual',
+          name: 'Manual',
+          rootHandleKey: 'handle:manual',
+          contentRoots: ['docs'],
+          permissionState: 'granted',
+        },
+      ],
+    })
+    bridgeMocks.getFileTreePathsFromBridge.mockImplementation(async (projectId: string) =>
+      projectId === 'manual' ? manualTree : ['docs/guide.md', 'docs/next.md'],
+    )
+
+    render(<App />)
+
+    await waitFor(() => expect(screen.getByRole('combobox', { name: '项目切换' })).toHaveTextContent('Notes'))
+    await user.click(screen.getByRole('combobox', { name: '项目切换' }))
+    await user.click(screen.getByRole('option', { name: 'Manual' }))
+    await waitFor(() => expect(screen.getByText('正在准备文件树和文档状态')).toBeInTheDocument())
+
+    await user.click(screen.getByRole('combobox', { name: 'Profile 切换' }))
+    await user.click(screen.getByRole('option', { name: 'Lans' }))
+
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Profile 切换' })).toHaveTextContent('Lans'))
+    expect(screen.queryByText('正在准备文件树和文档状态')).not.toBeInTheDocument()
+
+    resolveManualTree?.(['docs/manual.md'])
+  })
+
   it('reuses loaded tab content when selecting documents from the file tree', async () => {
     const user = userEvent.setup()
 
