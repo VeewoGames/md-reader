@@ -8,7 +8,10 @@ export const STORAGE_KEYS = {
   profile(projectId: string, profileId: string) {
     return `workspace:profile:${projectId}:${profileId}`
   },
-  localState(projectId: string) {
+  localState(projectId: string, profileId: string) {
+    return `workspace:local-state:${projectId}:${profileId}`
+  },
+  legacyLocalState(projectId: string) {
     return `workspace:local-state:${projectId}`
   },
   directoryHandle(rootHandleKey: string) {

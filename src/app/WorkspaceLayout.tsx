@@ -283,7 +283,7 @@ const DOCUMENT_DRAG_MIME = 'application/x-md-reader-document-path'
 const TREE_NODE_DRAG_MIME = 'application/x-md-reader-tree-node-path'
 
 export function formatFileTreeDisplayName(fileName: string, hideFileTitleDate: boolean) {
-  return hideFileTitleDate ? fileName.replace(/^\d{4}-\d{2}-\d{2}-/, '') : fileName
+  return hideFileTitleDate ? fileName.replace(/^\d{4}-\d{2}-\d{2}[-_\s]+/, '') : fileName
 }
 
 type FileTreeReorderDropTarget = {

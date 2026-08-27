@@ -127,6 +127,7 @@ import App from '../../src/App'
 
 describe('App session restore', () => {
   beforeEach(() => {
+    window.history.replaceState(null, '', 'http://localhost:3000/')
     localState.openDocumentPaths = ['docs/guide.md', 'docs/next.md']
     localState.activeDocumentPath = 'docs/next.md'
     localState.activeMode = 'split'
@@ -226,6 +227,7 @@ describe('App session restore', () => {
 
     expect(bridgeMocks.saveState).toHaveBeenCalledWith(
       'notes',
+      'default',
       expect.objectContaining({
         openDocumentPaths: ['docs/guide.md', 'docs/next.md'],
         activeDocumentPath: 'docs/guide.md',
@@ -233,6 +235,26 @@ describe('App session restore', () => {
         regularViewState: 'editable',
       }),
     )
+  })
+
+  it('restores the project selected by a pathless workspace locator instead of the shared registry default', async () => {
+    window.history.replaceState(null, '', 'http://localhost:3000/?project=manual&profile=default')
+    bridgeMocks.listProjectsFromBridge.mockResolvedValue({
+      activeProjectId: 'notes',
+      projects: [
+        { id: 'notes', name: 'Notes', rootHandleKey: 'handle:notes', contentRoots: ['docs'], permissionState: 'granted' },
+        { id: 'manual', name: 'Manual', rootHandleKey: 'handle:manual', contentRoots: ['docs'], permissionState: 'granted' },
+      ],
+    })
+    bridgeMocks.getFileTreePathsFromBridge.mockImplementation(async (projectId: string) =>
+      projectId === 'manual' ? ['docs/manual.md'] : ['docs/guide.md', 'docs/next.md'],
+    )
+
+    render(<App />)
+
+    await waitFor(() => expect(screen.getByRole('combobox', { name: '项目切换' })).toHaveTextContent('Manual'))
+    expect(bridgeMocks.getFileTreePathsFromBridge).toHaveBeenCalledWith('manual', 'default', undefined)
+    expect(window.location.search).toBe('?project=manual&profile=default')
   })
 
   it('refreshes the current project tree from an external scan', async () => {
@@ -546,6 +568,7 @@ describe('App session restore', () => {
     )
     expect(bridgeMocks.saveState).toHaveBeenCalledWith(
       'notes',
+      'default',
       expect.objectContaining({
         openDocumentPaths: ['docs/guide.md'],
         activeDocumentPath: 'docs/guide.md',
@@ -590,6 +613,7 @@ describe('App session restore', () => {
     )
     expect(bridgeMocks.saveState).toHaveBeenCalledWith(
       'notes',
+      'default',
       expect.objectContaining({
         openDocumentPaths: ['docs/guide.md'],
         activeDocumentPath: 'docs/guide.md',

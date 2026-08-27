@@ -159,6 +159,7 @@ import App from '../../src/App'
 
 describe('App hidden items state', () => {
   beforeEach(() => {
+    window.history.replaceState(null, '', 'http://localhost:3000/')
     storageMocks.getItem.mockReset()
     storageMocks.setItem.mockReset()
     bridgeMocks.getProfileFromBridge.mockReset()

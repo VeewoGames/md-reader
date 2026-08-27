@@ -94,20 +94,26 @@ const PROJECT_SWITCH_PREPARE_TIMEOUT_MS = 60_000
 const MARKDOWN_TITLE_EXTENSION_PATTERN = /\.(md|mdx)$/i
 const RECENT_DOCUMENT_LIMIT = 50
 
-export type DeepLinkTarget = { projectId: string; profileId: string; documentPath: string; headingId: string | null }
+export type WorkspaceLocator = { projectId: string; profileId: string }
+export type DeepLinkTarget = WorkspaceLocator & { documentPath: string; headingId: string | null }
 
-export function parseDeepLinkFromLocation(location: Pick<Location, 'search' | 'hash'>): DeepLinkTarget | null | 'invalid' {
+export function parseWorkspaceLocatorFromLocation(
+  location: Pick<Location, 'search' | 'hash'>,
+): WorkspaceLocator | DeepLinkTarget | null | 'invalid' {
   const params = new URLSearchParams(location.search)
   const keys = ['project', 'profile', 'path'] as const
   const hasAny = keys.some((key) => params.has(key))
   if (!hasAny) return null
-  if (keys.some((key) => params.getAll(key).length !== 1)) return 'invalid'
+  if (params.getAll('project').length !== 1 || params.getAll('profile').length !== 1) return 'invalid'
+  if (params.has('path') && params.getAll('path').length !== 1) return 'invalid'
   const projectId = params.get('project') ?? ''
   const profileId = params.get('profile') ?? ''
-  const documentPath = params.get('path') ?? ''
-  if (!projectId || !profileId || !documentPath || documentPath.startsWith('/') || documentPath.includes('\\') || documentPath.split('/').includes('..')) {
+  if (!projectId || !profileId) {
     return 'invalid'
   }
+  const documentPath = params.get('path')
+  if (documentPath == null) return { projectId, profileId }
+  if (!documentPath || documentPath.startsWith('/') || documentPath.includes('\\') || documentPath.split('/').includes('..')) return 'invalid'
   const rawHash = location.hash.slice(1)
   try {
     return { projectId, profileId, documentPath, headingId: rawHash ? decodeURIComponent(rawHash) : null }
@@ -116,8 +122,25 @@ export function parseDeepLinkFromLocation(location: Pick<Location, 'search' | 'h
   }
 }
 
-function parseDeepLink(): DeepLinkTarget | null | 'invalid' {
-  return parseDeepLinkFromLocation(window.location)
+export function parseDeepLinkFromLocation(location: Pick<Location, 'search' | 'hash'>): DeepLinkTarget | null | 'invalid' {
+  const locator = parseWorkspaceLocatorFromLocation(location)
+  if (locator == null || locator === 'invalid') return locator
+  return 'documentPath' in locator ? locator : null
+}
+
+function parseWorkspaceLocator(): WorkspaceLocator | DeepLinkTarget | null | 'invalid' {
+  return parseWorkspaceLocatorFromLocation(window.location)
+}
+
+export function createWorkspaceHref(projectId: string, profileId: string) {
+  const url = new URL(window.location.href)
+  url.search = new URLSearchParams({ project: projectId, profile: profileId }).toString()
+  url.hash = ''
+  return url.toString()
+}
+
+function replaceWorkspaceHref(projectId: string, profileId: string) {
+  window.history.replaceState(null, '', createWorkspaceHref(projectId, profileId))
 }
 
 export function createDocumentShareHref(projectId: string, profileId: string, documentPath: string, headingId: string | null) {
@@ -568,12 +591,12 @@ function App() {
 
   async function persistDocumentScrollPosition(projectId: string, documentPath: string, scrollTop: number) {
     const localState = normalizeLocalStateSnapshot(
-      (await localStateStore.getState(projectId)) as Awaited<ReturnType<typeof localStateStore.getState>> & {
+      (await localStateStore.getState(projectId, activeProfileIdRef.current)) as Awaited<ReturnType<typeof localStateStore.getState>> & {
         activeMode: 'regular' | 'split' | 'read' | 'edit'
         lastKnownScrollTop?: number
       },
     )
-    await localStateStore.saveState(projectId, {
+    await localStateStore.saveState(projectId, activeProfileIdRef.current, {
       ...localState,
       tabStateByDocument: {
         ...localState.tabStateByDocument,
@@ -747,10 +770,11 @@ function App() {
 
   useEffect(() => {
     void (async () => {
-      const deepLink = parseDeepLink()
+      const locator = parseWorkspaceLocator()
+      const deepLink = locator && locator !== 'invalid' && 'documentPath' in locator ? locator : null
       const restoredActiveProfileId =
         (await storage.getItem<string>(STORAGE_KEYS.activeProfile())) ?? 'default'
-      const initialProfileId = deepLink && deepLink !== 'invalid' ? deepLink.profileId : restoredActiveProfileId
+      const initialProfileId = locator && locator !== 'invalid' ? locator.profileId : restoredActiveProfileId
       hasHydratedActiveProfileRef.current = true
       setActiveProfileId(initialProfileId)
 
@@ -761,30 +785,32 @@ function App() {
         const health = await getLocalBridgeHealth()
         const snapshot = await workspaceProvider.listProjects(initialProfileId)
         setProjects(snapshot.projects)
-        setActiveProjectId(deepLink && deepLink !== 'invalid' ? deepLink.projectId : snapshot.activeProjectId)
+        setActiveProjectId(locator && locator !== 'invalid' ? locator.projectId : snapshot.activeProjectId)
         setProfileIds(
           initialProfileId === 'default'
             ? ['default']
             : Array.from(new Set(['default', initialProfileId])),
         )
 
-        if (deepLink === 'invalid') {
+        if (locator === 'invalid') {
+          setActiveProjectId(null)
           resetSessionState()
           setFileTree([])
-          setStatusMessage('分享链接无效，未恢复工作区文档')
+          setStatusMessage('工作区链接无效，未恢复项目')
           setIsWorkspaceBootstrapping(false)
           return
         }
 
-        if (deepLink && !snapshot.projects.some((project) => project.id === deepLink.projectId)) {
+        if (locator && !snapshot.projects.some((project) => project.id === locator.projectId)) {
+          setActiveProjectId(null)
           resetSessionState()
           setFileTree([])
-          setStatusMessage('分享链接中的项目不存在，未恢复工作区文档')
+          setStatusMessage('工作区链接中的项目不存在，未恢复项目')
           setIsWorkspaceBootstrapping(false)
           return
         }
 
-        const initialProjectId = deepLink?.projectId ?? snapshot.activeProjectId
+        const initialProjectId = locator?.projectId ?? snapshot.activeProjectId
         if (!initialProjectId) {
           setStatusMessage(
             health.projectsLoaded > 0
@@ -1367,7 +1393,7 @@ function App() {
           regularViewState: 'locked',
         })
       : normalizeLocalStateSnapshot(
-          (await localStateStore.getState(project.id)) as Awaited<
+          (await localStateStore.getState(project.id, nextProfileId)) as Awaited<
             ReturnType<typeof localStateStore.getState>
           > & { activeMode: 'regular' | 'split' | 'read' | 'edit'; lastKnownScrollTop?: number },
         )
@@ -1419,7 +1445,7 @@ function App() {
     )
 
     if (localStateChanged) {
-      await localStateStore.saveState(project.id, {
+      await localStateStore.saveState(project.id, nextProfileId, {
         ...localState,
         activeMode: normalizeWorkspaceMode(localState.activeMode),
         regularViewState:
@@ -1468,7 +1494,7 @@ function App() {
     const [snapshot, profile, restoredState] = await Promise.all([
       workspaceProvider.getProjectTreeSnapshot(project.id, profileId, options),
       getProfileFromBridge(project.id, profileId, profileId),
-      localStateStore.getState(project.id),
+      localStateStore.getState(project.id, profileId),
     ])
     const markdownPaths = snapshot.entries.map((entry) => entry.path)
     const localState = normalizeLocalStateSnapshot(restoredState as Awaited<
@@ -1570,6 +1596,7 @@ function App() {
       setFileTree(prepared.orderedFileTree)
       setTreeEntriesByPath(new Map(prepared.snapshot.entries.map((entry) => [entry.path, entry])))
       setSession(prepared.session)
+      replaceWorkspaceHref(prepared.project.id, profileId)
       window.requestAnimationFrame(() => performance.mark('project-tree-interactive'))
       return true
     })
@@ -1634,7 +1661,9 @@ function App() {
 
     const snapshot = await workspaceProvider.listProjects(activeProfileId)
     setProjects(snapshot.projects)
-    await loadLocalServiceProject(project.id, snapshot.projects, activeProfileId)
+    if (await loadLocalServiceProject(project.id, snapshot.projects, activeProfileId)) {
+      replaceWorkspaceHref(project.id, activeProfileId)
+    }
   }
 
   async function closeTabInternal(tabId: string) {
@@ -1674,11 +1703,11 @@ function App() {
     }
 
     const localState = normalizeLocalStateSnapshot(
-      (await localStateStore.getState(activeProjectIdRef.current)) as Awaited<
+      (await localStateStore.getState(activeProjectIdRef.current, activeProfileIdRef.current)) as Awaited<
         ReturnType<typeof localStateStore.getState>
       > & { activeMode: 'regular' | 'split' | 'read' | 'edit'; lastKnownScrollTop?: number },
     )
-    await localStateStore.saveState(activeProjectIdRef.current, {
+    await localStateStore.saveState(activeProjectIdRef.current, activeProfileIdRef.current, {
       ...localState,
       openDocumentPaths: remainingTabs.map((tab) => tab.documentPath),
       activeDocumentPath: fallbackTab?.documentPath ?? null,
@@ -1739,13 +1768,16 @@ function App() {
         return
       }
 
-      await loadLocalServiceProject(
+      const restored = await loadLocalServiceProject(
         nextSnapshot.activeProjectId,
         nextSnapshot.projects,
         action.profileId,
         undefined,
         () => revision === workspaceLoadRevisionRef.current,
       )
+      if (restored && revision === workspaceLoadRevisionRef.current) {
+        replaceWorkspaceHref(nextSnapshot.activeProjectId, action.profileId)
+      }
       return
     }
 
@@ -1806,9 +1838,9 @@ function App() {
     await continueWorkspaceAction({ kind: 'switch-profile', profileId })
   }
 
-  async function readNormalizedLocalState(projectId: string): Promise<WorkspaceLocalState> {
+  async function readNormalizedLocalState(projectId: string, profileId = activeProfileIdRef.current): Promise<WorkspaceLocalState> {
     return normalizeLocalStateSnapshot(
-      (await localStateStore.getState(projectId)) as Awaited<
+      (await localStateStore.getState(projectId, profileId)) as Awaited<
         ReturnType<typeof localStateStore.getState>
       > & { activeMode: 'regular' | 'split' | 'read' | 'edit'; lastKnownScrollTop?: number },
     ) as WorkspaceLocalState
@@ -1930,11 +1962,11 @@ function App() {
     }
 
     const localState = normalizeLocalStateSnapshot(
-      (await localStateStore.getState(project.id)) as Awaited<
+      (await localStateStore.getState(project.id, profileId)) as Awaited<
         ReturnType<typeof localStateStore.getState>
       > & { activeMode: 'regular' | 'split' | 'read' | 'edit'; lastKnownScrollTop?: number },
     )
-    await localStateStore.saveState(project.id, {
+    await localStateStore.saveState(project.id, profileId, {
       ...localState,
       openDocumentPaths: remainingTabs.map((tab) => tab.documentPath).filter((path) => path !== documentPath),
       activeDocumentPath:
@@ -2020,7 +2052,7 @@ function App() {
     setManualNodeOrderByParent(nextProfile.navigation.manualNodeOrderByParent)
 
     await Promise.all([
-      localStateStore.saveState(projectId, {
+      localStateStore.saveState(projectId, activeProfileIdRef.current, {
         ...nextCollections.localState,
         activeMode: sessionRef.current.mode,
         regularViewState: sessionRef.current.regularViewState,
@@ -2050,7 +2082,7 @@ function App() {
     setManualNodeOrderByParent(nextCollections.profile.navigation.manualNodeOrderByParent)
 
     await Promise.all([
-      localStateStore.saveState(projectId, {
+      localStateStore.saveState(projectId, activeProfileIdRef.current, {
         ...nextCollections.localState,
         activeMode: sessionRef.current.mode,
         regularViewState: sessionRef.current.regularViewState,
@@ -2066,9 +2098,9 @@ function App() {
       return
     }
 
-    await localStateStore.saveState(activeProjectId, {
+    await localStateStore.saveState(activeProjectId, activeProfileIdRef.current, {
       ...normalizeLocalStateSnapshot(
-        (await localStateStore.getState(activeProjectId)) as Awaited<
+        (await localStateStore.getState(activeProjectId, activeProfileIdRef.current)) as Awaited<
           ReturnType<typeof localStateStore.getState>
         > & { activeMode: 'regular' | 'split' | 'read' | 'edit'; lastKnownScrollTop?: number },
       ),
@@ -2243,12 +2275,12 @@ function App() {
 
       const persistNavigation = navigationPersistenceRef.current.enqueue(requestId, () => navigationRequestRef.current, async () => {
         const localState = normalizeLocalStateSnapshot(
-          (await localStateStore.getState(project.id)) as Awaited<
+          (await localStateStore.getState(project.id, profileId)) as Awaited<
             ReturnType<typeof localStateStore.getState>
           > & { activeMode: 'regular' | 'split' | 'read' | 'edit'; lastKnownScrollTop?: number },
         )
-        if (navigationRequestRef.current !== requestId) return
-        await localStateStore.saveState(project.id, {
+        if (navigationRequestRef.current !== requestId || activeProjectIdRef.current !== project.id || activeProfileIdRef.current !== profileId) return
+        await localStateStore.saveState(project.id, profileId, {
           ...localState,
           openDocumentPaths: Array.from(new Set([...localState.openDocumentPaths, document.path])),
           activeDocumentPath: document.path,
@@ -2261,6 +2293,7 @@ function App() {
         })
       })
       if (!(await persistNavigation)) return
+      if (activeProjectIdRef.current !== project.id || activeProfileIdRef.current !== profileId) return
       window.history.replaceState(null, '', getDocumentLinkHref(document.path, headingId))
       setStatusMessage(`当前项目：${project.name}`)
     } catch (error) {
@@ -2513,12 +2546,12 @@ function App() {
     }))
 
     const localState = normalizeLocalStateSnapshot(
-      (await localStateStore.getState(activeProjectId)) as Awaited<
+      (await localStateStore.getState(activeProjectId, activeProfileIdRef.current)) as Awaited<
         ReturnType<typeof localStateStore.getState>
       > & { activeMode: 'regular' | 'split' | 'read' | 'edit'; lastKnownScrollTop?: number },
     )
 
-    await localStateStore.saveState(activeProjectId, {
+    await localStateStore.saveState(activeProjectId, activeProfileIdRef.current, {
       ...localState,
       openDocumentPaths: Array.from(new Set([...localState.openDocumentPaths, path])),
       activeMode: 'regular',
@@ -2588,11 +2621,11 @@ function App() {
     setDocumentScrollRestoreId((current) => current + 1)
 
     const localState = normalizeLocalStateSnapshot(
-      (await localStateStore.getState(activeProjectId)) as Awaited<
+      (await localStateStore.getState(activeProjectId, activeProfileIdRef.current)) as Awaited<
         ReturnType<typeof localStateStore.getState>
       > & { activeMode: 'regular' | 'split' | 'read' | 'edit'; lastKnownScrollTop?: number },
     )
-    await localStateStore.saveState(activeProjectId, {
+    await localStateStore.saveState(activeProjectId, activeProfileIdRef.current, {
       ...localState,
       openDocumentPaths: session.tabs.map((tab) => tab.documentPath),
       activeDocumentPath: nextTab.documentPath,
@@ -2615,12 +2648,12 @@ function App() {
     setSession(nextSession)
 
     const localState = normalizeLocalStateSnapshot(
-      (await localStateStore.getState(projectId)) as Awaited<
+      (await localStateStore.getState(projectId, activeProfileIdRef.current)) as Awaited<
         ReturnType<typeof localStateStore.getState>
       > & { activeMode: 'regular' | 'split' | 'read' | 'edit'; lastKnownScrollTop?: number },
     )
 
-    await localStateStore.saveState(projectId, {
+    await localStateStore.saveState(projectId, activeProfileIdRef.current, {
       ...localState,
       openDocumentPaths: nextSession.tabs.map((tab) => tab.documentPath),
       activeDocumentPath: getActiveTab(nextSession)?.documentPath ?? null,

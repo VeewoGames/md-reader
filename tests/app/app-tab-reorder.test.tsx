@@ -217,6 +217,7 @@ describe('App tab reorder persistence', () => {
     await waitFor(() => {
       expect(bridgeMocks.saveState).toHaveBeenCalledWith(
         'notes',
+        'default',
         expect.objectContaining({
           openDocumentPaths: ['docs/next.md', 'docs/guide.md'],
           activeDocumentPath: 'docs/next.md',

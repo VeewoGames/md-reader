@@ -205,7 +205,7 @@ describe('WorkspaceSidebarPane edge auto-scroll', () => {
 
     render(
       <WorkspaceSidebarPane
-        fileTree={createRecentTree(['docs/2026-08-10-标题.md', 'docs/无日期.md'])}
+        fileTree={createRecentTree(['docs/2026-08-10-标题.md', 'docs/2026-08-11_下划线标题.md', 'docs/无日期.md'])}
         availableDirectoryPaths={[]}
         currentDocumentPath={null}
         hasProjects
@@ -216,6 +216,7 @@ describe('WorkspaceSidebarPane edge auto-scroll', () => {
     )
 
     expect(screen.getByRole('button', { name: '标题.md' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '下划线标题.md' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '无日期.md' })).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '标题.md' }))
     expect(onDocumentSelect).toHaveBeenCalledWith('docs/2026-08-10-标题.md')

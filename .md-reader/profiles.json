@@ -7,7 +7,8 @@
         "theme": "system",
         "fontSize": 16,
         "pageWidth": "narrow",
-        "lineHeight": 1.6
+        "lineHeight": 1.6,
+        "hideFileTitleDate": false
       },
       "layout": {
         "sidebarWidth": 446,
@@ -131,7 +132,8 @@
         "theme": "system",
         "fontSize": 16,
         "pageWidth": "narrow",
-        "lineHeight": 1.6
+        "lineHeight": 1.6,
+        "hideFileTitleDate": false
       },
       "layout": {
         "sidebarWidth": 280,

@@ -8,7 +8,7 @@ describe('local state store', () => {
     const storage = createMemoryKeyValueStore()
     const store = createLocalStateStore(storage)
 
-    const restored = await store.getState('notes')
+    const restored = await store.getState('notes', 'default')
 
     expect(restored.openDocumentPaths).toEqual([])
     expect(restored.activeDocumentPath).toBeNull()
@@ -22,7 +22,7 @@ describe('local state store', () => {
     const storage = createMemoryKeyValueStore()
     const store = createLocalStateStore(storage)
 
-    await store.saveState('notes', {
+    await store.saveState('notes', 'writer', {
       openDocumentPaths: ['docs/README.md', 'docs/guide.md'],
       activeDocumentPath: 'docs/README.md',
       activeMode: 'split',
@@ -37,7 +37,7 @@ describe('local state store', () => {
       },
     })
 
-    const restored = await store.getState('notes')
+    const restored = await store.getState('notes', 'writer')
 
     expect(restored.openDocumentPaths).toEqual(['docs/README.md', 'docs/guide.md'])
     expect(restored.activeDocumentPath).toBe('docs/README.md')
@@ -45,5 +45,27 @@ describe('local state store', () => {
     expect(restored.regularViewState).toBe('editable')
     expect(restored.tabStateByDocument['docs/guide.md']).toEqual({ lastKnownScrollTop: 512 })
     expect(restored.readingProgressByDocument['docs/guide.md']).toBe(512)
+  })
+
+  it('isolates sessions by profile and migrates the legacy project-only state on first read', async () => {
+    const storage = createMemoryKeyValueStore()
+    const store = createLocalStateStore(storage)
+    await storage.setItem('workspace:local-state:notes', {
+      openDocumentPaths: ['docs/legacy.md'],
+      activeDocumentPath: 'docs/legacy.md',
+    })
+
+    expect((await store.getState('notes', 'writer')).activeDocumentPath).toBe('docs/legacy.md')
+    await store.saveState('notes', 'reviewer', {
+      openDocumentPaths: ['docs/review.md'],
+      activeDocumentPath: 'docs/review.md',
+      activeMode: 'regular',
+      regularViewState: 'locked',
+      tabStateByDocument: {},
+      readingProgressByDocument: {},
+    })
+
+    expect((await store.getState('notes', 'writer')).activeDocumentPath).toBe('docs/legacy.md')
+    expect((await store.getState('notes', 'reviewer')).activeDocumentPath).toBe('docs/review.md')
   })
 })

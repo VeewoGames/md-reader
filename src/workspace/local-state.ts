@@ -60,19 +60,26 @@ function normalizeWorkspaceLocalState(
 
 export function createLocalStateStore(storage: KeyValueStore) {
   return {
-    async getState(projectId: string): Promise<WorkspaceLocalState> {
+    async getState(projectId: string, profileId: string): Promise<WorkspaceLocalState> {
       const rawState = await storage.getItem<LegacyWorkspaceLocalState>(
-        STORAGE_KEYS.localState(projectId),
+        STORAGE_KEYS.localState(projectId, profileId),
       )
 
-      if (rawState == null) {
-        return DEFAULT_LOCAL_STATE
+      if (rawState != null) {
+        return normalizeWorkspaceLocalState(rawState)
       }
 
-      return normalizeWorkspaceLocalState(rawState)
+      const legacyState = await storage.getItem<LegacyWorkspaceLocalState>(
+        STORAGE_KEYS.legacyLocalState(projectId),
+      )
+      if (legacyState == null) return DEFAULT_LOCAL_STATE
+
+      const normalized = normalizeWorkspaceLocalState(legacyState)
+      await storage.setItem(STORAGE_KEYS.localState(projectId, profileId), normalized)
+      return normalized
     },
-    async saveState(projectId: string, state: WorkspaceLocalState): Promise<void> {
-      await storage.setItem(STORAGE_KEYS.localState(projectId), state)
+    async saveState(projectId: string, profileId: string, state: WorkspaceLocalState): Promise<void> {
+      await storage.setItem(STORAGE_KEYS.localState(projectId, profileId), state)
     },
   }
 }
