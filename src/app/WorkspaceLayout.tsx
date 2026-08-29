@@ -22,6 +22,7 @@ import {
   Pencil,
   Star,
   Trash2,
+  X,
 } from 'lucide-react'
 
 import { findActiveHeadingId, type HeadingTarget } from './outline-active-heading'
@@ -630,9 +631,15 @@ export const WorkspaceSidebarPane = memo(function WorkspaceSidebarPane({
       return
     }
 
-    renameInputRef.current?.focus()
-    renameInputRef.current?.select()
-  }, [nameActionState])
+    const input = renameInputRef.current
+    input?.focus()
+
+    // Keep the suffix intact for the common "rename the title" flow while
+    // still letting users replace the whole name with a single shortcut.
+    const suffixStart = nameActionState.sourceName.lastIndexOf('.')
+    const selectionEnd = suffixStart > 0 ? suffixStart : nameActionState.sourceName.length
+    input?.setSelectionRange(0, selectionEnd)
+  }, [nameActionState?.path])
 
   function handleToggleDirectory(path: string) {
     setExpandedDirectories((previous) => {
@@ -1582,6 +1589,26 @@ export function WorkspaceFileTree({
                         }
                       }}
                     />
+                    <div className="file-tree__rename-actions" aria-label="重命名操作">
+                      <button
+                        type="button"
+                        className="file-tree__rename-action file-tree__rename-action--confirm"
+                        aria-label={`保存 ${node.name} 的新名称`}
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => void onNameActionSubmit()}
+                      >
+                        <CheckCircle2 aria-hidden="true" />
+                      </button>
+                      <button
+                        type="button"
+                        className="file-tree__rename-action"
+                        aria-label={`取消重命名 ${node.name}`}
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={onNameActionCancel}
+                      >
+                        <X aria-hidden="true" />
+                      </button>
+                    </div>
                   </div>
                 ) : (
                   <button

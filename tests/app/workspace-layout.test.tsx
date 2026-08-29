@@ -1582,6 +1582,50 @@ describe('WorkspaceLayout outline navigation', () => {
     expect(screen.getByRole('button', { name: 'guide.md' })).toBeInTheDocument()
   })
 
+  it('selects only the initial basename and does not select text again while typing', async () => {
+    const user = userEvent.setup()
+    const onRenameDocument = vi.fn().mockResolvedValue(true)
+
+    render(
+      <WorkspaceLayout
+        mode="regular"
+        regularViewState="locked"
+        fileTree={createVisibleTree(['docs/guide.md'])}
+        currentDocumentPath="docs/guide.md"
+        currentDocumentContent={'# 标题\n\n正文'}
+        statusMessage="当前项目：Notes"
+        sidebarWidth={280}
+        outlineWidth={320}
+        hasProjects
+        onDocumentSelect={() => {}}
+        onRenameDocument={onRenameDocument}
+        onSidebarWidthChange={() => {}}
+        onSidebarWidthCommit={() => {}}
+        onOutlineWidthChange={() => {}}
+        onOutlineWidthCommit={() => {}}
+      />,
+    )
+
+    fireEvent.contextMenu(screen.getByRole('button', { name: 'guide.md' }))
+    await user.click(screen.getByRole('menuitem', { name: '重命名' }))
+
+    const renameInput = screen.getByRole('textbox', { name: '重命名 guide.md' })
+    expect(renameInput).toHaveFocus()
+    expect(renameInput).toHaveProperty('selectionStart', 0)
+    expect(renameInput).toHaveProperty('selectionEnd', 5)
+
+    await user.clear(renameInput)
+    await user.type(renameInput, 'overview.md')
+    expect(renameInput).toHaveValue('overview.md')
+    expect(renameInput).toHaveProperty('selectionStart', 11)
+    expect(renameInput).toHaveProperty('selectionEnd', 11)
+
+    await user.click(screen.getByRole('button', { name: '保存 guide.md 的新名称' }))
+
+    expect(onRenameDocument).toHaveBeenCalledWith('docs/guide.md', 'overview.md')
+    expect(screen.queryByRole('textbox', { name: '重命名 guide.md' })).not.toBeInTheDocument()
+  })
+
   it('creates a duplicate immediately from the context menu without opening inline rename UI', async () => {
     const user = userEvent.setup()
     const onDuplicateDocument = vi.fn().mockResolvedValue(true)
