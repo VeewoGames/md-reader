@@ -40,6 +40,10 @@ export function createWorkspaceProvider({ bridge }: WorkspaceProviderDeps) {
 
   return {
     getSource,
+    async reprobeSource(): Promise<WorkspaceSource> {
+      sourcePromise = null
+      return getSource()
+    },
     async listProjects(profileId: string): Promise<WorkspaceProjectsSnapshot> {
       if ((await getSource()) !== 'local-service') {
         return {

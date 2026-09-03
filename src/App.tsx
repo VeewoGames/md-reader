@@ -410,6 +410,7 @@ type PendingWorkspaceAction =
   | { kind: 'switch-project'; projectId: string }
   | { kind: 'switch-profile'; profileId: string }
   | { kind: 'restart-service' }
+  | { kind: 'reconnect-service' }
   | { kind: 'stop-service' }
 
 type PendingRefreshDocumentAction = {
@@ -813,7 +814,7 @@ function App() {
         const initialProjectId = locator?.projectId ?? snapshot.activeProjectId
         if (!initialProjectId) {
           setStatusMessage(
-            health.projectsLoaded > 0
+            (health.projectsLoaded ?? 0) > 0
               ? '本地服务已连接，但当前 profile 还没有激活项目'
               : '本地服务已连接，等待接入 Markdown 项目',
           )
@@ -1625,6 +1626,10 @@ function App() {
   }
 
   async function restoreLocalServiceWorkspace(profileId: string) {
+    const source = await workspaceProvider.reprobeSource()
+    if (source !== 'local-service') {
+      throw new Error('本地服务仍不可用')
+    }
     const health = await getLocalBridgeHealth()
     const snapshot = await workspaceProvider.listProjects(profileId)
 
@@ -1634,7 +1639,7 @@ function App() {
 
     if (!snapshot.activeProjectId) {
       setStatusMessage(
-        health.projectsLoaded > 0
+        (health.projectsLoaded ?? 0) > 0
           ? '本地服务已连接，但当前 profile 还没有激活项目'
           : '本地服务已连接，等待接入 Markdown 项目',
       )
@@ -1793,6 +1798,22 @@ function App() {
       } catch (error) {
         setWorkspaceSource('offline')
         setStatusMessage(error instanceof Error ? error.message : '本地服务重启失败')
+      } finally {
+        setIsServiceActionPending(false)
+      }
+      return
+    }
+
+    if (action.kind === 'reconnect-service') {
+      setIsServiceActionPending(true)
+      setStatusMessage('正在重新连接本地服务…')
+
+      try {
+        await restoreLocalServiceWorkspace(activeProfileIdRef.current)
+        setStatusMessage('本地服务已重新连接')
+      } catch (error) {
+        setWorkspaceSource('offline')
+        setStatusMessage(error instanceof Error ? error.message : '本地服务重新连接失败')
       } finally {
         setIsServiceActionPending(false)
       }
@@ -3010,6 +3031,19 @@ function App() {
     await continueWorkspaceAction({ kind: 'restart-service' })
   }
 
+  async function handleReconnectService() {
+    if (workspaceSource === 'local-service' || isServiceActionPending) {
+      return
+    }
+
+    if (getDirtyTabs().length > 0) {
+      setPendingWorkspaceAction({ kind: 'reconnect-service' })
+      return
+    }
+
+    await continueWorkspaceAction({ kind: 'reconnect-service' })
+  }
+
   async function handleStopService() {
     if (workspaceSource !== 'local-service' || isServiceActionPending) {
       return
@@ -3161,6 +3195,7 @@ function App() {
         onTabClose={handleTabClose}
         onTabReorder={handleTabReorder}
         onRestartService={handleRestartService}
+        onReconnectService={handleReconnectService}
         onStopService={handleStopService}
         onDocumentSelect={handleDocumentSelect}
         onDocumentScrollTopChange={handleDocumentScrollTopChange}

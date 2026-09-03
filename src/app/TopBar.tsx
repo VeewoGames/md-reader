@@ -65,6 +65,7 @@ interface TopBarProps {
   onTabClose: (tabId: string) => void
   onTabReorder?: (nextOrderedTabIds: string[]) => void
   onRestartService?: () => void
+  onReconnectService?: () => void
   onStopService?: () => void
   documentFontSize?: number
   documentPageWidth?: PageWidthMode
@@ -388,6 +389,7 @@ export function TopBar({
   onTabClose,
   onTabReorder,
   onRestartService,
+  onReconnectService,
   onStopService,
   documentFontSize = 16,
   documentPageWidth = 'narrow',
@@ -978,7 +980,22 @@ export function TopBar({
               </span>
             </button>
           </div>
-          ) : null}
+          ) : (
+            <div className="topbar__service-actions" role="group" aria-label="服务操作">
+              <button
+                type="button"
+                className="topbar__service-button"
+                aria-label="重新连接服务"
+                title="重新连接服务"
+                disabled={isServiceActionPending}
+                onClick={onReconnectService}
+              >
+                <span className="topbar__icon" aria-hidden="true">
+                  <RotateCw />
+                </span>
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </header>

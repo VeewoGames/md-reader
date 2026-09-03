@@ -3,9 +3,12 @@ import type { WorkspaceProfile } from './profile-store'
 
 export interface LocalBridgeHealth {
   ok: boolean
+  serviceId?: 'md-reader-bridge'
   mode: 'local-service' | 'offline'
-  projectsLoaded: number
+  projectsLoaded: number | null
   port: number
+  generation?: number
+  nonce?: string
 }
 
 export interface BridgeProjectsSnapshot {
@@ -101,6 +104,7 @@ export class BridgeDocumentSavedCacheInvalidationError extends Error {
 interface FetchOptions {
   fetchImpl?: typeof fetch
   baseUrl?: string
+  timeoutMs?: number
 }
 
 const DEFAULT_BRIDGE_PORT = 8797
@@ -145,15 +149,21 @@ async function readJsonResponse<T>(response: Response): Promise<T> {
 export async function getLocalBridgeHealth(options: FetchOptions = {}): Promise<LocalBridgeHealth> {
   const fetchImpl = getFetch(options.fetchImpl)
   const baseUrl = getBaseUrl(options.baseUrl)
+  const controller = new AbortController()
+  const timeout = window.setTimeout(() => controller.abort(), options.timeoutMs ?? 2000)
 
   try {
-    const response = await fetchImpl(`${baseUrl}/api/health`)
+    const response = await fetchImpl(`${baseUrl}/api/health`, { signal: controller.signal })
     const payload = await readJsonResponse<LocalBridgeHealth>(response)
+    if (payload.serviceId !== 'md-reader-bridge') throw new Error('Bridge identity mismatch')
     return {
       ok: payload.ok,
+      serviceId: payload.serviceId,
       mode: payload.ok ? 'local-service' : 'offline',
       projectsLoaded: payload.projectsLoaded ?? 0,
       port: payload.port ?? DEFAULT_BRIDGE_PORT,
+      generation: payload.generation,
+      nonce: payload.nonce,
     }
   } catch {
     return {
@@ -162,6 +172,8 @@ export async function getLocalBridgeHealth(options: FetchOptions = {}): Promise<
       projectsLoaded: 0,
       port: DEFAULT_BRIDGE_PORT,
     }
+  } finally {
+    window.clearTimeout(timeout)
   }
 }
 

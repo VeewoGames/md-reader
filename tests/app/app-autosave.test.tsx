@@ -45,6 +45,7 @@ const bridgeMocks = vi.hoisted(() => ({
   setActiveProjectWithBridge: vi.fn(),
   restartLocalBridgeService: vi.fn(),
   stopLocalBridgeService: vi.fn(),
+  getLocalBridgeHealth: vi.fn(),
 }))
 
 vi.mock('../../src/shared/key-value-store', () => ({
@@ -76,12 +77,7 @@ vi.mock('../../src/workspace/local-state', () => ({
 vi.mock('../../src/workspace/local-bridge-access', () => ({
   BridgeDocumentConflictError: class BridgeDocumentConflictError extends Error {},
   BridgeDocumentSavedCacheInvalidationError: class BridgeDocumentSavedCacheInvalidationError extends Error {},
-  getLocalBridgeHealth: vi.fn(async () => ({
-    ok: true,
-    mode: 'local-service',
-    projectsLoaded: 1,
-    port: 8797,
-  })),
+  getLocalBridgeHealth: bridgeMocks.getLocalBridgeHealth,
   listProjectsFromBridge: vi.fn(async () => ({
     activeProjectId: 'notes',
     projects: [
@@ -151,6 +147,13 @@ describe('App autosave transitions', () => {
     bridgeMocks.setActiveProjectWithBridge.mockReset()
     bridgeMocks.restartLocalBridgeService.mockReset()
     bridgeMocks.stopLocalBridgeService.mockReset()
+    bridgeMocks.getLocalBridgeHealth.mockReset()
+    bridgeMocks.getLocalBridgeHealth.mockResolvedValue({
+      ok: true,
+      mode: 'local-service',
+      projectsLoaded: 1,
+      port: 8797,
+    })
 
     bridgeMocks.listProjectProfilesFromBridge.mockResolvedValue({
       profileIds: ['default', 'Lans'],
@@ -401,6 +404,22 @@ describe('App autosave transitions', () => {
     await waitFor(() => {
       expect(bridgeMocks.restartLocalBridgeService).toHaveBeenCalledTimes(1)
     })
+  })
+
+  it('re-probes and restores the workspace after entering offline mode', async () => {
+    const user = userEvent.setup()
+
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: '关闭服务' }))
+    await user.click(await screen.findByRole('button', { name: '重新连接服务' }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '重启服务' })).toBeInTheDocument()
+      expect(screen.getByRole('tab', { name: /guide/ })).toHaveAttribute('aria-selected', 'true')
+    })
+    expect(bridgeMocks.stopLocalBridgeService).toHaveBeenCalledTimes(1)
+    expect(bridgeMocks.getLocalBridgeHealth.mock.calls.length).toBeGreaterThanOrEqual(3)
   })
 
   it('blocks service restart when saving fails', async () => {

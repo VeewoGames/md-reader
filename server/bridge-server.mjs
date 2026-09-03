@@ -2,7 +2,6 @@ import http from "node:http";
 import path from "node:path";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { spawn } from "node:child_process";
 
 import {
   defaultRuntimeHome,
@@ -25,6 +24,7 @@ import { DocumentConflictError, writeMarkdownDocument } from "./project-writer.m
 import { createProjectTreeCache } from "./project-tree-cache.mjs";
 import { appendServiceLog } from "./service-log.mjs";
 import { createWebUiRuntime } from "./web-ui.mjs";
+import { requestServiceHost } from "./service-host-protocol.mjs";
 
 const DEFAULT_PORT = 8797;
 
@@ -59,6 +59,8 @@ export async function startBridgeServer({
   runtimeHome = defaultRuntimeHome(),
   stateFile,
   webMode = "dev",
+  generation = 0,
+  nonce = "standalone",
 } = {}) {
   await mkdir(runtimeHome, { recursive: true });
   const projectTreeCache = createProjectTreeCache({ runtimeHome });
@@ -88,25 +90,10 @@ export async function startBridgeServer({
     server.listen(port, "127.0.0.1", resolve);
   });
 
-  const resolvedStateFile = stateFile ?? path.join(runtimeHome, "runtime", "service-state.json");
-  await mkdir(path.dirname(resolvedStateFile), { recursive: true });
-  await writeFile(
-    resolvedStateFile,
-    JSON.stringify(
-      {
-        pid: process.pid,
-        port,
-        runtimeHome,
-        startedAt: new Date().toISOString(),
-        webMode,
-      },
-      null,
-      2,
-    ),
-  );
-
   server.__mdReaderWebUiRuntime = webUiRuntime;
   server.__mdReaderWebMode = webUiRuntime.mode ?? webMode;
+  server.__mdReaderGeneration = Number(generation);
+  server.__mdReaderNonce = nonce;
   await appendServiceLog(runtimeHome, "started", { pid: process.pid, port, webMode: server.__mdReaderWebMode });
   return server;
 }
@@ -120,11 +107,12 @@ export async function stopBridgeServer(server, { stateFile, runtimeHome = defaul
     });
   });
 
-  const resolvedStateFile = stateFile ?? path.join(runtimeHome, "runtime", "service-state.json");
-  try {
-    await writeFile(resolvedStateFile, "");
-  } catch {
-    // ignore closeout cleanup failures
+  if (stateFile) {
+    try {
+      await writeFile(stateFile, "");
+    } catch {
+      // Standalone/test callers may still provide an explicit legacy state file.
+    }
   }
   await appendServiceLog(runtimeHome, "stopped", { pid: process.pid });
 }
@@ -140,25 +128,41 @@ async function handleRequest(request, response, { runtimeHome, port, stateFile, 
   }
 
   if (request.method === "GET" && url.pathname === "/api/health") {
-    const snapshot = await getProjectsSnapshot(runtimeHome, "default");
     sendJson(response, 200, {
       ok: true,
+      serviceId: "md-reader-bridge",
       mode: "local-service",
-      projectsLoaded: snapshot.projects.length,
+      projectsLoaded: null,
       port,
+      generation: server.__mdReaderGeneration,
+      nonce: server.__mdReaderNonce,
     });
     return;
   }
 
-  if (request.method === "POST" && url.pathname === "/api/service/stop") {
+  if (request.method === "POST" && url.pathname === "/api/internal/shutdown") {
+    if (request.headers["x-md-reader-bridge-nonce"] !== server.__mdReaderNonce) {
+      sendJson(response, 403, { error: "Bridge identity mismatch." });
+      return;
+    }
     sendJson(response, 200, { ok: true });
     queueBridgeShutdown({ server, port, runtimeHome, stateFile });
     return;
   }
 
+  if (request.method === "POST" && url.pathname === "/api/service/stop") {
+    sendJson(response, 202, { ok: true });
+    void requestServiceHost(runtimeHome, { command: "stop" }, { timeoutMs: 10000 }).catch((error) =>
+      appendServiceLog(runtimeHome, "service_control_failed", { action: "stop", error: error.message ?? String(error) }),
+    );
+    return;
+  }
+
   if (request.method === "POST" && url.pathname === "/api/service/restart") {
-    sendJson(response, 200, { ok: true });
-    queueBridgeRestart({ server, port, runtimeHome, stateFile });
+    sendJson(response, 202, { ok: true });
+    void requestServiceHost(runtimeHome, { command: "restart" }, { timeoutMs: 15000 }).catch((error) =>
+      appendServiceLog(runtimeHome, "service_control_failed", { action: "restart", error: error.message ?? String(error) }),
+    );
     return;
   }
 
@@ -470,6 +474,8 @@ function parseArgs(argv) {
     runtimeHome: readOption(argv, "--runtime-home") ?? defaultRuntimeHome(),
     stateFile: readOption(argv, "--state-file") ?? undefined,
     webMode: readOption(argv, "--web-mode") ?? "dev",
+    generation: Number(readOption(argv, "--generation") ?? 0),
+    nonce: readOption(argv, "--nonce") ?? "standalone",
   };
 }
 
@@ -489,36 +495,6 @@ function isMainModule() {
 function queueBridgeShutdown({ server, runtimeHome, stateFile, port }) {
   setTimeout(async () => {
     await stopBridgeServer(server, { runtimeHome, stateFile });
-    process.exit(0);
-  }, 0);
-}
-
-function queueBridgeRestart({ server, runtimeHome, stateFile, port }) {
-  setTimeout(async () => {
-    const webMode = server.__mdReaderWebMode ?? "dev";
-    await stopBridgeServer(server, { runtimeHome, stateFile });
-    const args = [
-      fileURLToPath(import.meta.url),
-      "--port",
-      String(port),
-      "--runtime-home",
-      runtimeHome,
-      "--web-mode",
-      webMode,
-    ];
-
-    if (stateFile) {
-      args.push("--state-file", stateFile);
-    }
-
-    const child = spawn(process.execPath, args, {
-      cwd: path.dirname(fileURLToPath(import.meta.url)),
-      detached: true,
-      shell: false,
-      stdio: "ignore",
-      windowsHide: true,
-    });
-    child.unref();
     process.exit(0);
   }, 0);
 }

@@ -65,4 +65,25 @@ describe('workspace provider', () => {
     expect(source).toBe('offline')
     expect(listProjects).not.toHaveBeenCalled()
   })
+
+  it('can re-probe after an initially offline result', async () => {
+    const getHealth = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, mode: 'offline', projectsLoaded: 0, port: 8797 })
+      .mockResolvedValueOnce({ ok: true, mode: 'local-service', projectsLoaded: 1, port: 8797 })
+    const provider = createWorkspaceProvider({
+      bridge: {
+        getHealth,
+        listProjects: vi.fn(),
+        registerProject: vi.fn(),
+        setActiveProject: vi.fn(),
+        getFileTreePaths: vi.fn(),
+        refreshFileTree: vi.fn(),
+      },
+    })
+
+    await expect(provider.getSource()).resolves.toBe('offline')
+    await expect(provider.reprobeSource()).resolves.toBe('local-service')
+    expect(getHealth).toHaveBeenCalledTimes(2)
+  })
 })

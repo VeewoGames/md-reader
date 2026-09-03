@@ -1,18 +1,17 @@
+import crypto from "node:crypto";
 import { spawn } from "node:child_process";
 import path from "node:path";
-import http from "node:http";
 import { fileURLToPath } from "node:url";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import http from "node:http";
 import { setTimeout as delay } from "node:timers/promises";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 
 import { defaultRuntimeHome } from "./server/project-registry.mjs";
-import { appendServiceLog } from "./server/service-log.mjs";
+import { requestServiceHost } from "./server/service-host-protocol.mjs";
 
-const execFileAsync = promisify(execFile);
 const scriptRoot = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_PORT = 8797;
+const SERVICE_ID = "md-reader-bridge";
 
 export function getRuntimePaths(runtimeHome = defaultRuntimeHome()) {
   return {
@@ -29,187 +28,203 @@ export async function loadServiceState(runtimeHome = defaultRuntimeHome()) {
     if (!raw.trim()) return null;
     return JSON.parse(raw);
   } catch (error) {
-    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
-      return null;
-    }
+    if (error?.code === "ENOENT") return null;
     throw error;
   }
 }
 
 export async function clearServiceState(runtimeHome = defaultRuntimeHome()) {
-  const { stateFile } = getRuntimePaths(runtimeHome);
-  await rm(stateFile, { force: true });
+  await rm(getRuntimePaths(runtimeHome).stateFile, { force: true });
 }
 
 export async function isPortResponding(port, requestPath = "/api/health") {
-  return new Promise((resolve) => {
-    const request = http.get(
-      {
-        hostname: "127.0.0.1",
-        port,
-        path: requestPath,
-        timeout: 1000,
-      },
-      (response) => {
-        response.resume();
-        resolve((response.statusCode ?? 0) >= 200 && (response.statusCode ?? 0) < 500);
-      },
-    );
-    request.on("timeout", () => request.destroy());
-    request.on("error", () => resolve(false));
-  });
+  const result = await readHttpJson(port, requestPath, 1000);
+  return result.responding;
 }
 
 export async function ensureServiceRunning({ runtimeHome = defaultRuntimeHome(), port = DEFAULT_PORT } = {}) {
-  const existing = await loadServiceState(runtimeHome);
-  if (existing?.pid && (await isServiceProcess(existing.pid, existing)) && (await isPortResponding(existing.port ?? port))) {
-    return {
-      alreadyRunning: true,
-      port: existing.port ?? port,
-      pid: existing.pid,
-    };
-  }
+  let existing = null;
+  try {
+    existing = await requestServiceHost(runtimeHome, { command: "ping" }, { timeoutMs: 1000 });
+  } catch {}
 
-  if (existing) {
-    await appendServiceLog(runtimeHome, "stale_state_recovered", {
-      pid: existing.pid ?? null,
-      port: existing.port ?? port,
-    });
-    await clearServiceState(runtimeHome);
-  }
-
-  const { runtimeDir, stateFile } = getRuntimePaths(runtimeHome);
-  await mkdir(runtimeDir, { recursive: true });
-  const child = spawn(
-    process.execPath,
-    [
-      "server/bridge-server.mjs",
-      "--port",
-      String(port),
-      "--runtime-home",
-      runtimeHome,
-      "--state-file",
-      stateFile,
-      "--web-mode",
-      "dev",
-    ],
-    {
+  let spawnedHostPid = null;
+  if (!existing) {
+    const child = spawn(process.execPath, [
+      "server/service-host.mjs",
+      "--runtime-home", runtimeHome,
+      "--port", String(port),
+    ], {
       cwd: scriptRoot,
       detached: true,
       shell: false,
       stdio: "ignore",
       windowsHide: true,
-    },
-  );
-  child.unref();
-  await waitForServiceReady(port);
-  await writeFile(
-    stateFile,
-    JSON.stringify(
-      {
-        pid: child.pid,
-        port,
-        runtimeHome,
-        script: "server/bridge-server.mjs",
-        webMode: "dev",
-      },
-      null,
-      2,
-    ),
-  );
+    });
+    spawnedHostPid = child.pid ?? null;
+    child.unref();
+    await waitForHost(runtimeHome);
+  }
+
+  const wasAlreadyReady = existing?.status === "ready" && !existing.intentionalStop;
+  const host = await requestServiceHost(runtimeHome, { command: "start", requestId: crypto.randomUUID() }, { timeoutMs: 10000 });
+  const hostStartedByThisCall = spawnedHostPid !== null && host.hostPid === spawnedHostPid;
+
+  const health = await readServiceHealth(port, { timeoutMs: 3000 });
+  if (!health.ok || health.serviceId !== SERVICE_ID) {
+    throw new Error("md-reader ServiceHost returned before the bridge passed its identity health check.");
+  }
   return {
-    alreadyRunning: false,
+    alreadyRunning: wasAlreadyReady || !hostStartedByThisCall,
     port,
-    pid: child.pid,
+    pid: host.bridgePid,
+    hostPid: host.hostPid,
+    generation: host.generation,
   };
 }
 
 export async function stopService(runtimeHome = defaultRuntimeHome()) {
-  const state = await loadServiceState(runtimeHome);
-  if (!state?.pid) {
-    return { ok: true, message: "No running md-reader service state was found." };
-  }
-
-  if (!(await isServiceProcess(state.pid, state))) {
-    return { ok: false, message: `Refusing to stop pid ${state.pid} because it is not the recorded md-reader service.` };
-  }
-
-  if (process.platform === "win32") {
-    await execFileAsync("taskkill.exe", ["/PID", String(state.pid), "/T", "/F"], { windowsHide: true });
-  } else {
-    process.kill(state.pid, "SIGTERM");
-  }
-
-  const startedAt = Date.now();
-  while (Date.now() - startedAt < 5000) {
-    if (!(await isPortResponding(state.port ?? DEFAULT_PORT))) {
-      await clearServiceState(runtimeHome);
-      return { ok: true, message: `Stopped md-reader service pid ${state.pid}.` };
+  try {
+    const result = await requestServiceHost(runtimeHome, { command: "stop", requestId: crypto.randomUUID() }, { timeoutMs: 10000 });
+    return { ok: true, message: `Stopped md-reader service${result.bridgePid ? ` pid ${result.bridgePid}` : ""}.` };
+  } catch (error) {
+    const state = await loadServiceState(runtimeHome);
+    if (!state) return { ok: true, message: "No running md-reader service state was found." };
+    if (state.hostPid && isProcessAlive(state.hostPid)) {
+      return {
+        ok: false,
+        message: `Refusing fallback stop because ServiceHost pid ${state.hostPid} is still alive but its control channel is unavailable.`,
+      };
     }
-    await delay(100);
-  }
 
-  return { ok: false, message: `Timed out waiting for md-reader pid ${state.pid} to exit.` };
+    const stoppingState = {
+      ...state,
+      intentionalStop: true,
+      desiredState: "stopped",
+      status: "stopping",
+      updatedAt: new Date().toISOString(),
+    };
+    await writeServiceState(runtimeHome, stoppingState);
+    const occupant = await readHttpJson(state.port ?? DEFAULT_PORT, "/api/health", 1000);
+    if (occupant.responding) {
+      const matchesRecordedBridge = occupant.payload?.serviceId === SERVICE_ID
+        && Number(occupant.payload?.generation) === Number(state.generation)
+        && occupant.payload?.nonce === state.bridgeNonce;
+      if (!matchesRecordedBridge) {
+        return { ok: false, message: `Refusing to stop the unknown process on port ${state.port ?? DEFAULT_PORT}.` };
+      }
+      await requestRecordedBridgeShutdown(state.port ?? DEFAULT_PORT, state.bridgeNonce, 2000).catch(() => {});
+      const released = await waitForPortRelease(state.port ?? DEFAULT_PORT, 5000);
+      if (!released) return { ok: false, message: "Timed out waiting for the recorded md-reader bridge to stop." };
+    }
+    await writeServiceState(runtimeHome, {
+      ...stoppingState,
+      bridgePid: null,
+      status: "stopped",
+      updatedAt: new Date().toISOString(),
+    });
+    return { ok: true, message: "Stopped the recorded md-reader service while ServiceHost was unavailable." };
+  }
 }
 
-export async function readServiceHealth(port = DEFAULT_PORT) {
-  return new Promise((resolve, reject) => {
-    const request = http.get(`http://127.0.0.1:${port}/api/health`, (response) => {
+export async function restartService(runtimeHome = defaultRuntimeHome()) {
+  return requestServiceHost(runtimeHome, { command: "restart", requestId: crypto.randomUUID() }, { timeoutMs: 15000 });
+}
+
+export async function readServiceHealth(port = DEFAULT_PORT, { timeoutMs = 2000 } = {}) {
+  const result = await readHttpJson(port, "/api/health", timeoutMs);
+  if (!result.responding) throw new Error(`connect ECONNREFUSED 127.0.0.1:${port}`);
+  if ((result.statusCode ?? 500) >= 400) throw new Error(`HTTP ${result.statusCode}`);
+  if (result.payload?.serviceId !== SERVICE_ID) throw new Error(`Port ${port} is not the md-reader bridge.`);
+  return result.payload;
+}
+
+async function readHttpJson(port, requestPath, timeoutMs) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(deadline);
+      request.destroy();
+      resolve(value);
+    };
+    const request = http.get({ hostname: "127.0.0.1", port, path: requestPath, timeout: timeoutMs }, (response) => {
       let body = "";
       response.setEncoding("utf8");
-      response.on("data", (chunk) => {
-        body += chunk;
-      });
+      response.on("data", (chunk) => { body += chunk; });
       response.on("end", () => {
-        if ((response.statusCode ?? 0) >= 400) {
-          reject(new Error(`HTTP ${response.statusCode}`));
-          return;
+        try {
+          finish({ responding: true, statusCode: response.statusCode ?? 0, payload: JSON.parse(body) });
+        } catch {
+          finish({ responding: true, statusCode: response.statusCode ?? 0, payload: null });
         }
-        resolve(JSON.parse(body));
       });
+      response.on("aborted", () => finish({ responding: false, payload: null }));
+      response.on("error", () => finish({ responding: false, payload: null }));
     });
-    request.on("error", reject);
-    request.on("timeout", () => request.destroy(new Error("timeout")));
+    const deadline = setTimeout(() => finish({ responding: false, payload: null }), timeoutMs);
+    request.on("timeout", () => finish({ responding: false, payload: null }));
+    request.on("error", () => finish({ responding: false, payload: null }));
   });
 }
 
-async function waitForServiceReady(port, timeoutMs = 5000) {
+async function writeServiceState(runtimeHome, state) {
+  const { runtimeDir, stateFile } = getRuntimePaths(runtimeHome);
+  await mkdir(runtimeDir, { recursive: true });
+  const temporaryPath = `${stateFile}.${process.pid}.${crypto.randomUUID()}.tmp`;
+  await writeFile(temporaryPath, JSON.stringify(state, null, 2), "utf8");
+  await rename(temporaryPath, stateFile);
+}
+
+async function requestRecordedBridgeShutdown(port, nonce, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const request = http.request({
+      hostname: "127.0.0.1",
+      port,
+      path: "/api/internal/shutdown",
+      method: "POST",
+      timeout: timeoutMs,
+      headers: { "x-md-reader-bridge-nonce": nonce ?? "" },
+    }, (response) => {
+      response.resume();
+      response.on("end", resolve);
+    });
+    const deadline = setTimeout(() => request.destroy(new Error("shutdown deadline exceeded")), timeoutMs);
+    request.once("close", () => clearTimeout(deadline));
+    request.on("timeout", () => request.destroy(new Error("shutdown timeout")));
+    request.on("error", reject);
+    request.end();
+  });
+}
+
+async function waitForPortRelease(port, timeoutMs) {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
-    if (await isPortResponding(port)) return;
+    if (!(await readHttpJson(port, "/api/health", 250)).responding) return true;
     await delay(100);
   }
-  throw new Error(`Timed out waiting for md-reader service to start on port ${port}.`);
+  return false;
 }
 
-async function isServiceProcess(pid, state) {
-  const processInfo = await inspectProcess(pid);
-  if (!processInfo) return false;
-  const commandLine = String(processInfo.commandLine ?? processInfo.CommandLine ?? "").toLowerCase().replaceAll("\\", "/");
-  return commandLine.includes("server/bridge-server.mjs") && commandLine.includes(`--port ${String(state.port ?? DEFAULT_PORT)}`);
-}
-
-async function inspectProcess(pid) {
-  if (process.platform === "win32") {
-    const psCommand = [
-      `$p = Get-CimInstance Win32_Process -Filter "ProcessId = ${pid}"`,
-      "if (-not $p) { exit 0 }",
-      "$p | Select-Object ProcessId, CommandLine | ConvertTo-Json -Compress",
-    ].join("; ");
-    const { stdout } = await execFileAsync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", psCommand], {
-      windowsHide: true,
-    });
-    const trimmed = stdout.trim();
-    if (!trimmed) return null;
-    return JSON.parse(trimmed);
-  }
-
+function isProcessAlive(pid) {
   try {
-    const { stdout } = await execFileAsync("ps", ["-p", String(pid), "-o", "command="]);
-    const commandLine = stdout.trim();
-    if (!commandLine) return null;
-    return { ProcessId: pid, commandLine };
+    process.kill(Number(pid), 0);
+    return true;
   } catch {
-    return null;
+    return false;
   }
+}
+
+async function waitForHost(runtimeHome, timeoutMs = 5000) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      await requestServiceHost(runtimeHome, { command: "ping" }, { timeoutMs: 250 });
+      return;
+    } catch {
+      await delay(100);
+    }
+  }
+  throw new Error("Timed out waiting for md-reader ServiceHost to start.");
 }

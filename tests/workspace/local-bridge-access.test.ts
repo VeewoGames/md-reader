@@ -77,6 +77,7 @@ describe('local bridge access', () => {
       ok: true,
       json: async () => ({
         ok: true,
+        serviceId: 'md-reader-bridge',
         mode: 'local-service',
         projectsLoaded: 2,
         port: 8797,
@@ -85,9 +86,12 @@ describe('local bridge access', () => {
 
     const health = await getLocalBridgeHealth({ fetchImpl: fetchMock })
 
-    expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:8797/api/health')
+    expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:8797/api/health', {
+      signal: expect.any(AbortSignal),
+    })
     expect(health).toEqual({
       ok: true,
+      serviceId: 'md-reader-bridge',
       mode: 'local-service',
       projectsLoaded: 2,
       port: 8797,
@@ -104,6 +108,29 @@ describe('local bridge access', () => {
       mode: 'offline',
       projectsLoaded: 0,
       port: 8797,
+    })
+  })
+
+  it('rejects a responding process with the wrong service identity', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true, serviceId: 'another-service', port: 8797 }),
+    })
+
+    await expect(getLocalBridgeHealth({ fetchImpl: fetchMock })).resolves.toMatchObject({
+      ok: false,
+      mode: 'offline',
+    })
+  })
+
+  it('aborts a health probe at its deadline', async () => {
+    const fetchMock = vi.fn((_url: string, init?: RequestInit) => new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')))
+    })) as unknown as typeof fetch
+
+    await expect(getLocalBridgeHealth({ fetchImpl: fetchMock, timeoutMs: 5 })).resolves.toMatchObject({
+      ok: false,
+      mode: 'offline',
     })
   })
 

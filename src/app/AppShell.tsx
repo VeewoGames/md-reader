@@ -74,6 +74,7 @@ interface AppShellProps {
   onTabClose: (tabId: string) => void
   onTabReorder: (nextOrderedTabIds: string[]) => void
   onRestartService?: () => void
+  onReconnectService?: () => void
   onStopService?: () => void
   onDocumentSelect: (path: string) => void
   onDocumentScrollTopChange?: (documentPath: string, scrollTop: number) => void
@@ -162,6 +163,7 @@ export function AppShell(props: AppShellProps) {
         onTabClose={props.onTabClose}
         onTabReorder={props.onTabReorder}
         onRestartService={props.onRestartService}
+        onReconnectService={props.onReconnectService}
         onStopService={props.onStopService}
         documentFontSize={documentFontSize}
         documentPageWidth={documentPageWidth}
