@@ -14,6 +14,8 @@ const projectRoot = path.dirname(fileURLToPath(import.meta.url));
 const TASK_NAME = "md-reader\\ServiceHost";
 
 export function buildTaskXml({
+  scriptHostPath = path.join(process.env.WINDIR ?? "C:\\Windows", "System32", "wscript.exe"),
+  launcherPath = path.join(projectRoot, "server", "service-host-launcher.vbs"),
   nodePath = process.execPath,
   hostPath = path.join(projectRoot, "server", "service-host.mjs"),
   runtimeHome = defaultRuntimeHome(),
@@ -22,7 +24,10 @@ export function buildTaskXml({
     ? `${process.env.USERDOMAIN}\\${process.env.USERNAME}`
     : process.env.USERNAME,
 } = {}) {
-  const argumentsText = `&quot;${xmlEscape(hostPath)}&quot; --runtime-home &quot;${xmlEscape(runtimeHome)}&quot; --port 8797`;
+  const launcherArguments = [launcherPath, nodePath, hostPath, "--runtime-home", runtimeHome, "--port", "8797"]
+    .map((argument) => `&quot;${xmlEscape(argument)}&quot;`)
+    .join(" ");
+  const argumentsText = `//B //NoLogo ${launcherArguments}`;
   return `<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo><Description>Supervises the local md-reader bridge for the signed-in user.</Description></RegistrationInfo>
@@ -47,12 +52,13 @@ export function buildTaskXml({
     <Priority>7</Priority>
     <RestartOnFailure><Interval>PT1M</Interval><Count>3</Count></RestartOnFailure>
   </Settings>
-  <Actions Context="Author"><Exec><Command>${xmlEscape(nodePath)}</Command><Arguments>${argumentsText}</Arguments><WorkingDirectory>${xmlEscape(workingDirectory)}</WorkingDirectory></Exec></Actions>
+  <Actions Context="Author"><Exec><Command>${xmlEscape(scriptHostPath)}</Command><Arguments>${argumentsText}</Arguments><WorkingDirectory>${xmlEscape(workingDirectory)}</WorkingDirectory></Exec></Actions>
 </Task>`;
 }
 
 export async function installServiceTask(runtimeHome = defaultRuntimeHome()) {
   if (process.platform !== "win32") throw new Error("Task Scheduler integration is only supported on Windows.");
+  await access(path.join(projectRoot, "server", "service-host-launcher.vbs"));
   const host = await requestServiceHost(runtimeHome, { command: "health" }, { timeoutMs: 3000 });
   if (host.status !== "ready") throw new Error("Refusing to install the task before ServiceHost is ready.");
   const runtimeDir = path.join(runtimeHome, "runtime");
