@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { stat } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 
 import { resolveMarkdownDocumentPath } from './project-reader.mjs';
 
@@ -19,10 +20,11 @@ export async function revealMarkdownDocumentInExplorer(projectRoot, contentRoots
   }
 
   const spawnImpl = options.spawnImpl ?? spawn;
+  const helperPath = fileURLToPath(new URL('./reveal-document.ps1', import.meta.url));
   await new Promise((resolve, reject) => {
-    const child = spawnImpl('explorer.exe', [`/e,/select,${resolvedDocumentPath}`], { shell: false, windowsHide: false, stdio: 'ignore' });
+    const child = spawnImpl('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', helperPath, '-DocumentPath', resolvedDocumentPath], { shell: false, windowsHide: true, stdio: 'ignore' });
     child.once('error', reject);
-    child.once('spawn', resolve);
+    child.once('exit', (code) => code === 0 ? resolve() : reject(new Error('Explorer window could not be activated.')));
   });
   return { path: normalizedPath, revealed: true };
 }
