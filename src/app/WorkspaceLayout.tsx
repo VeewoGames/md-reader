@@ -17,6 +17,7 @@ import {
   FilePlus2,
   FileText,
   FolderPlus,
+  FolderSearch,
   History,
   Link2,
   Pencil,
@@ -203,6 +204,7 @@ interface WorkspaceLayoutProps {
   onCreateDocument?: (directoryPath?: string) => void | Promise<void>
   onCreateDirectory?: (directoryPath?: string) => void | Promise<void>
   onCopyDocumentLink?: (path: string) => void | Promise<void>
+  onRevealDocumentInFolder?: (path: string) => void | Promise<void>
   onCopyDirectoryPath?: (path: string) => void | Promise<void>
   onDuplicateDocument?: (path: string, nextName: string) => void | boolean | Promise<void | boolean>
   onRenameDocument?: (path: string, nextName: string) => void | boolean | Promise<void | boolean>
@@ -314,6 +316,7 @@ export interface WorkspaceSidebarPaneProps {
   onCreateDocument?: (directoryPath?: string) => void | Promise<void>
   onCreateDirectory?: (directoryPath?: string) => void | Promise<void>
   onCopyDocumentLink?: (path: string) => void | Promise<void>
+  onRevealDocumentInFolder?: (path: string) => void | Promise<void>
   onCopyDirectoryPath?: (path: string) => void | Promise<void>
   onDuplicateDocument?: (path: string, nextName: string) => void | boolean | Promise<void | boolean>
   onRenameDocument?: (path: string, nextName: string) => void | boolean | Promise<void | boolean>
@@ -417,6 +420,7 @@ export const WorkspaceSidebarPane = memo(function WorkspaceSidebarPane({
   onCreateDocument = () => {},
   onCreateDirectory = () => {},
   onCopyDocumentLink = () => {},
+  onRevealDocumentInFolder = () => {},
   onCopyDirectoryPath = () => {},
   onDuplicateDocument = async () => true,
   onRenameDocument = async () => true,
@@ -1054,6 +1058,7 @@ export const WorkspaceSidebarPane = memo(function WorkspaceSidebarPane({
               onCreateDocument={onCreateDocument}
               onCreateDirectory={onCreateDirectory}
               onCopyDocumentLink={onCopyDocumentLink}
+              onRevealDocumentInFolder={onRevealDocumentInFolder}
               onCopyDirectoryPath={onCopyDirectoryPath}
               onDuplicateDocument={onDuplicateDocument}
               onRenameDocument={onRenameDocument}
@@ -1120,6 +1125,14 @@ export const WorkspaceSidebarPane = memo(function WorkspaceSidebarPane({
                   >
                     <Link2 aria-hidden="true" />
                     <span>拷贝链接</span>
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => void handleContextMenuAction(() => onRevealDocumentInFolder(contextMenuState.path))}
+                  >
+                    <FolderSearch aria-hidden="true" />
+                    <span>在文件夹中显示</span>
                   </button>
                   <button
                     type="button"
@@ -1267,6 +1280,7 @@ export function WorkspaceFileTree({
   onCreateDocument,
   onCreateDirectory,
   onCopyDocumentLink,
+  onRevealDocumentInFolder,
   onCopyDirectoryPath,
   onDuplicateDocument,
   onRenameDocument,
@@ -1312,6 +1326,7 @@ export function WorkspaceFileTree({
   onCreateDocument: (directoryPath?: string) => void | Promise<void>
   onCreateDirectory: (directoryPath?: string) => void | Promise<void>
   onCopyDocumentLink: (path: string) => void | Promise<void>
+  onRevealDocumentInFolder: (path: string) => void | Promise<void>
   onCopyDirectoryPath: (path: string) => void | Promise<void>
   onDuplicateDocument: (path: string, nextName: string) => void | boolean | Promise<void | boolean>
   onRenameDocument: (path: string, nextName: string) => void | boolean | Promise<void | boolean>
@@ -1485,6 +1500,7 @@ export function WorkspaceFileTree({
                         onCreateDocument={onCreateDocument}
                         onCreateDirectory={onCreateDirectory}
                         onCopyDocumentLink={onCopyDocumentLink}
+                        onRevealDocumentInFolder={onRevealDocumentInFolder}
                         onCopyDirectoryPath={onCopyDirectoryPath}
                         onDuplicateDocument={onDuplicateDocument}
                         onRenameDocument={onRenameDocument}
@@ -1702,6 +1718,7 @@ export function WorkspaceLayout({
   onCreateDocument = () => {},
   onCreateDirectory = () => {},
   onCopyDocumentLink = () => {},
+  onRevealDocumentInFolder = () => {},
   onCopyDirectoryPath = () => {},
   onDuplicateDocument = async () => true,
   onRenameDocument = async () => true,
@@ -2395,7 +2412,7 @@ export function WorkspaceLayout({
       return <div className="workspace__status">正在读取 Markdown 内容…</div>
     }
 
-    if (!activeDocumentContent && mode !== 'split') {
+    if (!activeDocumentContent && mode !== 'split' && !(mode === 'regular' && regularViewState === 'editable')) {
       return <div className="workspace__status">当前文档还没有可用内容</div>
     }
 
@@ -2514,6 +2531,7 @@ export function WorkspaceLayout({
         onCreateDocument={onCreateDocument}
         onCreateDirectory={onCreateDirectory}
         onCopyDocumentLink={onCopyDocumentLink}
+        onRevealDocumentInFolder={onRevealDocumentInFolder}
         onCopyDirectoryPath={onCopyDirectoryPath}
         onDuplicateDocument={onDuplicateDocument}
         onRenameDocument={onRenameDocument}

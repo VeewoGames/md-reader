@@ -1143,6 +1143,22 @@ describe('WorkspaceLayout outline navigation', () => {
     expect(screen.getByRole('heading', { name: '下一节' })).toBeInTheDocument()
   })
 
+  it('renders an editable surface for a newly created empty document', async () => {
+    render(
+      <WorkspaceLayout
+        mode="regular"
+        regularViewState="editable"
+        fileTree={[]}
+        currentDocumentPath="docs/新文档.md"
+        currentDocumentContent=""
+        editingDocumentContent=""
+      />,
+    )
+
+    expect(await screen.findByLabelText('可视 Markdown 编辑器')).toHaveAttribute('data-readonly', 'false')
+    expect(screen.queryByText('当前文档还没有可用内容')).not.toBeInTheDocument()
+  })
+
   it('does not attach a mutation observer to the editor pane in regular mode', async () => {
     const observe = vi.fn()
     const disconnect = vi.fn()

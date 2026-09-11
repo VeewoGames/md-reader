@@ -20,6 +20,7 @@ import {
   renameDocumentNode,
 } from "./project-node-operations.mjs";
 import { readMarkdownDocument } from "./project-reader.mjs";
+import { revealMarkdownDocumentInExplorer } from './document-reveal.mjs';
 import { DocumentConflictError, writeMarkdownDocument } from "./project-writer.mjs";
 import { createProjectTreeCache } from "./project-tree-cache.mjs";
 import { appendServiceLog } from "./service-log.mjs";
@@ -280,6 +281,20 @@ async function handleRequest(request, response, { runtimeHome, port, stateFile, 
   }
 
   const documentMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/document$/);
+  const documentRevealMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/document\/reveal$/);
+  if (request.method === 'POST' && documentRevealMatch) {
+    const profileId = url.searchParams.get('profileId') ?? 'default';
+    const projectId = decodeURIComponent(documentRevealMatch[1]);
+    const project = await getProjectById(runtimeHome, profileId, projectId);
+    if (!project) { sendJson(response, 404, { error: `Unknown project: ${projectId}` }); return; }
+    try {
+      sendJson(response, 200, await revealMarkdownDocumentInExplorer(project.rootPath, project.contentRoots, (await readJsonBody(request)).path ?? ''));
+    } catch (error) {
+      const code = error?.code ?? 'DOCUMENT_REVEAL_FAILED';
+      sendJson(response, code === 'DOCUMENT_REVEAL_UNSUPPORTED' ? 501 : code === 'DOCUMENT_REVEAL_NOT_FOUND' ? 404 : 400, { error: error instanceof Error ? error.message : String(error), code });
+    }
+    return;
+  }
   if (request.method === "GET" && documentMatch) {
     const profileId = url.searchParams.get("profileId") ?? "default";
     const projectId = decodeURIComponent(documentMatch[1]);

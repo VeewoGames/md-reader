@@ -51,6 +51,7 @@ import {
   listProjectsFromBridge,
   listProjectProfilesFromBridge,
   renameDocumentNodeInBridge,
+  revealDocumentInBridge,
   registerProjectWithBridge,
   restartLocalBridgeService,
   saveProfileToBridge,
@@ -2969,6 +2970,17 @@ function App() {
     })
   }
 
+  async function handleRevealDocumentInFolder(documentPath: string) {
+    try {
+      const projectId = activeProjectIdRef.current
+      if (!projectId) throw new Error('当前项目不可用')
+      await revealDocumentInBridge(projectId, activeProfileIdRef.current, documentPath)
+      publishActionFeedback(`已发送文件夹定位请求：${documentPath}`)
+    } catch (error) {
+      publishActionFeedback(error instanceof Error ? `定位失败：${error.message}` : '定位失败', 'error')
+    }
+  }
+
   async function handleHideFileTitleDateChange(nextHideFileTitleDate: boolean) {
     setHideFileTitleDate(nextHideFileTitleDate)
     await saveActiveProfileAppearance({ hideFileTitleDate: nextHideFileTitleDate })
@@ -3202,6 +3214,7 @@ function App() {
         onCreateDocument={handleCreateDocument}
         onCreateDirectory={handleCreateDirectory}
         onCopyDocumentLink={handleCopyDocumentLink}
+        onRevealDocumentInFolder={handleRevealDocumentInFolder}
         onCopyDirectoryPath={handleCopyDirectoryPath}
         onDuplicateDocument={handleDuplicateDocument}
         onRenameDocument={handleRenameDocument}

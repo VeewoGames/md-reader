@@ -31,6 +31,8 @@ export interface BridgeNodePayload {
   size?: number
 }
 
+export interface BridgeDocumentRevealPayload { path: string; revealed: true }
+
 export interface ProjectTreeDocumentEntry {
   path: string
   createdAtMs: number
@@ -412,6 +414,19 @@ export async function saveDocumentContentToBridge(
   )
 
   return readJsonResponse<BridgeDocumentPayload>(response)
+}
+
+export async function revealDocumentInBridge(
+  projectId: string,
+  profileId: string,
+  documentPath: string,
+  options: FetchOptions = {},
+): Promise<BridgeDocumentRevealPayload> {
+  const response = await getFetch(options.fetchImpl)(
+    `${getBaseUrl(options.baseUrl)}/api/projects/${encodeURIComponent(projectId)}/document/reveal?profileId=${encodeURIComponent(profileId)}`,
+    { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path: documentPath }) },
+  )
+  return readJsonResponse<BridgeDocumentRevealPayload>(response)
 }
 
 export async function createDocumentNodeInBridge(

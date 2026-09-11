@@ -81,6 +81,7 @@ interface AppShellProps {
   onCreateDocument?: (directoryPath?: string) => void | Promise<void>
   onCreateDirectory?: (directoryPath?: string) => void | Promise<void>
   onCopyDocumentLink?: (path: string) => void | Promise<void>
+  onRevealDocumentInFolder?: (path: string) => void | Promise<void>
   onCopyDirectoryPath?: (path: string) => void | Promise<void>
   onDuplicateDocument?: (path: string, nextName: string) => void | boolean | Promise<void | boolean>
   onRenameDocument?: (path: string, nextName: string) => void | boolean | Promise<void | boolean>
@@ -203,6 +204,7 @@ export function AppShell(props: AppShellProps) {
         onCreateDocument={props.onCreateDocument}
         onCreateDirectory={props.onCreateDirectory}
         onCopyDocumentLink={props.onCopyDocumentLink}
+        onRevealDocumentInFolder={props.onRevealDocumentInFolder}
         onCopyDirectoryPath={props.onCopyDirectoryPath}
         onDuplicateDocument={props.onDuplicateDocument}
         onRenameDocument={props.onRenameDocument}
