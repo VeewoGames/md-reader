@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { createInitialExpandedDirectories } from '../../src/app/WorkspaceLayout'
+import { createInitialExpandedDirectories } from '../../src/app/workspace-file-tree-utils'
 
 describe('Workspace file tree expansion state', () => {
   it('keeps persisted hidden directory expansions when availableDirectoryPaths still contains the hidden branch', () => {

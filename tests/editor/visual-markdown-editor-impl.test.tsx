@@ -162,7 +162,7 @@ describe('VisualMarkdownEditorImpl', () => {
     expect(editor.use).toHaveBeenNthCalledWith(6, gfm)
     expect(slashMenuFeatureState.install).toHaveBeenCalledWith(editor)
 
-    const configCalls = editor.config.mock.calls.map(([callback]) => callback as (ctx: any) => void)
+    const configCalls = editor.config.mock.calls.map(([callback]) => callback as (ctx: unknown) => void)
     const baseSet = vi.fn()
     const baseUpdate = vi.fn()
     configCalls[0]({
@@ -199,7 +199,7 @@ describe('VisualMarkdownEditorImpl', () => {
       config: ReturnType<typeof vi.fn>
     }
 
-    const configCalls = editor.config.mock.calls.map(([callback]) => callback as (ctx: any) => void)
+    const configCalls = editor.config.mock.calls.map(([callback]) => callback as (ctx: unknown) => void)
     const baseSet = vi.fn()
     configCalls[0]({
       set: baseSet,
@@ -225,7 +225,7 @@ describe('VisualMarkdownEditorImpl', () => {
       config: ReturnType<typeof vi.fn>
     }
 
-    const configCalls = editor.config.mock.calls.map(([callback]) => callback as (ctx: any) => void)
+    const configCalls = editor.config.mock.calls.map(([callback]) => callback as (ctx: unknown) => void)
     let onUpdated: ((ctx: unknown, markdown: string) => void) | null = null
 
     configCalls[1]({
@@ -267,7 +267,7 @@ describe('VisualMarkdownEditorImpl', () => {
       config: ReturnType<typeof vi.fn>
     }
 
-    const configCalls = editor.config.mock.calls.map(([callback]) => callback as (ctx: any) => void)
+    const configCalls = editor.config.mock.calls.map(([callback]) => callback as (ctx: unknown) => void)
     let onUpdated: ((ctx: unknown, markdown: string) => void) | null = null
 
     configCalls[1]({
@@ -303,7 +303,7 @@ describe('VisualMarkdownEditorImpl', () => {
       config: ReturnType<typeof vi.fn>
     }
 
-    const configCalls = editor.config.mock.calls.map(([callback]) => callback as (ctx: any) => void)
+    const configCalls = editor.config.mock.calls.map(([callback]) => callback as (ctx: unknown) => void)
     let onUpdated: ((ctx: unknown, markdown: string) => void) | null = null
 
     configCalls[1]({
@@ -338,7 +338,7 @@ describe('VisualMarkdownEditorImpl', () => {
       config: ReturnType<typeof vi.fn>
     }
 
-    const configCalls = editor.config.mock.calls.map(([callback]) => callback as (ctx: any) => void)
+    const configCalls = editor.config.mock.calls.map(([callback]) => callback as (ctx: unknown) => void)
     let onUpdated: ((ctx: unknown, markdown: string) => void) | null = null
 
     configCalls[1]({

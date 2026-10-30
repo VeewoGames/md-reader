@@ -1,5 +1,5 @@
-import type { ProjectRegistryRecord } from './registry'
 import type { WorkspaceProfile } from './profile-store'
+import { isProjectsSnapshot, RegistryRequestError, type ProjectsSnapshot, type ProjectRegistration } from './project-registry-contract'
 
 export interface LocalBridgeHealth {
   ok: boolean
@@ -11,10 +11,7 @@ export interface LocalBridgeHealth {
   nonce?: string
 }
 
-export interface BridgeProjectsSnapshot {
-  activeProjectId: string | null
-  projects: ProjectRegistryRecord[]
-}
+export type BridgeProjectsSnapshot = ProjectsSnapshot
 
 export interface BridgeDocumentPayload {
   path: string
@@ -187,49 +184,58 @@ export async function listProjectsFromBridge(
   const baseUrl = getBaseUrl(options.baseUrl)
   const response = await fetchImpl(`${baseUrl}/api/profiles/${encodeURIComponent(profileId)}/projects`)
 
-  return readJsonResponse<BridgeProjectsSnapshot>(response)
+  const snapshot = await readJsonResponse<BridgeProjectsSnapshot>(response)
+  if (!isProjectsSnapshot(snapshot)) throw new RegistryRequestError('项目列表响应不完整，请更新或重启本地服务', 'REGISTRY_PROTOCOL')
+  return snapshot
+}
+
+async function registryCommand<T>(profileId: string, command: string, body: object, options: FetchOptions = {}): Promise<T> {
+  let response: Response
+  try {
+    response = await getFetch(options.fetchImpl)(`${getBaseUrl(options.baseUrl)}/api/profiles/${encodeURIComponent(profileId)}/projects/${command}`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(options.timeoutMs ?? 15_000),
+    })
+  } catch { throw new RegistryRequestError('项目列表提交结果未知，请重试确认', 'REGISTRY_OUTCOME_UNKNOWN', true) }
+  let payload: unknown
+  try { payload = await response.json() }
+  catch { throw new RegistryRequestError('项目列表响应无法确认，请重试确认', 'REGISTRY_OUTCOME_UNKNOWN', true) }
+  const error = payload as { code?: string; error?: string }
+  if (!response.ok) {
+    // Only a structured rejection proves that a request did not commit.
+    const known = ['REGISTRY_CONFLICT', 'REGISTRY_INVALID', 'PROJECT_NOT_REGISTERED', 'PROJECT_PATH_UNAVAILABLE', 'PROJECT_ID_COLLISION', 'REGISTRY_BUSY', 'REGISTRY_VERSION_ROLLBACK', 'REGISTRY_CORRUPT']
+    throw new RegistryRequestError(error.error ?? `HTTP ${response.status}`, error.code ?? 'REGISTRY_OUTCOME_UNKNOWN', !known.includes(error.code ?? ''))
+  }
+  const snapshot = command === 'register' ? (payload as ProjectRegistration).snapshot : payload
+  if (!isProjectsSnapshot(snapshot) || (command === 'register' && !(payload as ProjectRegistration).project?.id)) throw new RegistryRequestError('项目列表响应不完整，请重试确认', 'REGISTRY_OUTCOME_UNKNOWN', true)
+  return payload as T
 }
 
 export async function registerProjectWithBridge(
   profileId: string,
   rootPath: string,
+  expectedRevision: number,
   options: FetchOptions = {},
-): Promise<ProjectRegistryRecord> {
-  const fetchImpl = getFetch(options.fetchImpl)
-  const baseUrl = getBaseUrl(options.baseUrl)
-  const response = await fetchImpl(
-    `${baseUrl}/api/profiles/${encodeURIComponent(profileId)}/projects/register`,
-    {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({ rootPath }),
-    },
-  )
-  const payload = await readJsonResponse<{ project: ProjectRegistryRecord }>(response)
-  return payload.project
+): Promise<ProjectRegistration> {
+  return registryCommand(profileId, 'register', { rootPath, expectedRevision }, options)
 }
 
 export async function setActiveProjectWithBridge(
   profileId: string,
   projectId: string,
+  expectedRevision: number,
   options: FetchOptions = {},
-): Promise<void> {
-  const fetchImpl = getFetch(options.fetchImpl)
-  const baseUrl = getBaseUrl(options.baseUrl)
-  const response = await fetchImpl(
-    `${baseUrl}/api/profiles/${encodeURIComponent(profileId)}/projects/active`,
-    {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({ projectId }),
-    },
-  )
+): Promise<ProjectsSnapshot> {
+  return registryCommand(profileId, 'active', { projectId, expectedRevision }, options)
+}
 
-  await readJsonResponse<{ ok: true }>(response)
+export function reorderProjectsWithBridge(profileId: string, orderedIds: string[], expectedRevision: number, options: FetchOptions = {}) {
+  return registryCommand<ProjectsSnapshot>(profileId, 'reorder', { orderedIds, expectedRevision }, options)
+}
+export function unregisterProjectWithBridge(profileId: string, projectId: string, replacementProjectId: string | null, expectedRevision: number, options: FetchOptions = {}) {
+  return registryCommand<ProjectsSnapshot>(profileId, 'unregister', { projectId, replacementProjectId, expectedRevision }, options)
+}
+export function reconcileProjectsWithBridge(profileId: string, expectedRevision: number, options: FetchOptions = {}) {
+  return registryCommand<ProjectsSnapshot>(profileId, 'reconcile', { expectedRevision }, options)
 }
 
 export async function getFileTreePathsFromBridge(

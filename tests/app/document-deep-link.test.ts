@@ -6,7 +6,7 @@ import {
   createNavigationPersistenceCoordinator,
   parseDeepLinkFromLocation,
   parseWorkspaceLocatorFromLocation,
-} from '../../src/App'
+} from '../../src/app/workspace-links'
 
 describe('document deep-link helpers', () => {
   it('parses a valid deep link and rejects incomplete or duplicate parameters', () => {

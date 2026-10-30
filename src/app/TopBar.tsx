@@ -7,6 +7,7 @@ import {
   Lock,
   LockOpen,
   PanelTop,
+  Pin,
   Plus,
   Power,
   RotateCw,
@@ -16,7 +17,7 @@ import {
 } from 'lucide-react'
 
 import type { ProjectRegistryRecord } from '../workspace/registry'
-import { preloadVisualMarkdownEditor } from '../editor/visual-markdown-editor'
+import { preloadVisualMarkdownEditor } from '../editor/visual-markdown-editor-loader'
 import type { TabSaveState } from '../workspace/workspace-session'
 import type { DocumentLineHeight, PageWidthMode } from '../workspace/profile-store'
 import {
@@ -35,6 +36,7 @@ interface TopBarTab {
   title: string
   saveState: TabSaveState
   saveErrorMessage: string | null
+  isPinned?: boolean
 }
 
 interface TopBarProps {
@@ -55,6 +57,7 @@ interface TopBarProps {
   isDocumentLoading?: boolean
   isFileTreeRefreshing?: boolean
   onConnectProject: () => void
+  onManageProjects?: () => void
   onProjectChange: (projectId: string) => void
   onProfileChange: (profileId: string) => void
   onModeChange: (mode: WorkspaceMode) => void
@@ -63,11 +66,14 @@ interface TopBarProps {
   onToggleShowHiddenItems?: () => void
   onTabSelect: (tabId: string) => void
   onTabClose: (tabId: string) => void
+  onTabPin?: (tabId: string) => void
   onTabReorder?: (nextOrderedTabIds: string[]) => void
   onRestartService?: () => void
   onReconnectService?: () => void
   onStopService?: () => void
   documentFontSize?: number
+  maxUnpinnedTabs?: number
+  onMaxUnpinnedTabsChange?: (value: number) => void
   documentPageWidth?: PageWidthMode
   documentLineHeight?: DocumentLineHeight
   hideFileTitleDate?: boolean
@@ -103,6 +109,8 @@ const DRAG_THRESHOLD_PX = 6
 
 function TopBarReadingPreferences({
   fontSize,
+  maxUnpinnedTabs,
+  onMaxUnpinnedTabsChange,
   pageWidth,
   lineHeight,
   hideFileTitleDate,
@@ -112,6 +120,8 @@ function TopBarReadingPreferences({
   onHideFileTitleDateChange,
 }: {
   fontSize: number
+  maxUnpinnedTabs: number
+  onMaxUnpinnedTabsChange?: (value: number) => void
   pageWidth: PageWidthMode
   lineHeight: DocumentLineHeight
   hideFileTitleDate: boolean
@@ -161,6 +171,11 @@ function TopBarReadingPreferences({
 
       {isOpen ? (
         <div className="topbar__reading-popover" role="group" aria-label="阅读偏好">
+          <section className="topbar__reading-section">
+            <label className="topbar__reading-label" htmlFor="max-unpinned-tabs">未固定标签上限：{maxUnpinnedTabs}</label>
+            <input id="max-unpinned-tabs" type="range" min="1" max="30" step="1" value={maxUnpinnedTabs}
+              onChange={(event) => onMaxUnpinnedTabsChange?.(Number(event.target.value))} />
+          </section>
           <section className="topbar__reading-section" aria-label="默认字体大小">
             <p className="topbar__reading-label">默认字体大小</p>
             <div className="topbar__reading-options" role="group" aria-label="字体大小选项">
@@ -235,6 +250,7 @@ function TopBarSelect({
   placeholder,
   value,
   onChange,
+  onManage,
 }: {
   ariaLabel: string
   className: string
@@ -242,6 +258,7 @@ function TopBarSelect({
   placeholder?: string
   value: string
   onChange: (value: string) => void
+  onManage?: () => void
 }) {
   const listboxId = useId()
   const rootRef = useRef<HTMLDivElement | null>(null)
@@ -355,6 +372,7 @@ function TopBarSelect({
               )
             })}
           </div>
+          {onManage ? <button type="button" className="topbar__select-option" onClick={() => { setIsOpen(false); onManage() }}>管理项目…</button> : null}
         </div>
       ) : null}
     </div>
@@ -379,6 +397,7 @@ export function TopBar({
   isDocumentLoading = false,
   isFileTreeRefreshing = false,
   onConnectProject,
+  onManageProjects,
   onProjectChange,
   onProfileChange,
   onModeChange,
@@ -387,11 +406,14 @@ export function TopBar({
   onToggleShowHiddenItems,
   onTabSelect,
   onTabClose,
+  onTabPin,
   onTabReorder,
   onRestartService,
   onReconnectService,
   onStopService,
   documentFontSize = 16,
+  maxUnpinnedTabs = 10,
+  onMaxUnpinnedTabsChange,
   documentPageWidth = 'narrow',
   documentLineHeight = 1.6,
   hideFileTitleDate = false,
@@ -403,14 +425,17 @@ export function TopBar({
   onRefreshFileTree,
 }: TopBarProps) {
   const [dragState, setDragState] = useState<'idle' | 'press_pending' | 'dragging' | 'settling'>('idle')
+  const [pinHoverTabId, setPinHoverTabId] = useState<string | null>(null)
   const [dragTabId, setDragTabId] = useState<string | null>(null)
   const [previewOrder, setPreviewOrder] = useState<string[] | null>(null)
   const [dragOffsetX, setDragOffsetX] = useState(0)
   const [settlingTabId, setSettlingTabId] = useState<string | null>(null)
+  const [dragLayout, setDragLayout] = useState<{ order: string[]; rectsById: Record<string, TabRect> } | null>(null)
   const tabButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({})
   const tabLabelRefs = useRef<Record<string, HTMLSpanElement | null>>({})
   const tabstripRef = useRef<HTMLDivElement | null>(null)
   const settlingTimerRef = useRef<number | null>(null)
+  const dragCleanupRef = useRef<(() => void) | null>(null)
   const dragStateRef = useRef(dragState)
   const dragTabIdRef = useRef(dragTabId)
   const previewOrderRef = useRef(previewOrder)
@@ -423,6 +448,7 @@ export function TopBar({
     triggerElement: HTMLButtonElement | null
   } | null>(null)
   const [tooltipTabId, setTooltipTabId] = useState<string | null>(null)
+  const [tooltipPosition, setTooltipPosition] = useState<{ left: number; top: number } | null>(null)
   const isRegularMode = mode === 'regular'
   const isLockActionPending =
     regularViewState === 'unlocking' || regularViewState === 'locking'
@@ -470,6 +496,9 @@ export function TopBar({
       return
     }
 
+    const rect = tabButtonRefs.current[tabId]?.getBoundingClientRect()
+    if (!rect) return
+    setTooltipPosition({ left: rect.left + rect.width / 2, top: rect.bottom + 10 })
     setTooltipTabId(tabId)
   }
 
@@ -527,10 +556,12 @@ export function TopBar({
     const nextPreviewOrder = previewOrderRef.current
 
     cleanupDragging(meta.pointerId)
+    dragCleanupRef.current = null
     dragMetaRef.current = null
     setTooltipTabId(null)
     setDragOffsetX(0)
     setPreviewOrder(null)
+    setDragLayout(null)
     setDragState('settling')
     setSettlingTabId(nextDragState === 'dragging' ? nextDragTabId : null)
     setDragTabId(null)
@@ -619,30 +650,33 @@ export function TopBar({
     setDragTabId(tabId)
     setDragOffsetX(0)
     setPreviewOrder(committedOrder)
+    const rectsById = collectTabRects()
+    setDragLayout({ order: committedOrder, rectsById })
     dragMetaRef.current = {
       pointerId: event.pointerId,
       startX: event.clientX,
       tabId,
       order: committedOrder,
-      rectsById: collectTabRects(),
+      rectsById,
       triggerElement: event.currentTarget,
     }
+    dragCleanupRef.current = () => cleanupDragging(event.pointerId)
   }
 
   useEffect(() => {
     return () => {
       clearSettlingTimer()
-      cleanupDragging(dragMetaRef.current?.pointerId)
+      dragCleanupRef.current?.()
     }
   }, [])
 
   const shiftMap =
-    dragState === 'dragging' && dragTabId != null && previewOrder != null && dragMetaRef.current != null
+    dragState === 'dragging' && dragTabId != null && previewOrder != null && dragLayout != null
       ? buildShiftMap({
-          committedOrder: dragMetaRef.current.order,
+          committedOrder: dragLayout.order,
           previewOrder,
           dragTabId,
-          rectsById: dragMetaRef.current.rectsById,
+          rectsById: dragLayout.rectsById,
         })
       : {}
 
@@ -666,6 +700,9 @@ export function TopBar({
     const observer = new ResizeObserver(() => {
       if (tooltipTabId != null && !isTabTruncated(tooltipTabId)) {
         setTooltipTabId(null)
+      } else if (tooltipTabId != null) {
+        const rect = tabButtonRefs.current[tooltipTabId]?.getBoundingClientRect()
+        if (rect) setTooltipPosition({ left: rect.left + rect.width / 2, top: rect.bottom + 10 })
       }
     })
 
@@ -690,42 +727,11 @@ export function TopBar({
     return () => observer.disconnect()
   }, [tabs, tooltipTabId])
 
-  useEffect(() => {
-    if (dragState !== 'idle') {
-      setTooltipTabId(null)
-    }
-  }, [dragState])
-
-  useEffect(() => {
-    if (tooltipTabId == null) {
-      return
-    }
-
-    const stillExists = tabs.some((tab) => tab.id === tooltipTabId)
-    if (!stillExists || !isTabTruncated(tooltipTabId)) {
-      setTooltipTabId(null)
-    }
-  }, [tabs, tooltipTabId])
-
   const activeTooltipTab =
-    tooltipTabId != null && dragState === 'idle' && isTabTruncated(tooltipTabId)
+    tooltipTabId != null && dragState === 'idle'
       ? orderedTabs.find((tab) => tab.id === tooltipTabId) ?? null
       : null
-  const activeTooltipPosition =
-    activeTooltipTab != null
-      ? (() => {
-          const buttonElement = tabButtonRefs.current[activeTooltipTab.id]
-          if (buttonElement == null) {
-            return null
-          }
-
-          const rect = buttonElement.getBoundingClientRect()
-          return {
-            left: rect.left + rect.width / 2,
-            top: rect.bottom + 10,
-          }
-        })()
-      : null
+  const activeTooltipPosition = activeTooltipTab != null ? tooltipPosition : null
 
   return (
     <header className="topbar" role="banner">
@@ -740,6 +746,7 @@ export function TopBar({
           placeholder="选择项目"
           value={pendingProjectId ?? activeProjectId ?? ''}
           onChange={onProjectChange}
+          onManage={onManageProjects}
         />
 
         <button
@@ -769,6 +776,9 @@ export function TopBar({
               <div
                 key={tab.id}
                 className="topbar__tab"
+                data-pin-visible={tab.isPinned || pinHoverTabId === tab.id ? 'true' : undefined}
+                onMouseEnter={() => setPinHoverTabId(tab.id)}
+                onMouseLeave={() => setPinHoverTabId(null)}
                 data-active={isActive ? 'true' : undefined}
                 data-editable={isActive && isUnlocked && isRegularMode ? 'true' : undefined}
                 data-dragging={dragTabId === tab.id && dragState === 'dragging' ? 'true' : undefined}
@@ -792,6 +802,10 @@ export function TopBar({
                         : undefined,
                 }}
               >
+                <button type="button" className="topbar__tab-pin" aria-label={`${tab.isPinned ? '取消固定' : '固定'}标签：${tab.title}`}
+                  aria-pressed={Boolean(tab.isPinned)} title={tab.isPinned ? '取消固定标签' : '固定标签'}
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onClick={(event) => { event.stopPropagation(); onTabPin?.(tab.id) }}><Pin /></button>
                 <button
                   type="button"
                   role="tab"
@@ -831,7 +845,7 @@ export function TopBar({
                   className="topbar__tab-close"
                   aria-label={`关闭标签：${tab.title}`}
                   onPointerDown={(event) => event.stopPropagation()}
-                  onClick={() => onTabClose(tab.id)}
+                  onClick={() => { hideTabTooltip(); onTabClose(tab.id) }}
                 >
                   <X />
                 </button>
@@ -947,6 +961,8 @@ export function TopBar({
           <div className="topbar__service-actions" role="group" aria-label="服务操作">
             <TopBarReadingPreferences
               fontSize={documentFontSize}
+              maxUnpinnedTabs={maxUnpinnedTabs}
+              onMaxUnpinnedTabsChange={onMaxUnpinnedTabsChange}
               pageWidth={documentPageWidth}
               lineHeight={documentLineHeight}
               hideFileTitleDate={hideFileTitleDate}

@@ -1,4 +1,5 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+vi.mock('../../src/editor/visual-markdown-editor-loader', () => ({ preloadVisualMarkdownEditor: vi.fn() }))
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -55,7 +56,8 @@ vi.mock('../../src/shared/key-value-store', () => ({
   }),
 }))
 
-vi.mock('../../src/workspace/profile-store', () => ({
+vi.mock('../../src/workspace/profile-store', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../../src/workspace/profile-store')>(),
   createProfileStore: () => ({
     getProfile: vi.fn(async () => ({
       layout: {
@@ -71,6 +73,7 @@ vi.mock('../../src/workspace/local-state', () => ({
   createLocalStateStore: () => ({
     getState: vi.fn(async () => localState),
     saveState: bridgeMocks.saveState,
+    updateState: async (projectId: string, profileId: string, update: (state: typeof localState) => typeof localState) => bridgeMocks.saveState(projectId, profileId, update(localState)),
   }),
 }))
 
@@ -79,6 +82,7 @@ vi.mock('../../src/workspace/local-bridge-access', () => ({
   BridgeDocumentSavedCacheInvalidationError: class BridgeDocumentSavedCacheInvalidationError extends Error {},
   getLocalBridgeHealth: bridgeMocks.getLocalBridgeHealth,
   listProjectsFromBridge: vi.fn(async () => ({
+    initialized: true, revision: 1,
     activeProjectId: 'notes',
     projects: [
       {
@@ -290,6 +294,58 @@ describe('App autosave transitions', () => {
     expect(screen.getByRole('textbox', { name: '可视 Markdown 编辑器' })).toHaveValue(
       '# 当前文档已改动',
     )
+  })
+
+  it('keeps a delayed save failure on its original tab after switching', async () => {
+    const user = userEvent.setup()
+    let rejectSave!: (error: Error) => void
+    bridgeMocks.saveDocumentContentToBridge.mockImplementation(() => new Promise((_resolve, reject) => { rejectSave = reject }))
+    render(<App />)
+    const editor = await screen.findByRole('textbox', { name: '可视 Markdown 编辑器' })
+    fireEvent.change(editor, { target: { value: '# 待保存草稿' } })
+    await waitFor(() => expect(bridgeMocks.saveDocumentContentToBridge).toHaveBeenCalled(), { timeout: 3000 })
+    await user.click(screen.getByRole('button', { name: 'next.md' }))
+    await act(async () => { rejectSave(new Error('disk full')); await Promise.resolve() })
+    await waitFor(() => expect(screen.getByRole('tab', { name: 'guide' }).querySelector('[data-state="save_failed_retryable"]')).not.toBeNull())
+    expect(screen.getByRole('tab', { name: 'next' }).querySelector('[data-state="clean"]')).not.toBeNull()
+    await user.click(screen.getByRole('tab', { name: 'guide' }))
+    expect(screen.getByRole('textbox', { name: '可视 Markdown 编辑器' })).toHaveValue('# 待保存草稿')
+  })
+
+  it('does not evict a tab while its editor is composing input', async () => {
+    const user = userEvent.setup()
+    const profile = await bridgeMocks.getProfileFromBridge()
+    bridgeMocks.getProfileFromBridge.mockResolvedValue({ ...profile, appearance: { ...profile.appearance, maxUnpinnedTabs: 1 } })
+    render(<App />)
+    const editor = await screen.findByRole('textbox', { name: '可视 Markdown 编辑器' })
+    const nextFile = await screen.findByRole('button', { name: 'next.md' })
+    fireEvent.compositionStart(editor)
+    await user.click(nextFile)
+    expect((await screen.findAllByText(/标签页数量已达上限/)).length).toBeGreaterThan(0)
+    expect(screen.getByRole('tab', { name: 'guide' })).toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: 'next' })).not.toBeInTheDocument()
+    fireEvent.compositionEnd(editor)
+  })
+
+  it('does not evict a tab after undo while its previous save remains in flight', async () => {
+    const user = userEvent.setup()
+    const profile = await bridgeMocks.getProfileFromBridge()
+    bridgeMocks.getProfileFromBridge.mockResolvedValue({ ...profile, appearance: { ...profile.appearance, maxUnpinnedTabs: 1 } })
+    let finish!: (document: { path: string; content: string; mtimeMs: number; size: number }) => void
+    const delayed = new Promise<{ path: string; content: string; mtimeMs: number; size: number }>((resolve) => { finish = resolve })
+    bridgeMocks.saveDocumentContentToBridge.mockReturnValue(delayed)
+    render(<App />)
+    const editor = await screen.findByRole('textbox', { name: '可视 Markdown 编辑器' })
+    const nextFile = await screen.findByRole('button', { name: 'next.md' })
+    fireEvent.change(editor, { target: { value: '# 尚在保存' } })
+    await waitFor(() => expect(bridgeMocks.saveDocumentContentToBridge).toHaveBeenCalled(), { timeout: 3000 })
+    fireEvent.change(editor, { target: { value: '# 旧标题\n\n旧内容' } })
+    await user.click(nextFile)
+    expect((await screen.findAllByText(/标签页数量已达上限/)).length).toBeGreaterThan(0)
+    expect(screen.getByRole('tab', { name: 'guide' })).toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: 'next' })).not.toBeInTheDocument()
+    await act(async () => { finish({ path: 'docs/guide.md', content: '# 尚在保存', mtimeMs: 101, size: 5 }); await delayed })
+    expect(screen.getByRole('textbox', { name: '可视 Markdown 编辑器' })).toHaveValue('# 旧标题\n\n旧内容')
   })
 
   it('blocks locking regular mode when saving fails', async () => {

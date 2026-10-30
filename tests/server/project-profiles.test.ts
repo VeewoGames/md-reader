@@ -17,6 +17,19 @@ afterEach(async () => {
 })
 
 describe('project profiles', () => {
+  it('preserves concurrent writes to different profiles in the same project', async () => {
+    const projectRoot = await mkdtemp(path.join(os.tmpdir(), 'md-reader-project-profiles-'))
+    tempDirs.push(projectRoot)
+    const first = await getProjectProfile(projectRoot, 'default')
+    const second = await getProjectProfile(projectRoot, 'Lans')
+    await Promise.all([
+      saveProjectProfile(projectRoot, { ...first, appearance: { ...first.appearance, maxUnpinnedTabs: 7 } }),
+      saveProjectProfile(projectRoot, { ...second, appearance: { ...second.appearance, maxUnpinnedTabs: 19 } }),
+      listProjectProfiles(projectRoot),
+    ])
+    expect((await getProjectProfile(projectRoot, 'default')).appearance.maxUnpinnedTabs).toBe(7)
+    expect((await getProjectProfile(projectRoot, 'Lans')).appearance.maxUnpinnedTabs).toBe(19)
+  })
   it('creates a repo-tracked profiles.json with default and Lans entries', async () => {
     const projectRoot = await mkdtemp(path.join(os.tmpdir(), 'md-reader-project-profiles-'))
     tempDirs.push(projectRoot)
@@ -34,6 +47,7 @@ describe('project profiles', () => {
     expect(payload.profiles.default.navigation.favoritePaths).toEqual([])
     expect(payload.profiles.default.navigation.manualNodeOrderByParent).toEqual({})
     expect(payload.profiles.default.appearance.hideFileTitleDate).toBe(false)
+    expect(payload.profiles.default.appearance.maxUnpinnedTabs).toBe(10)
   })
 
   it('saves and reloads a named repo profile', async () => {
@@ -47,6 +61,7 @@ describe('project profiles', () => {
         fontSize: 17,
         pageWidth: 'wide',
         lineHeight: 1.8,
+        maxUnpinnedTabs: 42,
       },
       layout: {
         sidebarWidth: 300,
@@ -70,6 +85,7 @@ describe('project profiles', () => {
     expect(profile.appearance.fontSize).toBe(17)
     expect(profile.appearance.pageWidth).toBe('wide')
     expect(profile.appearance.lineHeight).toBe(1.8)
+    expect(profile.appearance.maxUnpinnedTabs).toBe(30)
     expect(profile.layout.sidebarWidth).toBe(300)
     expect(profile.navigation.expandedFileNodes).toEqual(['docs'])
     expect(profile.navigation.favoritePaths).toEqual(['docs/guide.md'])

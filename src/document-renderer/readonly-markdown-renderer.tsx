@@ -1,3 +1,4 @@
+import { cachedRendererComponent, loadReadonlyMarkdownRendererModule, setCachedReadonlyMarkdownRenderer } from './readonly-markdown-renderer-loader'
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType } from 'react'
 
 import type { DocumentLinkInvalidReason } from '../markdown/document-link'
@@ -12,25 +13,6 @@ export interface ReadonlyMarkdownRendererProps {
   onDocumentLinkNavigate?: (documentPath: string, headingId: string | null) => void | Promise<void>
   onCurrentDocumentAnchorNavigate?: (headingId: string) => void
   onInvalidDocumentLink?: (href: string, reason: DocumentLinkInvalidReason) => void
-}
-
-type ReadonlyMarkdownRendererModule = {
-  ReadonlyMarkdownRendererImpl: ComponentType<ReadonlyMarkdownRendererProps>
-}
-
-let cachedRendererComponent: ComponentType<ReadonlyMarkdownRendererProps> | null = null
-let rendererModulePromise: Promise<ReadonlyMarkdownRendererModule> | null = null
-
-function loadReadonlyMarkdownRendererModule() {
-  if (!rendererModulePromise) {
-    rendererModulePromise = import('./readonly-markdown-renderer-impl')
-  }
-
-  return rendererModulePromise
-}
-
-export function preloadReadonlyMarkdownRenderer() {
-  void loadReadonlyMarkdownRendererModule()
 }
 
 export function ReadonlyMarkdownRenderer(props: ReadonlyMarkdownRendererProps) {
@@ -58,11 +40,6 @@ export function ReadonlyMarkdownRenderer(props: ReadonlyMarkdownRendererProps) {
   }, [props])
 
   useEffect(() => {
-    if (cachedRendererComponent) {
-      setLoadedRenderer(() => cachedRendererComponent)
-      return
-    }
-
     const generation = generationRef.current + 1
     generationRef.current = generation
     let isDisposed = false
@@ -73,7 +50,7 @@ export function ReadonlyMarkdownRenderer(props: ReadonlyMarkdownRendererProps) {
           return
         }
 
-        cachedRendererComponent = module.ReadonlyMarkdownRendererImpl
+        setCachedReadonlyMarkdownRenderer(module.ReadonlyMarkdownRendererImpl)
         setLoadedRenderer(() => module.ReadonlyMarkdownRendererImpl)
       })
       .catch((error: unknown) => {

@@ -39,7 +39,7 @@ describe('profile store', () => {
 
     const restored = await store.getProfile('notes', 'writer')
 
-    expect(restored).toEqual(profile)
+    expect(restored).toEqual({ ...profile, appearance: { ...profile.appearance, maxUnpinnedTabs: 10 } })
   })
 
   it('returns a default profile when none has been stored', async () => {
@@ -51,10 +51,20 @@ describe('profile store', () => {
     expect(restored.id).toBe('default')
     expect(restored.appearance.lineHeight).toBe(1.6)
     expect(restored.appearance.hideFileTitleDate).toBe(false)
+    expect(restored.appearance.maxUnpinnedTabs).toBe(10)
     expect(restored.layout.sidebarCollapsed).toBe(false)
     expect(restored.navigation.expandedFileNodes).toEqual([])
     expect(restored.navigation.hiddenPaths).toEqual([])
     expect(restored.navigation.favoritePaths).toEqual([])
     expect(restored.navigation.manualNodeOrderByParent).toEqual({})
+  })
+
+  it('clamps stored tab limits and handles invalid values', async () => {
+    const store = createProfileStore(createMemoryKeyValueStore())
+    const profile = await store.getProfile('notes', 'default')
+    for (const [value, expected] of [[0, 1], [31, 30], [14, 14], [NaN, 10]] as const) {
+      await store.saveProfile('notes', { ...profile, appearance: { ...profile.appearance, maxUnpinnedTabs: value } })
+      expect((await store.getProfile('notes', 'default')).appearance.maxUnpinnedTabs).toBe(expected)
+    }
   })
 })

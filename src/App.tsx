@@ -1,7 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from 'react'
 
 import { ActionDialog } from './app/ActionDialog'
+import { ProjectManager } from './app/ProjectManager'
+import { RegistryRequestError, type ProjectsSnapshot } from './workspace/project-registry-contract'
 import { AppShell } from './app/AppShell'
+import { parseWorkspaceLocator, replaceWorkspaceHref, createDocumentShareHref, type DeepLinkTarget } from './app/workspace-links'
 import type { WorkspaceActionToast } from './app/WorkspaceLayout'
 import type { RegularViewState, WorkspaceMode } from './app/TopBar'
 import { createBrowserKeyValueStore } from './shared/key-value-store'
@@ -29,6 +32,8 @@ import type { FileTreeNode } from './workspace/file-tree-types'
 import type { ProjectTreeDocumentEntry } from './workspace/local-bridge-access'
 import {
   getActiveTab,
+  selectTabsForOpening,
+  sessionTabMetadata,
   type TabSaveState,
   type WorkspaceSession,
   type WorkspaceTab,
@@ -53,6 +58,9 @@ import {
   renameDocumentNodeInBridge,
   revealDocumentInBridge,
   registerProjectWithBridge,
+  reorderProjectsWithBridge,
+  unregisterProjectWithBridge,
+  reconcileProjectsWithBridge,
   restartLocalBridgeService,
   saveProfileToBridge,
   saveDocumentContentToBridge,
@@ -68,8 +76,10 @@ import {
 } from './workspace/document-path-mutation'
 import {
   createProfileStore,
+  normalizeMaxUnpinnedTabs,
   type DocumentLineHeight,
   type PageWidthMode,
+  type WorkspaceProfile,
 } from './workspace/profile-store'
 import type { ProjectRegistryRecord } from './workspace/registry'
 import { createWorkspaceProvider, type WorkspaceSource } from './workspace/workspace-provider'
@@ -83,6 +93,9 @@ const workspaceProvider = createWorkspaceProvider({
     listProjects: listProjectsFromBridge,
     registerProject: registerProjectWithBridge,
     setActiveProject: setActiveProjectWithBridge,
+    reorderProjects: (...args) => reorderProjectsWithBridge(...args),
+    unregisterProject: (...args) => unregisterProjectWithBridge(...args),
+    reconcileProjects: (...args) => reconcileProjectsWithBridge(...args),
     getFileTreePaths: getFileTreePathsFromBridge,
     refreshFileTree: refreshFileTreeFromBridge,
     getProjectTreeSnapshot: getProjectTreeSnapshotFromBridge,
@@ -95,79 +108,8 @@ const PROJECT_SWITCH_PREPARE_TIMEOUT_MS = 60_000
 const MARKDOWN_TITLE_EXTENSION_PATTERN = /\.(md|mdx)$/i
 const RECENT_DOCUMENT_LIMIT = 50
 
-export type WorkspaceLocator = { projectId: string; profileId: string }
-export type DeepLinkTarget = WorkspaceLocator & { documentPath: string; headingId: string | null }
-
-export function parseWorkspaceLocatorFromLocation(
-  location: Pick<Location, 'search' | 'hash'>,
-): WorkspaceLocator | DeepLinkTarget | null | 'invalid' {
-  const params = new URLSearchParams(location.search)
-  const keys = ['project', 'profile', 'path'] as const
-  const hasAny = keys.some((key) => params.has(key))
-  if (!hasAny) return null
-  if (params.getAll('project').length !== 1 || params.getAll('profile').length !== 1) return 'invalid'
-  if (params.has('path') && params.getAll('path').length !== 1) return 'invalid'
-  const projectId = params.get('project') ?? ''
-  const profileId = params.get('profile') ?? ''
-  if (!projectId || !profileId) {
-    return 'invalid'
-  }
-  const documentPath = params.get('path')
-  if (documentPath == null) return { projectId, profileId }
-  if (!documentPath || documentPath.startsWith('/') || documentPath.includes('\\') || documentPath.split('/').includes('..')) return 'invalid'
-  const rawHash = location.hash.slice(1)
-  try {
-    return { projectId, profileId, documentPath, headingId: rawHash ? decodeURIComponent(rawHash) : null }
-  } catch {
-    return 'invalid'
-  }
-}
-
-export function parseDeepLinkFromLocation(location: Pick<Location, 'search' | 'hash'>): DeepLinkTarget | null | 'invalid' {
-  const locator = parseWorkspaceLocatorFromLocation(location)
-  if (locator == null || locator === 'invalid') return locator
-  return 'documentPath' in locator ? locator : null
-}
-
-function parseWorkspaceLocator(): WorkspaceLocator | DeepLinkTarget | null | 'invalid' {
-  return parseWorkspaceLocatorFromLocation(window.location)
-}
-
-export function createWorkspaceHref(projectId: string, profileId: string) {
-  const url = new URL(window.location.href)
-  url.search = new URLSearchParams({ project: projectId, profile: profileId }).toString()
-  url.hash = ''
-  return url.toString()
-}
-
-function replaceWorkspaceHref(projectId: string, profileId: string) {
-  window.history.replaceState(null, '', createWorkspaceHref(projectId, profileId))
-}
-
-export function createDocumentShareHref(projectId: string, profileId: string, documentPath: string, headingId: string | null) {
-  const url = new URL(window.location.href)
-  url.search = new URLSearchParams({ project: projectId, profile: profileId, path: documentPath }).toString()
-  url.hash = headingId ? encodeURIComponent(headingId) : ''
-  return url.toString()
-}
-
-export function createNavigationPersistenceCoordinator() {
-  let queue: Promise<void> = Promise.resolve()
-  return {
-    enqueue(
-      requestId: number,
-      getLatestRequestId: () => number,
-      persist: () => Promise<void>,
-    ): Promise<boolean> {
-      const result = queue.then(async () => {
-        if (getLatestRequestId() !== requestId) return false
-        await persist()
-        return getLatestRequestId() === requestId
-      })
-      queue = result.then(() => undefined, () => undefined)
-      return result
-    },
-  }
+function profileWriteKey(projectId: string, profileId: string, source: WorkspaceSource) {
+  return JSON.stringify(source === 'local-service' ? [source, projectId] : [source, projectId, profileId])
 }
 
 function createTabId(documentPath: string): string {
@@ -191,6 +133,7 @@ function createEmptySession(): WorkspaceSession {
 function createWorkspaceTab(documentPath: string, lastKnownScrollTop = 0): WorkspaceTab {
   return {
     id: createTabId(documentPath),
+    instanceId: Symbol(documentPath),
     documentPath,
     persistedContent: null,
     draftContent: null,
@@ -220,6 +163,8 @@ function normalizeLocalStateSnapshot(state: {
   tabStateByDocument?: Record<string, { lastKnownScrollTop: number }>
   lastKnownScrollTop?: number
   readingProgressByDocument?: Record<string, number>
+  tabOpenOrder?: string[]
+  pinnedDocumentPaths?: string[]
 }) {
   const openDocumentPaths =
     state.openDocumentPaths ??
@@ -241,6 +186,8 @@ function normalizeLocalStateSnapshot(state: {
     regularViewState: state.regularViewState ?? inferRegularViewStateFromMode(state.activeMode),
     tabStateByDocument,
     readingProgressByDocument: state.readingProgressByDocument ?? {},
+    tabOpenOrder: state.tabOpenOrder ?? openDocumentPaths,
+    pinnedDocumentPaths: state.pinnedDocumentPaths ?? [],
   }
 }
 
@@ -260,12 +207,17 @@ function reconcileLocalStateWithFileTree(
   const nextReadingProgressByDocument = Object.fromEntries(
     Object.entries(state.readingProgressByDocument).filter(([path]) => availableDocumentPaths.has(path)),
   )
+  const openSet = new Set(nextOpenDocumentPaths)
+  const tabOpenOrder = state.tabOpenOrder.filter((path) => openSet.has(path))
+  const pinnedDocumentPaths = state.pinnedDocumentPaths.filter((path) => openSet.has(path))
   const changed =
     nextActiveDocumentPath !== state.activeDocumentPath ||
     nextOpenDocumentPaths.length !== state.openDocumentPaths.length ||
     Object.keys(nextTabStateByDocument).length !== Object.keys(state.tabStateByDocument).length ||
     Object.keys(nextReadingProgressByDocument).length !==
-      Object.keys(state.readingProgressByDocument).length
+      Object.keys(state.readingProgressByDocument).length ||
+    tabOpenOrder.length !== state.tabOpenOrder.length ||
+    pinnedDocumentPaths.length !== state.pinnedDocumentPaths.length
 
   return {
     changed,
@@ -275,6 +227,8 @@ function reconcileLocalStateWithFileTree(
       activeDocumentPath: nextActiveDocumentPath,
       tabStateByDocument: nextTabStateByDocument,
       readingProgressByDocument: nextReadingProgressByDocument,
+      tabOpenOrder,
+      pinnedDocumentPaths,
     },
   }
 }
@@ -292,9 +246,12 @@ function isMissingDocumentLoadError(error: unknown) {
 }
 
 function removeTab(session: WorkspaceSession, tabId: string): WorkspaceSession {
+  const documentPath = session.tabs.find((tab) => tab.id === tabId)?.documentPath
   return {
     ...session,
     tabs: session.tabs.filter((tab) => tab.id !== tabId),
+    tabOpenOrder: session.tabOpenOrder?.filter((path) => path !== documentPath),
+    pinnedDocumentPaths: session.pinnedDocumentPaths?.filter((path) => path !== documentPath),
   }
 }
 
@@ -408,7 +365,8 @@ function formatReorderFeedbackMessage(payload: {
 }
 
 type PendingWorkspaceAction =
-  | { kind: 'switch-project'; projectId: string }
+  | { kind: 'switch-project'; projectId: string; project?: ProjectRegistryRecord }
+  | { kind: 'remove-project'; projectId: string }
   | { kind: 'switch-profile'; profileId: string }
   | { kind: 'restart-service' }
   | { kind: 'reconnect-service' }
@@ -483,6 +441,15 @@ function App() {
   const [workspaceSource, setWorkspaceSource] = useState<WorkspaceSource>('offline')
   const [isServiceActionPending, setIsServiceActionPending] = useState(false)
   const [pendingWorkspaceAction, setPendingWorkspaceAction] = useState<PendingWorkspaceAction | null>(null)
+  const [isProjectManagerOpen, setIsProjectManagerOpen] = useState(false)
+  const [isProjectInputOpen, setIsProjectInputOpen] = useState(false)
+  const [projectOperationBusy, setProjectOperationBusy] = useState(false)
+  const projectOperationBusyRef = useRef(false)
+  const [workspaceInputBlocked, setWorkspaceInputBlocked] = useState(false)
+  const workspaceInputBlockedRef = useRef(false)
+  const registrySnapshots = useRef(new Map<string, ProjectsSnapshot>())
+  const [pendingRegistry, setPendingRegistry] = useState<{ profileId: string; expectedRevision: number } | null>(null)
+  const pendingRegistryRef = useRef<typeof pendingRegistry>(null)
   const [pendingRefreshDocumentAction, setPendingRefreshDocumentAction] =
     useState<PendingRefreshDocumentAction | null>(null)
   const [pendingCloseTabAction, setPendingCloseTabAction] = useState<PendingCloseTabAction | null>(null)
@@ -497,6 +464,10 @@ function App() {
   const [expandedFileNodes, setExpandedFileNodes] = useState<string[]>([])
   const [hasPersistedExpandedFileNodes, setHasPersistedExpandedFileNodes] = useState(false)
   const [documentFontSize, setDocumentFontSize] = useState(16)
+  const [maxUnpinnedTabs, setMaxUnpinnedTabs] = useState(10)
+  const maxUnpinnedTabsRef = useRef(10)
+  const persistedMaxUnpinnedTabsRef = useRef(10)
+  const maxTabsRevisionRef = useRef(0)
   const [documentPageWidth, setDocumentPageWidth] = useState<PageWidthMode>('narrow')
   const [documentLineHeight, setDocumentLineHeight] = useState<DocumentLineHeight>(1.6)
   const [hideFileTitleDate, setHideFileTitleDate] = useState(false)
@@ -563,9 +534,17 @@ function App() {
   const autosaveTimerRef = useRef<number | null>(null)
   const actionToastTimerRef = useRef<number | null>(null)
   const flushPromiseRef = useRef<Promise<boolean> | null>(null)
+  const pendingTabSavesRef = useRef(new Map<symbol, number>())
   const activeProjectIdRef = useRef<string | null>(null)
   const activeProfileIdRef = useRef(activeProfileId)
   const sessionRef = useRef(session)
+  const pendingProfileWritesRef = useRef(new Map<string, Promise<void>>())
+  const getCoordinatedProfile = useCallback(async (projectId: string, profileId: string, source: WorkspaceSource) => {
+    await pendingProfileWritesRef.current.get(profileWriteKey(projectId, profileId, source))
+    return source === 'local-service'
+      ? getProfileFromBridge(projectId, profileId, profileId)
+      : profileStore.getProfile(projectId, profileId)
+  }, [])
   const currentDocumentPathRef = useRef<string | null>(null)
   const currentDocumentContentRef = useRef<string | null>(null)
   const editingDocumentContentRef = useRef<string | null>(null)
@@ -578,11 +557,45 @@ function App() {
   const hasHydratedActiveProfileRef = useRef(false)
   const actionToastIdRef = useRef(0)
   const navigationRequestRef = useRef(0)
-  const navigationPersistenceRef = useRef(createNavigationPersistenceCoordinator())
+  const documentLoadingRevisionRef = useRef(0)
   const scrollPositionTimerRef = useRef<number | null>(null)
   const latestScrollPositionsRef = useRef(new Map<string, number>())
   const workspaceLoadRevisionRef = useRef(0)
   const projectSwitchCommitRef = useRef(Promise.resolve())
+
+  function beginTabSave(instanceId: symbol | undefined) {
+    if (!instanceId) return () => {}
+    const counts = pendingTabSavesRef.current
+    counts.set(instanceId, (counts.get(instanceId) ?? 0) + 1)
+    return () => {
+      const remaining = (counts.get(instanceId) ?? 1) - 1
+      if (remaining > 0) counts.set(instanceId, remaining)
+      else counts.delete(instanceId)
+    }
+  }
+
+  async function persistCurrentSession(projectId: string, profileId: string) {
+    try {
+      await localStateStore.updateState(projectId, profileId, (state) => {
+        if (activeProjectIdRef.current !== projectId || activeProfileIdRef.current !== profileId) return state
+        const current = sessionRef.current
+        return {
+          ...state,
+          openDocumentPaths: current.tabs.map((tab) => tab.documentPath),
+          activeDocumentPath: getActiveTab(current)?.documentPath ?? null,
+          activeMode: current.mode,
+          regularViewState: current.regularViewState,
+          ...sessionTabMetadata(current),
+        }
+      })
+      return true
+    } catch (error) {
+      if (activeProjectIdRef.current === projectId && activeProfileIdRef.current === profileId) {
+        setStatusMessage(error instanceof Error ? `会话保存失败：${error.message}` : '会话保存失败')
+      }
+      return false
+    }
+  }
 
   function clearScrollPositionTimer() {
     if (scrollPositionTimerRef.current != null) {
@@ -591,29 +604,28 @@ function App() {
     }
   }
 
-  async function persistDocumentScrollPosition(projectId: string, documentPath: string, scrollTop: number) {
-    const localState = normalizeLocalStateSnapshot(
-      (await localStateStore.getState(projectId, activeProfileIdRef.current)) as Awaited<ReturnType<typeof localStateStore.getState>> & {
-        activeMode: 'regular' | 'split' | 'read' | 'edit'
-        lastKnownScrollTop?: number
-      },
-    )
-    await localStateStore.saveState(projectId, activeProfileIdRef.current, {
-      ...localState,
-      tabStateByDocument: {
-        ...localState.tabStateByDocument,
-        [documentPath]: { lastKnownScrollTop: scrollTop },
-      },
-    } as WorkspaceLocalState)
+  async function persistDocumentScrollPosition(projectId: string, profileId: string, documentPath: string, scrollTop: number) {
+    try {
+      await localStateStore.updateState(projectId, profileId, (localState) => ({
+        ...localState,
+        tabStateByDocument: { ...localState.tabStateByDocument, [documentPath]: { lastKnownScrollTop: scrollTop } },
+      }))
+      return true
+    } catch (error) {
+      if (activeProjectIdRef.current === projectId && activeProfileIdRef.current === profileId) {
+        setStatusMessage(error instanceof Error ? `会话保存失败：${error.message}` : '会话保存失败')
+      }
+      return false
+    }
   }
 
-  async function flushDocumentScrollPosition(documentPath?: string): Promise<void> {
+  async function flushDocumentScrollPosition(documentPath?: string): Promise<boolean> {
     clearScrollPositionTimer()
     const projectId = activeProjectIdRef.current
     const targetPath = documentPath ?? currentDocumentPathRef.current
     const scrollTop = targetPath ? latestScrollPositionsRef.current.get(targetPath) : null
-    if (!projectId || !targetPath || scrollTop == null) return
-    await persistDocumentScrollPosition(projectId, targetPath, scrollTop)
+    if (!projectId || !targetPath || scrollTop == null) return true
+    return persistDocumentScrollPosition(projectId, activeProfileIdRef.current, targetPath, scrollTop)
   }
 
   function handleDocumentScrollTopChange(documentPath: string, scrollTop: number) {
@@ -626,8 +638,13 @@ function App() {
         : current
     })
     clearScrollPositionTimer()
+    const projectId = activeProjectIdRef.current
+    const profileId = activeProfileIdRef.current
     scrollPositionTimerRef.current = window.setTimeout(
-      () => void flushDocumentScrollPosition(documentPath),
+      () => {
+        scrollPositionTimerRef.current = null
+        if (projectId) void persistDocumentScrollPosition(projectId, profileId, documentPath, scrollTop)
+      },
       250,
     )
   }
@@ -706,20 +723,12 @@ function App() {
   }
 
   function discardTabDraft(tabId: string) {
-    setSession((current) => {
-      const tab = current.tabs.find((entry) => entry.id === tabId)
-
-      if (tab == null || tab.persistedContent == null) {
-        return current
-      }
-
-      return replaceTab(current, {
-        ...tab,
-        draftContent: tab.persistedContent,
-        saveState: 'clean',
-        saveErrorMessage: null,
-      })
-    })
+    const current = sessionRef.current
+    const tab = current.tabs.find((entry) => entry.id === tabId)
+    if (tab == null || tab.persistedContent == null) return
+    const next = replaceTab(current, { ...tab, draftContent: tab.persistedContent, saveState: 'clean', saveErrorMessage: null })
+    sessionRef.current = next
+    setSession(next)
   }
 
   function discardDirtyTabs(tabIds: string[]) {
@@ -770,14 +779,14 @@ function App() {
     saveStateRef.current = saveState
   }, [saveState])
 
-  useEffect(() => {
-    void (async () => {
+  const bootstrapWorkspace = useEffectEvent(async () => {
       const locator = parseWorkspaceLocator()
       const deepLink = locator && locator !== 'invalid' && 'documentPath' in locator ? locator : null
       const restoredActiveProfileId =
         (await storage.getItem<string>(STORAGE_KEYS.activeProfile())) ?? 'default'
       const initialProfileId = locator && locator !== 'invalid' ? locator.profileId : restoredActiveProfileId
       hasHydratedActiveProfileRef.current = true
+      activeProfileIdRef.current = initialProfileId
       setActiveProfileId(initialProfileId)
 
       const source = await workspaceProvider.getSource()
@@ -786,6 +795,7 @@ function App() {
       if (source === 'local-service') {
         const health = await getLocalBridgeHealth()
         const snapshot = await workspaceProvider.listProjects(initialProfileId)
+        registrySnapshots.current.set(initialProfileId, snapshot)
         setProjects(snapshot.projects)
         setActiveProjectId(locator && locator !== 'invalid' ? locator.projectId : snapshot.activeProjectId)
         setProfileIds(
@@ -814,6 +824,7 @@ function App() {
 
         const initialProjectId = locator?.projectId ?? snapshot.activeProjectId
         if (!initialProjectId) {
+          setIsWorkspaceBootstrapping(false)
           setStatusMessage(
             (health.projectsLoaded ?? 0) > 0
               ? '本地服务已连接，但当前 profile 还没有激活项目'
@@ -839,8 +850,8 @@ function App() {
       resetSessionState()
       setStatusMessage('本地服务不可用')
       setIsWorkspaceBootstrapping(false)
-    })()
-  }, [])
+  })
+  useEffect(() => { void bootstrapWorkspace() }, [])
 
   useEffect(() => {
     if (actionToast == null) {
@@ -869,11 +880,7 @@ function App() {
 
   useEffect(() => {
     if (!activeProjectId) {
-      setProfileIds(
-        activeProfileId === 'default'
-          ? ['default']
-          : Array.from(new Set(['default', activeProfileId])),
-      )
+      setProfileIds(previous => Array.from(new Set([...previous, 'default', activeProfileId])))
       setSidebarWidth(280)
       setOutlineWidth(320)
       setExpandedFileNodes([])
@@ -885,6 +892,9 @@ function App() {
       setShowRecentOnly(false)
       setShowHiddenItems(false)
       setDocumentFontSize(16)
+      setMaxUnpinnedTabs(10)
+      maxUnpinnedTabsRef.current = 10
+      persistedMaxUnpinnedTabsRef.current = 10
       setDocumentPageWidth('narrow')
       setDocumentLineHeight(1.6)
       setHideFileTitleDate(false)
@@ -892,12 +902,10 @@ function App() {
     }
 
     let cancelled = false
+    const maxTabsRevision = maxTabsRevisionRef.current
 
     void (async () => {
-      const profile =
-        workspaceSource === 'local-service'
-          ? await getProfileFromBridge(activeProjectId, activeProfileId, activeProfileId)
-          : await profileStore.getProfile(activeProjectId, activeProfileId)
+      const profile = await getCoordinatedProfile(activeProjectId, activeProfileId, workspaceSource)
       const nextProfileIds =
         workspaceSource === 'local-service'
           ? (await listProjectProfilesFromBridge(activeProjectId, activeProfileId)).profileIds
@@ -921,6 +929,11 @@ function App() {
       setShowRecentOnly(false)
       setShowHiddenItems(false)
       setDocumentFontSize(profile.appearance?.fontSize ?? 16)
+      if (maxTabsRevisionRef.current === maxTabsRevision) {
+        maxUnpinnedTabsRef.current = normalizeMaxUnpinnedTabs(profile.appearance?.maxUnpinnedTabs)
+        persistedMaxUnpinnedTabsRef.current = maxUnpinnedTabsRef.current
+        setMaxUnpinnedTabs(maxUnpinnedTabsRef.current)
+      }
       setDocumentPageWidth(profile.appearance?.pageWidth ?? 'narrow')
       setDocumentLineHeight(profile.appearance?.lineHeight ?? 1.6)
       setHideFileTitleDate(profile.appearance?.hideFileTitleDate ?? false)
@@ -929,7 +942,10 @@ function App() {
     return () => {
       cancelled = true
     }
-  }, [activeProjectId, activeProfileId, workspaceSource])
+  }, [activeProjectId, activeProfileId, workspaceSource, getCoordinatedProfile])
+
+  const clearFailureForEffect = useEffectEvent((projectId: string | null) => clearSaveFailureStatus(projectId))
+  const scheduleAutosaveForEffect = useEffectEvent(() => scheduleAutosave())
 
   useEffect(() => {
     const hasDirtyDraft =
@@ -955,7 +971,7 @@ function App() {
         })
       }
 
-      clearSaveFailureStatus(activeProjectId)
+      clearFailureForEffect(activeProjectId)
 
       return
     }
@@ -970,7 +986,7 @@ function App() {
       return
     }
 
-    scheduleAutosave()
+    scheduleAutosaveForEffect()
 
     return () => {
       if (autosaveTimerRef.current != null) {
@@ -991,87 +1007,27 @@ function App() {
     saveRequestRevisionRef.current = 0
     lastAckedSaveRevisionRef.current = 0
     isComposingRef.current = false
-    setSession((current) => ({
-      ...current,
-      tabs: [],
-      activeTabId: null,
-    }))
+    clearScrollPositionTimer()
+    latestScrollPositionsRef.current.clear()
+    const next = { ...sessionRef.current, tabs: [], tabOpenOrder: [], pinnedDocumentPaths: [], activeTabId: null }
+    sessionRef.current = next
+    setSession(next)
   }
 
   function setActiveTabState(nextState: Partial<WorkspaceTab>) {
-    setSession((current) => {
-      const tab = getActiveTab(current)
-
-      if (tab == null) {
-        return current
-      }
-
-      const hasActualChange = Object.entries(nextState).some(
-        ([key, value]) => tab[key as keyof WorkspaceTab] !== value,
-      )
-
-      if (!hasActualChange) {
-        return current
-      }
-
-      return replaceTab(current, { ...tab, ...nextState })
-    })
-  }
-
-  function ensureTabExists(documentPath: string, lastKnownScrollTop = 0) {
-    setSession((current) => {
-      if (getTabByDocumentPath(current, documentPath) != null) {
-        return current
-      }
-
-      return {
-        ...current,
-        tabs: [...current.tabs, createWorkspaceTab(documentPath, lastKnownScrollTop)],
-      }
-    })
-  }
-
-  function applyLoadedDocument(
-    documentPath: string,
-    content: string,
-    mtimeMs: number,
-    nextStatusMessage: string,
-  ) {
-    draftRevisionRef.current = 0
-    saveRequestRevisionRef.current = 0
-    lastAckedSaveRevisionRef.current = 0
-    isComposingRef.current = false
-    setSession((current) => {
-      const existingTab = getTabByDocumentPath(current, documentPath)
-      const nextTab: WorkspaceTab = {
-        ...(existingTab ?? createWorkspaceTab(documentPath)),
-        documentPath,
-        persistedContent: content,
-        draftContent: content,
-        mtimeMs,
-        saveState: 'clean',
-        saveErrorMessage: null,
-      }
-
-      if (existingTab == null) {
-        return {
-          ...current,
-          tabs: [...current.tabs, nextTab],
-          activeTabId: nextTab.id,
-        }
-      }
-
-      return {
-        ...replaceTab(current, nextTab),
-        activeTabId: nextTab.id,
-      }
-    })
-    setStatusMessage(nextStatusMessage)
+    const current = sessionRef.current
+    const tab = getActiveTab(current)
+    if (!tab || !Object.entries(nextState).some(([key, value]) => tab[key as keyof WorkspaceTab] !== value)) return
+    const next = replaceTab(current, { ...tab, ...nextState })
+    sessionRef.current = next
+    setSession(next)
   }
 
   function setDraftDocumentContent(nextContent: string) {
-    const savedContent = currentDocumentContentRef.current
+    if (workspaceInputBlockedRef.current) return
+    const savedContent = getActiveTab(sessionRef.current)?.persistedContent ?? null
     const hasDirtyDraft = savedContent != null && nextContent !== savedContent
+    editingDocumentContentRef.current = nextContent
 
     if (hasDirtyDraft) {
       draftRevisionRef.current += 1
@@ -1117,115 +1073,60 @@ function App() {
     }
   }
 
-  async function saveTabById(
-    tabId: string,
-    reason: 'background' | 'leave' = 'leave',
-  ): Promise<boolean> {
+  async function saveTabById(tabId: string, reason: 'background' | 'leave' = 'leave'): Promise<boolean> {
     const projectId = activeProjectIdRef.current
     const profileId = activeProfileIdRef.current
+    if (pendingRegistryRef.current || (projectId && registrySnapshots.current.has(profileId) && !registrySnapshots.current.get(profileId)!.projects.some(project => project.id === projectId))) {
+      setStatusMessage('项目登记尚未确认或已被移除，草稿保留，请先确认工作区')
+      return false
+    }
     const tab = sessionRef.current.tabs.find((entry) => entry.id === tabId)
-
-    if (
-      !projectId ||
-      !profileId ||
-      tab == null ||
-      tab.draftContent == null ||
-      tab.persistedContent == null ||
-      tab.draftContent === tab.persistedContent
-    ) {
-      setSession((current) => {
-        const currentTab = current.tabs.find((entry) => entry.id === tabId)
-        return currentTab == null
-          ? current
-          : replaceTab(current, {
-              ...currentTab,
-              saveState: 'clean',
-              saveErrorMessage: null,
-            })
-      })
+    if (!projectId || !tab) return false
+    const updateTarget = (update: (current: WorkspaceTab) => WorkspaceTab) => {
+      if (activeProjectIdRef.current !== projectId || activeProfileIdRef.current !== profileId) return false
+      const current = sessionRef.current
+      const target = current.tabs.find((entry) => entry.id === tabId && entry.instanceId === tab.instanceId)
+      if (!target) return false
+      const next = replaceTab(current, update(target))
+      sessionRef.current = next
+      setSession(next)
+      return true
+    }
+    if (tab.draftContent == null || tab.persistedContent == null || tab.draftContent === tab.persistedContent) {
+      updateTarget((current) => ({ ...current, saveState: 'clean', saveErrorMessage: null }))
       clearSaveFailureStatus(projectId)
       return true
     }
-
-    if (sessionRef.current.activeTabId === tabId) {
-      clearAutosaveTimer()
-    }
-
-    setSession((current) => {
-      const currentTab = current.tabs.find((entry) => entry.id === tabId)
-      return currentTab == null
-        ? current
-        : replaceTab(current, {
-            ...currentTab,
-            saveState: reason === 'leave' ? 'leaving_with_pending_flush' : 'saving_background',
-            saveErrorMessage: null,
-          })
-    })
-
-    try {
-      const document = await saveDocumentContentToBridge(
-        projectId,
-        profileId,
-        tab.documentPath,
-        tab.draftContent,
-        tab.mtimeMs,
-        tab.persistedContent ? createContentHash(tab.persistedContent) : null,
-      )
-
-      setSession((current) => {
-        const currentTab = current.tabs.find((entry) => entry.id === tabId)
-
-        if (currentTab == null) {
-          return current
-        }
-
-        const nextDraftContent =
-          currentTab.draftContent === tab.draftContent ? document.content : currentTab.draftContent
-
-        return replaceTab(current, {
-          ...currentTab,
-          persistedContent: document.content,
-          draftContent: nextDraftContent,
-          mtimeMs: document.mtimeMs,
-          saveState: nextDraftContent === document.content ? 'clean' : 'typing',
-          saveErrorMessage: null,
-        })
+    if (sessionRef.current.activeTabId === tabId) clearAutosaveTimer()
+    updateTarget((current) => ({ ...current, saveState: reason === 'leave' ? 'leaving_with_pending_flush' : 'saving_background', saveErrorMessage: null }))
+    const finishTabSave = beginTabSave(tab.instanceId)
+    const applySaved = (document: { content: string; mtimeMs: number; treeEntry?: ProjectTreeDocumentEntry }, warning: string | null = null) => {
+      const applied = updateTarget((current) => {
+        const draft = current.draftContent === tab.draftContent ? document.content : current.draftContent
+        return { ...current, persistedContent: document.content, draftContent: draft, mtimeMs: document.mtimeMs,
+          saveState: draft === document.content ? 'clean' : 'typing', saveErrorMessage: warning }
       })
-      if (document.treeEntry) {
-        setTreeEntriesByPath((current) => new Map(current).set(document.treeEntry!.path, document.treeEntry!))
-      }
-      clearSaveFailureStatus(projectId)
+      if (applied && document.treeEntry) setTreeEntriesByPath((current) => new Map(current).set(document.treeEntry!.path, document.treeEntry!))
+      if (applied && !warning) clearSaveFailureStatus(projectId)
+      return applied
+    }
+    try {
+      const document = await saveDocumentContentToBridge(projectId, profileId, tab.documentPath, tab.draftContent,
+        tab.mtimeMs, tab.persistedContent ? createContentHash(tab.persistedContent) : null)
+      applySaved(document)
       return true
     } catch (error) {
       if (error instanceof BridgeDocumentSavedCacheInvalidationError) {
-        const document = error.document
-        setSession((current) => {
-          const currentTab = current.tabs.find((entry) => entry.id === tabId)
-          if (currentTab == null) return current
-          const nextDraftContent = currentTab.draftContent === tab.draftContent ? document.content : currentTab.draftContent
-          return replaceTab(current, { ...currentTab, persistedContent: document.content, draftContent: nextDraftContent, mtimeMs: document.mtimeMs, saveState: nextDraftContent === document.content ? 'clean' : 'typing', saveErrorMessage: error.message })
-        })
-        if (document.treeEntry) setTreeEntriesByPath((current) => new Map(current).set(document.treeEntry!.path, document.treeEntry!))
-        setStatusMessage(`文件已保存，但最近索引同步失败：${error.message}`)
+        if (applySaved(error.document, error.message)) setStatusMessage(`文件已保存，但最近索引同步失败：${error.message}`)
         return true
       }
       const message = formatSaveErrorMessage(error instanceof Error ? error.message : '保存失败')
-
-      setSession((current) => {
-        const currentTab = current.tabs.find((entry) => entry.id === tabId)
-        return currentTab == null
-          ? current
-          : replaceTab(current, {
-              ...currentTab,
-              saveState:
-                error instanceof BridgeDocumentConflictError
-                  ? 'conflict_hard'
-                  : 'save_failed_retryable',
-              saveErrorMessage: message,
-            })
-      })
-      setStatusMessage(`保存失败：${message}`)
+      if (updateTarget((current) => ({ ...current, saveState: error instanceof BridgeDocumentConflictError ? 'conflict_hard' : 'save_failed_retryable', saveErrorMessage: message }))) {
+        setStatusMessage(`保存失败：${message}`)
+      }
       return false
+    } finally {
+      finishTabSave()
     }
   }
 
@@ -1245,16 +1146,22 @@ function App() {
   }
 
   async function flushActiveDraft(reason: 'background' | 'leave' = 'leave'): Promise<boolean> {
+    if (pendingRegistryRef.current) return false
     if (flushPromiseRef.current) {
       return flushPromiseRef.current
     }
 
     const projectId = activeProjectIdRef.current
     const profileId = activeProfileIdRef.current
-    const documentPath = currentDocumentPathRef.current
-    const savedContent = currentDocumentContentRef.current
-    const draftContent = editingDocumentContentRef.current
-    const expectedMtimeMs = currentDocumentMtimeRef.current
+    if (projectId && registrySnapshots.current.has(profileId) && !registrySnapshots.current.get(profileId)!.projects.some(project => project.id === projectId)) {
+      setStatusMessage('当前项目已从列表移除，草稿保留，请先处理草稿再切换')
+      return false
+    }
+    const sourceTab = getActiveTab(sessionRef.current)
+    const documentPath = sourceTab?.documentPath ?? null
+    const savedContent = sourceTab?.persistedContent ?? null
+    const draftContent = sourceTab?.draftContent ?? null
+    const expectedMtimeMs = sourceTab?.mtimeMs ?? null
 
     if (!projectId || !documentPath || draftContent == null || draftContent === savedContent) {
       setActiveTabState({
@@ -1274,6 +1181,18 @@ function App() {
       saveState: reason === 'leave' ? 'leaving_with_pending_flush' : 'saving_background',
       saveErrorMessage: null,
     })
+    const finishTabSave = beginTabSave(sourceTab?.instanceId)
+
+    const updateSavingTab = (update: (tab: WorkspaceTab) => WorkspaceTab) => {
+      if (activeProjectIdRef.current !== projectId || activeProfileIdRef.current !== profileId) return false
+      const current = sessionRef.current
+      const tab = current.tabs.find((item) => item.id === sourceTab?.id && item.instanceId === sourceTab?.instanceId)
+      if (!tab) return false
+      const next = replaceTab(current, update(tab))
+      sessionRef.current = next
+      setSession(next)
+      return true
+    }
 
     const flushPromise = (async () => {
       const requestRevision = saveRequestRevisionRef.current + 1
@@ -1290,16 +1209,14 @@ function App() {
         }
 
         lastAckedSaveRevisionRef.current = requestRevision
-        const isSameDocument =
-          activeProjectIdRef.current === projectId && currentDocumentPathRef.current === documentPath
-
-        if (isSameDocument) {
-          setActiveTabState({
+        if (updateSavingTab((tab) => ({
+            ...tab,
             persistedContent: document.content,
             mtimeMs: document.mtimeMs,
             saveErrorMessage: null,
-            saveState: editingDocumentContentRef.current === document.content ? 'clean' : 'typing',
-          })
+            draftContent: tab.draftContent === draftContent ? document.content : tab.draftContent,
+            saveState: tab.draftContent === draftContent ? 'clean' : 'typing',
+          }))) {
           if (document.treeEntry) {
             setTreeEntriesByPath((current) => new Map(current).set(document.treeEntry!.path, document.treeEntry!))
           }
@@ -1343,14 +1260,13 @@ function App() {
         }
 
         const message = formatSaveErrorMessage(error instanceof Error ? error.message : '保存失败')
-        setActiveTabState({
-          saveErrorMessage: message,
-          saveState:
-            error instanceof BridgeDocumentConflictError ? 'conflict_hard' : 'save_failed_retryable',
-        })
-        setStatusMessage(`保存失败：${message}`)
+        if (updateSavingTab((tab) => ({ ...tab, saveErrorMessage: message,
+          saveState: error instanceof BridgeDocumentConflictError ? 'conflict_hard' : 'save_failed_retryable' }))) {
+          setStatusMessage(`保存失败：${message}`)
+        }
         return false
       } finally {
+        finishTabSave()
         flushPromiseRef.current = null
       }
     })()
@@ -1386,7 +1302,7 @@ function App() {
       resetSessionState()
       return false
     }
-    const profile = await getProfileFromBridge(project.id, nextProfileId, nextProfileId)
+    const profile = await getCoordinatedProfile(project.id, nextProfileId, 'local-service')
     const restoredLocalState = deepLink
       ? normalizeLocalStateSnapshot({
           openDocumentPaths: [deepLink.documentPath],
@@ -1420,6 +1336,8 @@ function App() {
         : openDocumentPaths[0] ?? null
     const restoredSession: WorkspaceSession = {
       tabs,
+      tabOpenOrder: localState.tabOpenOrder,
+      pinnedDocumentPaths: localState.pinnedDocumentPaths,
       activeTabId: nextActiveDocumentPath ? createTabId(nextActiveDocumentPath) : null,
       mode: normalizeWorkspaceMode(localState.activeMode),
       regularViewState:
@@ -1435,6 +1353,13 @@ function App() {
       profile.navigation?.favoritePaths ?? [],
     )
 
+    activeProjectIdRef.current = project.id
+    clearScrollPositionTimer()
+    latestScrollPositionsRef.current.clear()
+    maxTabsRevisionRef.current += 1
+    maxUnpinnedTabsRef.current = normalizeMaxUnpinnedTabs(profile.appearance?.maxUnpinnedTabs)
+    persistedMaxUnpinnedTabsRef.current = maxUnpinnedTabsRef.current
+    setMaxUnpinnedTabs(maxUnpinnedTabsRef.current)
     setActiveProjectId(project.id)
     setManualNodeOrderByParent(profile.navigation?.manualNodeOrderByParent ?? {})
     setFavoritePaths(nextFavoritePaths)
@@ -1447,35 +1372,43 @@ function App() {
     )
 
     if (localStateChanged) {
-      await localStateStore.saveState(project.id, nextProfileId, {
-        ...localState,
-        activeMode: normalizeWorkspaceMode(localState.activeMode),
-        regularViewState:
-          localState.regularViewState ?? inferRegularViewStateFromMode(localState.activeMode),
+      await localStateStore.updateState(project.id, nextProfileId, (current) => {
+        if (!shouldApply() || activeProjectIdRef.current !== project.id || activeProfileIdRef.current !== nextProfileId) return current
+        const cleaned = reconcileLocalStateWithFileTree(normalizeLocalStateSnapshot(current), markdownPaths).state
+        const latest = sessionRef.current
+        return { ...cleaned, openDocumentPaths: latest.tabs.map((tab) => tab.documentPath),
+          activeDocumentPath: getActiveTab(latest)?.documentPath ?? null, activeMode: latest.mode,
+          regularViewState: latest.regularViewState, ...sessionTabMetadata(latest) }
       })
     }
 
     if (nextFavoritePaths.length !== (profile.navigation?.favoritePaths ?? []).length) {
-      await saveProfileToBridge(
-        project.id,
-        {
-          ...profile,
-          navigation: {
-            ...profile.navigation,
-            favoritePaths: nextFavoritePaths,
-          },
-        },
-        nextProfileId,
-      )
+      await updateProfile(project.id, nextProfileId, 'local-service', (current) => ({
+        ...current, navigation: { ...current.navigation,
+          favoritePaths: pruneFavoritePaths(orderedFileTree, current.navigation?.favoritePaths ?? []) },
+      }))
     }
 
     if (nextActiveDocumentPath) {
       const loaded = await loadDocumentContent(project, nextActiveDocumentPath, nextProfileId, shouldApply)
-      if (!loaded) {
-        if (deepLink) resetSessionState()
+      if (loaded === 'stale') return true
+      if (loaded === 'failed') {
+        const original = tabs.find((tab) => tab.documentPath === nextActiveDocumentPath)
+        const current = sessionRef.current
+        if (!shouldApply() || activeProjectIdRef.current !== project.id || activeProfileIdRef.current !== nextProfileId ||
+          current.tabs.some((tab) => tab.instanceId !== original?.instanceId)) return true
+        if (deepLink && shouldApply() && activeProjectIdRef.current === project.id &&
+          activeProfileIdRef.current === nextProfileId && current.tabs.length === 1 &&
+          current.tabs[0]?.instanceId === original?.instanceId && current.activeTabId === original?.id) {
+          resetSessionState()
+        }
         return false
       }
       if (deepLink) {
+        const original = tabs.find((tab) => tab.documentPath === nextActiveDocumentPath)
+        if (!shouldApply() || activeProjectIdRef.current !== project.id || activeProfileIdRef.current !== nextProfileId ||
+          sessionRef.current.activeTabId !== original?.id ||
+          getTabByDocumentPath(sessionRef.current, nextActiveDocumentPath)?.instanceId !== original?.instanceId) return true
         setPendingHeadingId(deepLink.headingId)
         window.history.replaceState(null, '', createDocumentShareHref(project.id, nextProfileId, nextActiveDocumentPath, deepLink.headingId))
       }
@@ -1485,17 +1418,111 @@ function App() {
     return true
   }
 
+  function recordRegistry(snapshot: ProjectsSnapshot, profileId: string, apply = true) {
+    const previous = registrySnapshots.current.get(profileId)
+    if (previous && previous.revision > snapshot.revision) return
+    registrySnapshots.current.set(profileId, snapshot)
+    if (apply && activeProfileIdRef.current === profileId) {
+      setProjects(snapshot.projects)
+      if (snapshot.lockCleanupWarning) setStatusMessage(snapshot.lockCleanupWarning)
+    }
+  }
+
+  async function registryCommand<T extends ProjectsSnapshot | { snapshot: ProjectsSnapshot }>(
+    profileId: string,
+    expectedRevision: number,
+    command: () => Promise<T>,
+    blockInput = false,
+  ): Promise<T | null> {
+    const generation = workspaceLoadRevisionRef.current
+    if (blockInput) { workspaceInputBlockedRef.current = true; setWorkspaceInputBlocked(true) }
+    try {
+      const result = await command()
+      const snapshot = ('snapshot' in result ? result.snapshot : result) as ProjectsSnapshot
+      recordRegistry(snapshot, profileId, generation === workspaceLoadRevisionRef.current)
+      return result
+    } catch (error) {
+      if (error instanceof RegistryRequestError && error.outcomeUnknown) {
+        const pending = { profileId, expectedRevision }
+        pendingRegistryRef.current = pending
+        setPendingRegistry(pending)
+      } else if (error instanceof RegistryRequestError && error.code === 'REGISTRY_CONFLICT') {
+        try { recordRegistry(await workspaceProvider.listProjects(profileId), profileId, generation === workspaceLoadRevisionRef.current) } catch { /* Keep the confirmed snapshot and drafts. */ }
+      }
+      setStatusMessage(error instanceof Error ? error.message : '项目列表操作失败')
+      return null
+    } finally {
+      if (blockInput) { workspaceInputBlockedRef.current = false; setWorkspaceInputBlocked(false) }
+    }
+  }
+
+  async function runProjectOperation(action: () => Promise<void>) {
+    if (projectOperationBusyRef.current || pendingRegistryRef.current) return
+    projectOperationBusyRef.current = true
+    setProjectOperationBusy(true)
+    try { await action() }
+    catch (error) { setStatusMessage(error instanceof Error ? error.message : '项目操作失败') }
+    finally {
+      projectOperationBusyRef.current = false; setProjectOperationBusy(false)
+      const warning = registrySnapshots.current.get(activeProfileIdRef.current)?.lockCleanupWarning
+      if (warning) setStatusMessage(warning)
+    }
+  }
+
+  function clearProjectWorkspace(profileId: string) {
+    activeProfileIdRef.current = profileId
+    activeProjectIdRef.current = null
+    setActiveProjectId(null)
+    setPendingProjectId(null)
+    setFileTree([])
+    setTreeEntriesByPath(new Map())
+    setFavoritePaths([])
+    setManualNodeOrderByParent({})
+    resetSessionState()
+    setIsWorkspaceBootstrapping(false)
+    window.history.replaceState(null, '', window.location.pathname)
+    setStatusMessage('当前个人配置没有接入项目，可以添加项目')
+  }
+
+  function commitPreparedWorkspace(prepared: NonNullable<Awaited<ReturnType<typeof prepareLocalServiceWorkspace>>>, profileId: string) {
+    activeProjectIdRef.current = prepared.project.id
+    clearScrollPositionTimer()
+    latestScrollPositionsRef.current.clear()
+    maxTabsRevisionRef.current += 1
+    maxUnpinnedTabsRef.current = normalizeMaxUnpinnedTabs(prepared.profile.appearance?.maxUnpinnedTabs)
+    persistedMaxUnpinnedTabsRef.current = maxUnpinnedTabsRef.current
+    setMaxUnpinnedTabs(maxUnpinnedTabsRef.current)
+    sessionRef.current = prepared.session
+    setActiveProjectId(prepared.project.id)
+    setPendingProjectId(null)
+    setStatusMessage(`当前项目：${prepared.project.name}`)
+    setManualNodeOrderByParent(prepared.profile.navigation?.manualNodeOrderByParent ?? {})
+    setFavoritePaths(prepared.favoritePaths)
+    setFileTree(prepared.orderedFileTree)
+    setTreeEntriesByPath(new Map(prepared.snapshot.entries.map((entry) => [entry.path, entry])))
+    setSession(prepared.session)
+    replaceWorkspaceHref(prepared.project.id, profileId)
+    window.requestAnimationFrame(() => performance.mark('project-tree-interactive'))
+
+    setIsWorkspaceBootstrapping(false)
+  }
+
+  function loadPreparedDocument(prepared: Awaited<ReturnType<typeof prepareLocalServiceWorkspace>>, profileId: string) {
+    if (!prepared.activeDocumentPath) return
+    const generation = workspaceLoadRevisionRef.current
+    void loadDocumentContent(prepared.project, prepared.activeDocumentPath, profileId, () =>
+      generation === workspaceLoadRevisionRef.current && profileId === activeProfileIdRef.current && prepared.project.id === activeProjectIdRef.current,
+    )
+  }
+
   async function prepareLocalServiceWorkspace(
-    projectId: string,
+    project: ProjectRegistryRecord,
     profileId: string,
     options?: Parameters<typeof workspaceProvider.getProjectTreeSnapshot>[2],
   ) {
-    const project = projects.find((entry) => entry.id === projectId)
-    if (!project) return null
-
     const [snapshot, profile, restoredState] = await Promise.all([
       workspaceProvider.getProjectTreeSnapshot(project.id, profileId, options),
-      getProfileFromBridge(project.id, profileId, profileId),
+      getCoordinatedProfile(project.id, profileId, 'local-service'),
       localStateStore.getState(project.id, profileId),
     ])
     const markdownPaths = snapshot.entries.map((entry) => entry.path)
@@ -1511,6 +1538,8 @@ function App() {
         documentPath,
         reconciled.tabStateByDocument[documentPath]?.lastKnownScrollTop ?? 0,
       )),
+      tabOpenOrder: reconciled.tabOpenOrder,
+      pinnedDocumentPaths: reconciled.pinnedDocumentPaths,
       activeTabId: activeDocumentPath ? createTabId(activeDocumentPath) : null,
       mode: normalizeWorkspaceMode(reconciled.activeMode),
       regularViewState: reconciled.regularViewState ?? inferRegularViewStateFromMode(reconciled.activeMode),
@@ -1520,8 +1549,8 @@ function App() {
     return { project, markdownPaths, snapshot, profile, session, orderedFileTree, favoritePaths, activeDocumentPath }
   }
 
-  async function switchLocalServiceProject(projectId: string) {
-    const requestedProject = projects.find((entry) => entry.id === projectId)
+  async function switchLocalServiceProject(projectId: string, explicitProject?: ProjectRegistryRecord) {
+    const requestedProject = explicitProject ?? registrySnapshots.current.get(activeProfileIdRef.current)?.projects.find(entry => entry.id === projectId)
     if (!requestedProject) return false
 
     const health = await getLocalBridgeHealth()
@@ -1546,7 +1575,7 @@ function App() {
     let switchTimeout: number | null = null
     try {
       prepared = await Promise.race([
-        prepareLocalServiceWorkspace(projectId, profileId, {
+        prepareLocalServiceWorkspace(requestedProject, profileId, {
           onIndexing: async () => {
             if (revision !== workspaceLoadRevisionRef.current) return
             setStatusMessage('正在索引项目文件树…')
@@ -1580,26 +1609,22 @@ function App() {
 
     const commit = projectSwitchCommitRef.current.then(async () => {
       if (revision !== workspaceLoadRevisionRef.current) return false
-      await workspaceProvider.setActiveProject(profileId, prepared.project.id)
+      if (!(await flushDocumentScrollPosition())) {
+        if (revision === workspaceLoadRevisionRef.current) setPendingProjectId(null)
+        return false
+      }
+      if (revision !== workspaceLoadRevisionRef.current) return false
+      if (getDirtyTabs().length > 0) throw new Error('准备期间有新的未保存内容，请处理后重新切换')
+      const expected = registrySnapshots.current.get(profileId)?.revision
+      if (expected === undefined) throw new Error('项目列表尚未确认，请刷新后重试')
+      const next = await registryCommand(profileId, expected, () => workspaceProvider.setActiveProject(profileId, prepared.project.id, expected), true)
+      if (!next) { if (revision === workspaceLoadRevisionRef.current) setPendingProjectId(null); return false }
+      if (next.activeProjectId !== prepared.project.id) throw new Error('服务返回的当前项目不一致，请重试确认')
       if (revision !== workspaceLoadRevisionRef.current || activeProfileIdRef.current !== profileId) {
         return false
       }
 
-      // Project identity, tree and session are correctness state.  They must share
-      // the same default-priority commit as the pending-state cleanup, otherwise a
-      // subsequent document load can keep the previous workspace on screen.
-      activeProjectIdRef.current = prepared.project.id
-      sessionRef.current = prepared.session
-      setActiveProjectId(prepared.project.id)
-      setPendingProjectId(null)
-      setStatusMessage(`当前项目：${prepared.project.name}`)
-      setManualNodeOrderByParent(prepared.profile.navigation?.manualNodeOrderByParent ?? {})
-      setFavoritePaths(prepared.favoritePaths)
-      setFileTree(prepared.orderedFileTree)
-      setTreeEntriesByPath(new Map(prepared.snapshot.entries.map((entry) => [entry.path, entry])))
-      setSession(prepared.session)
-      replaceWorkspaceHref(prepared.project.id, profileId)
-      window.requestAnimationFrame(() => performance.mark('project-tree-interactive'))
+      commitPreparedWorkspace(prepared, profileId)
       return true
     })
     projectSwitchCommitRef.current = commit.then(() => undefined, () => undefined)
@@ -1635,6 +1660,7 @@ function App() {
     const snapshot = await workspaceProvider.listProjects(profileId)
 
     setWorkspaceSource('local-service')
+    recordRegistry(snapshot, profileId)
     setProjects(snapshot.projects)
     setActiveProjectId(snapshot.activeProjectId)
 
@@ -1650,29 +1676,106 @@ function App() {
     await loadLocalServiceProject(snapshot.activeProjectId, snapshot.projects, profileId)
   }
 
-  async function handleConnectProject() {
-    if (workspaceSource !== 'local-service') {
-      setStatusMessage('本地服务不可用')
+  function handleConnectProject() {
+    if (workspaceSource !== 'local-service') { setStatusMessage('本地服务不可用'); return }
+    if (!projectOperationBusyRef.current && !pendingRegistryRef.current) setIsProjectInputOpen(true)
+  }
+
+  async function handleRegisterProject(rootPath: string) {
+    await runProjectOperation(async () => {
+      const profileId = activeProfileIdRef.current
+      const snapshot = registrySnapshots.current.get(profileId)
+      if (!snapshot) throw new Error('项目列表尚未确认，请刷新后重试')
+      const result = await registryCommand(profileId, snapshot.revision, () => workspaceProvider.registerProject(profileId, rootPath, snapshot.revision))
+      if (!result) return
+      setIsProjectInputOpen(false)
+      setStatusMessage('项目已添加，尚未切换')
+      if (getDirtyTabs().length > 0) {
+        setPendingWorkspaceAction({ kind: 'switch-project', projectId: result.project.id, project: result.project })
+      } else if (!(await switchLocalServiceProject(result.project.id, result.project)) && !pendingRegistryRef.current) {
+        setStatusMessage('项目已添加，尚未切换；请检查目标项目后重试')
+      }
+    })
+  }
+
+  async function removeRegisteredProject(projectId: string) {
+    const profileId = activeProfileIdRef.current
+    const snapshot = registrySnapshots.current.get(profileId)
+    if (!snapshot) throw new Error('项目列表尚未确认')
+    if (snapshot.activeProjectId !== activeProjectIdRef.current) {
+      recordRegistry(await workspaceProvider.listProjects(profileId), profileId)
+      throw new Error('其他窗口已改变当前项目，请先确认工作区再重试移除')
+    }
+    const index = snapshot.projects.findIndex(p => p.id === projectId)
+    if (index < 0) return
+    const removingCurrent = projectId === activeProjectIdRef.current
+    const replacement = removingCurrent ? snapshot.projects[index + 1] ?? snapshot.projects[index - 1] : undefined
+    const generation = removingCurrent ? ++workspaceLoadRevisionRef.current : workspaceLoadRevisionRef.current
+    const prepared = replacement ? await prepareLocalServiceWorkspace(replacement, profileId) : null
+    if (generation !== workspaceLoadRevisionRef.current || profileId !== activeProfileIdRef.current) return
+    if (removingCurrent && getDirtyTabs().length > 0) throw new Error('准备期间有新的未保存内容，请处理后重新移除')
+    const result = await registryCommand(profileId, snapshot.revision, () => workspaceProvider.unregisterProject(profileId, projectId, replacement?.id ?? null, snapshot.revision), removingCurrent)
+    if (!result || generation !== workspaceLoadRevisionRef.current) return
+    if (removingCurrent) {
+      if (!result.activeProjectId) clearProjectWorkspace(profileId)
+      else if (prepared && result.activeProjectId === prepared.project.id) {
+        commitPreparedWorkspace(prepared, profileId)
+        loadPreparedDocument(prepared, profileId)
+      } else throw new Error('项目已移除，但替代工作区尚未恢复，请重试确认')
+    }
+    setStatusMessage(result.lockCleanupWarning ?? '已从列表移除，项目文件和阅读配置保留')
+  }
+
+  async function handleRemoveProject(projectId: string) {
+    if (projectOperationBusyRef.current || pendingRegistryRef.current) return
+    if (projectId === activeProjectIdRef.current && getDirtyTabs().length > 0) {
+      setPendingWorkspaceAction({ kind: 'remove-project', projectId })
       return
     }
+    await runProjectOperation(() => removeRegisteredProject(projectId))
+  }
 
-    const rootPath = window.prompt('输入要接入的项目根目录', 'C:\\Code\\Nocturnel')?.trim()
+  async function handleProjectReorder(orderedIds: string[]) {
+    await runProjectOperation(async () => {
+      const profileId = activeProfileIdRef.current, snapshot = registrySnapshots.current.get(profileId)
+      if (!snapshot) return
+      const result = await registryCommand(profileId, snapshot.revision, () => workspaceProvider.reorderProjects(profileId, orderedIds, snapshot.revision))
+      if (result) setStatusMessage(result.lockCleanupWarning ?? '项目顺序已保存')
+    })
+  }
 
-    if (!rootPath) {
-      return
-    }
-
-    const project = await workspaceProvider.registerProject(activeProfileId, rootPath)
-    await workspaceProvider.setActiveProject(activeProfileId, project.id)
-
-    const snapshot = await workspaceProvider.listProjects(activeProfileId)
-    setProjects(snapshot.projects)
-    if (await loadLocalServiceProject(project.id, snapshot.projects, activeProfileId)) {
-      replaceWorkspaceHref(project.id, activeProfileId)
+  async function handleReconcileRegistry() {
+    const pending = pendingRegistryRef.current
+    if (!pending || projectOperationBusyRef.current) return
+    projectOperationBusyRef.current = true; setProjectOperationBusy(true)
+    try {
+      const snapshot = await workspaceProvider.reconcileProjects(pending.profileId, pending.expectedRevision)
+      recordRegistry(snapshot, pending.profileId)
+      // Keep drafts on their original project; never carry them into another workspace.
+      if (pending.profileId === activeProfileIdRef.current && !getDirtyTabs().length) {
+        workspaceInputBlockedRef.current = true; setWorkspaceInputBlocked(true)
+        if (!snapshot.activeProjectId) clearProjectWorkspace(pending.profileId)
+        else if (snapshot.activeProjectId !== activeProjectIdRef.current) {
+          const project = snapshot.projects.find(p => p.id === snapshot.activeProjectId)!
+          const prepared = await prepareLocalServiceWorkspace(project, pending.profileId)
+          if (getDirtyTabs().length) throw new Error('检测到新的未保存内容，草稿保留，请先处理后重试确认')
+          commitPreparedWorkspace(prepared, pending.profileId)
+          loadPreparedDocument(prepared, pending.profileId)
+        }
+      }
+      pendingRegistryRef.current = null; setPendingRegistry(null)
+      setStatusMessage(snapshot.lockCleanupWarning ?? (getDirtyTabs().length ? '列表已确认，原工作区草稿保留；请处理草稿后再切换' : '项目列表已确认'))
+    } catch (error) { setStatusMessage(error instanceof Error ? error.message : '暂时无法确认，请重试') }
+    finally {
+      workspaceInputBlockedRef.current = false; setWorkspaceInputBlocked(false)
+      projectOperationBusyRef.current = false; setProjectOperationBusy(false)
     }
   }
 
   async function closeTabInternal(tabId: string) {
+    navigationRequestRef.current += 1
+    documentLoadingRevisionRef.current += 1
+    setIsDocumentLoading(false)
     if (!activeProjectIdRef.current) {
       return
     }
@@ -1691,15 +1794,15 @@ function App() {
         ? getActiveTab(currentSession)
         : remainingTabs[Math.max(0, closingIndex - 1)] ?? remainingTabs[0] ?? null
 
-    setSession((current) => {
-      const nextSession = removeTab(current, tabId)
-
-      return {
-        ...nextSession,
-        activeTabId:
-          current.activeTabId === tabId ? (fallbackTab?.id ?? null) : current.activeTabId,
-      }
-    })
+    const nextSession = {
+      ...removeTab(currentSession, tabId),
+      activeTabId: currentSession.activeTabId === tabId ? (fallbackTab?.id ?? null) : currentSession.activeTabId,
+    }
+    sessionRef.current = nextSession
+    setSession(nextSession)
+    const projectId = activeProjectIdRef.current
+    const profileId = activeProfileIdRef.current
+    await persistCurrentSession(projectId, profileId)
 
     if (fallbackTab && fallbackTab.persistedContent == null) {
       const project = projects.find((entry) => entry.id === activeProjectIdRef.current)
@@ -1708,82 +1811,51 @@ function App() {
       }
     }
 
-    const localState = normalizeLocalStateSnapshot(
-      (await localStateStore.getState(activeProjectIdRef.current, activeProfileIdRef.current)) as Awaited<
-        ReturnType<typeof localStateStore.getState>
-      > & { activeMode: 'regular' | 'split' | 'read' | 'edit'; lastKnownScrollTop?: number },
-    )
-    await localStateStore.saveState(activeProjectIdRef.current, activeProfileIdRef.current, {
-      ...localState,
-      openDocumentPaths: remainingTabs.map((tab) => tab.documentPath),
-      activeDocumentPath: fallbackTab?.documentPath ?? null,
-      activeMode: sessionRef.current.mode,
-      regularViewState: sessionRef.current.regularViewState,
-    })
   }
 
   async function continueWorkspaceAction(action: PendingWorkspaceAction) {
     if (action.kind === 'switch-project') {
-      await switchLocalServiceProject(action.projectId)
+      await runProjectOperation(async () => { await switchLocalServiceProject(action.projectId, action.project) })
+      return
+    }
+
+    if (action.kind === 'remove-project') {
+      await runProjectOperation(() => removeRegisteredProject(action.projectId))
       return
     }
 
     if (action.kind === 'switch-profile') {
-      const revision = workspaceLoadRevisionRef.current + 1
-      workspaceLoadRevisionRef.current = revision
-      setPendingProjectId(null)
-      setActiveProfileId(action.profileId)
-
-      if (workspaceSource !== 'local-service') {
-        setProjects([])
-        setActiveProjectId(null)
-        setFileTree([])
-        resetSessionState()
-        setStatusMessage('本地服务不可用')
-        return
-      }
-
-      const snapshot = await workspaceProvider.listProjects(action.profileId)
-      if (revision !== workspaceLoadRevisionRef.current) return
-      let nextSnapshot = snapshot
-
-      if (!nextSnapshot.activeProjectId) {
-        const currentProject =
-          activeProjectIdRef.current == null
-            ? null
-            : projects.find((entry) => entry.id === activeProjectIdRef.current) ?? null
-
-        if (currentProject?.rootPath) {
-          const registeredProject = await workspaceProvider.registerProject(
-            action.profileId,
-            currentProject.rootPath,
-          )
-          await workspaceProvider.setActiveProject(action.profileId, registeredProject.id)
-          nextSnapshot = await workspaceProvider.listProjects(action.profileId)
-          if (revision !== workspaceLoadRevisionRef.current) return
+      await runProjectOperation(async () => {
+        const revision = ++workspaceLoadRevisionRef.current
+        setPendingProjectId(null)
+        if (workspaceSource !== 'local-service') throw new Error('本地服务不可用')
+        const snapshot = await workspaceProvider.listProjects(action.profileId)
+        if (revision !== workspaceLoadRevisionRef.current) return
+        let nextSnapshot = snapshot
+        recordRegistry(snapshot, action.profileId, false)
+        if (!snapshot.initialized) {
+          const currentProject = projects.find(project => project.id === activeProjectIdRef.current)
+          if (currentProject?.rootPath) {
+            const registered = await registryCommand(action.profileId, snapshot.revision, () => workspaceProvider.registerProject(action.profileId, currentProject.rootPath!, snapshot.revision))
+            if (!registered) return
+            nextSnapshot = registered.snapshot
+          }
         }
-      }
-
-      setProjects(nextSnapshot.projects)
-      setActiveProjectId(nextSnapshot.activeProjectId)
-
-      if (!nextSnapshot.activeProjectId) {
-        setFileTree([])
-        resetSessionState()
-        setStatusMessage('当前 profile 还没有接入任何项目')
-        return
-      }
-
-      const restored = await loadLocalServiceProject(
-        nextSnapshot.activeProjectId,
-        nextSnapshot.projects,
-        action.profileId,
-        undefined,
-        () => revision === workspaceLoadRevisionRef.current,
-      )
-      if (restored && revision === workspaceLoadRevisionRef.current) {
-        replaceWorkspaceHref(nextSnapshot.activeProjectId, action.profileId)
-      }
+        const target = nextSnapshot.projects.find(project => project.id === nextSnapshot.activeProjectId)
+        const prepared = target ? await prepareLocalServiceWorkspace(target, action.profileId) : null
+        if (revision !== workspaceLoadRevisionRef.current) return
+        if (!(await flushDocumentScrollPosition())) return
+        if (revision !== workspaceLoadRevisionRef.current) return
+        if (getDirtyTabs().length > 0) throw new Error('准备期间有新的未保存内容，请处理后重新切换')
+        activeProfileIdRef.current = action.profileId
+        setActiveProfileId(action.profileId)
+        recordRegistry(nextSnapshot, action.profileId)
+        if (!prepared) clearProjectWorkspace(action.profileId)
+        else {
+          commitPreparedWorkspace(prepared, action.profileId)
+          loadPreparedDocument(prepared, action.profileId)
+        }
+      })
       return
     }
 
@@ -1838,6 +1910,7 @@ function App() {
   }
 
   async function handleProjectChange(projectId: string) {
+    if (projectOperationBusyRef.current || pendingRegistryRef.current) return
     if (workspaceSource !== 'local-service') {
       setStatusMessage('本地服务不可用')
       return
@@ -1852,6 +1925,7 @@ function App() {
   }
 
   async function handleProfileChange(profileId: string) {
+    if (projectOperationBusyRef.current || pendingRegistryRef.current) return
     if (getDirtyTabs().length > 0) {
       setPendingWorkspaceAction({ kind: 'switch-profile', profileId })
       return
@@ -1868,23 +1942,13 @@ function App() {
     ) as WorkspaceLocalState
   }
 
-  async function readActiveProfile(projectId: string) {
-    return workspaceSource === 'local-service'
-      ? getProfileFromBridge(projectId, activeProfileIdRef.current, activeProfileIdRef.current)
-      : profileStore.getProfile(projectId, activeProfileIdRef.current)
+  async function readActiveProfile(projectId: string, profileId = activeProfileIdRef.current) {
+    return getCoordinatedProfile(projectId, profileId, workspaceSource)
   }
 
-  async function persistActiveProfile(projectId: string, profile: Awaited<ReturnType<typeof readActiveProfile>>) {
-    if (workspaceSource === 'local-service') {
-      await saveProfileToBridge(projectId, profile, activeProfileIdRef.current)
-      return
-    }
-
-    await profileStore.saveProfile(projectId, profile)
-  }
-
-  async function refreshProjectTree(projectId: string, profileId: string) {
+  async function refreshProjectTree(projectId: string, profileId: string, isCurrent: () => boolean) {
     const snapshot = await workspaceProvider.getProjectTreeSnapshot(projectId, profileId)
+    if (!isCurrent()) return false
     const markdownPaths = snapshot.entries.map((entry) => entry.path)
     const nextFileTree = buildOrderedFileTree(markdownPaths, manualNodeOrderByParent)
     const nextFavoritePaths = pruneFavoritePaths(nextFileTree, favoritePaths)
@@ -1893,10 +1957,11 @@ function App() {
 
     if (nextFavoritePaths.length !== favoritePaths.length) {
       setFavoritePaths(nextFavoritePaths)
-      await saveActiveProfileNavigation({ favoritePaths: nextFavoritePaths })
+      await updateProfile(projectId, profileId, workspaceSource, (current) => ({ ...current,
+        navigation: { ...current.navigation, favoritePaths: pruneFavoritePaths(nextFileTree, current.navigation.favoritePaths) } }))
     }
 
-    return markdownPaths
+    return isCurrent()
   }
 
   async function getMarkdownPathsFromSnapshot(projectId: string, profileId: string) {
@@ -1952,7 +2017,9 @@ function App() {
     project: ProjectRegistryRecord,
     profileId: string,
     documentPath: string,
+    isCurrent: () => boolean,
   ) {
+    if (!isCurrent()) return false
     const currentSession = sessionRef.current
     const closingIndex = currentSession.tabs.findIndex((tab) => tab.documentPath === documentPath)
     const closingTab = closingIndex >= 0 ? currentSession.tabs[closingIndex] : null
@@ -1983,33 +2050,34 @@ function App() {
       setSession(nextSession)
     }
 
-    const localState = normalizeLocalStateSnapshot(
-      (await localStateStore.getState(project.id, profileId)) as Awaited<
-        ReturnType<typeof localStateStore.getState>
-      > & { activeMode: 'regular' | 'split' | 'read' | 'edit'; lastKnownScrollTop?: number },
-    )
-    await localStateStore.saveState(project.id, profileId, {
-      ...localState,
-      openDocumentPaths: remainingTabs.map((tab) => tab.documentPath).filter((path) => path !== documentPath),
-      activeDocumentPath:
-        fallbackTab?.documentPath ??
-        (localState.activeDocumentPath === documentPath ? null : localState.activeDocumentPath),
-      activeMode: nextSession.mode,
-      regularViewState: nextSession.regularViewState,
-      tabStateByDocument: Object.fromEntries(
-        Object.entries(localState.tabStateByDocument).filter(([path]) => path !== documentPath),
-      ),
-      readingProgressByDocument: Object.fromEntries(
-        Object.entries(localState.readingProgressByDocument).filter(([path]) => path !== documentPath),
-      ),
+    await localStateStore.updateState(project.id, profileId, (localState) => {
+      if (!isCurrent()) return localState
+      const latest = sessionRef.current
+      return {
+        ...localState,
+        openDocumentPaths: latest.tabs.map((tab) => tab.documentPath),
+        activeDocumentPath: getActiveTab(latest)?.documentPath ?? null,
+        activeMode: latest.mode,
+        regularViewState: latest.regularViewState,
+        ...sessionTabMetadata(latest),
+        tabStateByDocument: Object.fromEntries(
+          Object.entries(localState.tabStateByDocument).filter(([path]) => path !== documentPath),
+        ),
+        readingProgressByDocument: Object.fromEntries(
+          Object.entries(localState.readingProgressByDocument).filter(([path]) => path !== documentPath),
+        ),
+      }
     })
+
+    if (!isCurrent()) return false
 
     if (fallbackTab && fallbackTab.persistedContent == null) {
       await loadDocumentContent(project, fallbackTab.documentPath, profileId)
     }
 
-    await refreshProjectTree(project.id, profileId)
+    if (!isCurrent() || !(await refreshProjectTree(project.id, profileId, isCurrent))) return false
     setStatusMessage(`已移除失效文档：${documentPath}`)
+    return true
   }
 
   function resolveDefaultDirectoryPath(preferredDirectoryPath?: string) {
@@ -2042,15 +2110,18 @@ function App() {
     sourcePath: string,
     targetPath: string,
     nextManualNodeOrderByParentOverride?: ManualNodeOrderByParent,
+    scope?: { projectId: string; profileId: string },
   ) {
-    const projectId = activeProjectIdRef.current
+    const projectId = scope?.projectId ?? activeProjectIdRef.current
     if (!projectId) {
       return
     }
 
+    const profileId = scope?.profileId ?? activeProfileIdRef.current
+    const source = workspaceSource
     const [localState, profile] = await Promise.all([
-      readNormalizedLocalState(projectId),
-      readActiveProfile(projectId),
+      readNormalizedLocalState(projectId, profileId),
+      readActiveProfile(projectId, profileId),
     ])
     const nextCollections = rewritePathCollections({
       localState,
@@ -2068,30 +2139,38 @@ function App() {
         }
       : nextCollections.profile
 
-    setSession((current) => rewriteSessionDocumentPath(current, sourcePath, targetPath))
-    setHiddenPaths(nextProfile.navigation.hiddenPaths)
-    setFavoritePaths(nextProfile.navigation.favoritePaths)
-    setManualNodeOrderByParent(nextProfile.navigation.manualNodeOrderByParent)
+    if (activeProjectIdRef.current === projectId && activeProfileIdRef.current === profileId) {
+      const renamedSession = rewriteSessionDocumentPath(sessionRef.current, sourcePath, targetPath)
+      sessionRef.current = renamedSession
+      setSession(renamedSession)
+      setHiddenPaths(nextProfile.navigation.hiddenPaths)
+      setFavoritePaths(nextProfile.navigation.favoritePaths)
+      setManualNodeOrderByParent(nextProfile.navigation.manualNodeOrderByParent)
+    }
 
     await Promise.all([
-      localStateStore.saveState(projectId, activeProfileIdRef.current, {
-        ...nextCollections.localState,
-        activeMode: sessionRef.current.mode,
-        regularViewState: sessionRef.current.regularViewState,
+      localStateStore.updateState(projectId, profileId, (current) =>
+        rewritePathCollections({ localState: current, profile, sourcePath, targetPath }).localState),
+      updateProfile(projectId, profileId, source, (current) => {
+        const rewritten = rewritePathCollections({ localState, profile: current, sourcePath, targetPath }).profile
+        return nextManualNodeOrderByParentOverride
+          ? { ...rewritten, navigation: { ...rewritten.navigation, manualNodeOrderByParent: nextManualNodeOrderByParentOverride } }
+          : rewritten
       }),
-      persistActiveProfile(projectId, nextProfile),
     ])
   }
 
-  async function removeDocumentPathState(documentPath: string) {
-    const projectId = activeProjectIdRef.current
+  async function removeDocumentPathState(documentPath: string, scope?: { projectId: string; profileId: string }) {
+    const projectId = scope?.projectId ?? activeProjectIdRef.current
     if (!projectId) {
       return
     }
 
+    const profileId = scope?.profileId ?? activeProfileIdRef.current
+    const source = workspaceSource
     const [localState, profile] = await Promise.all([
-      readNormalizedLocalState(projectId),
-      readActiveProfile(projectId),
+      readNormalizedLocalState(projectId, profileId),
+      readActiveProfile(projectId, profileId),
     ])
     const nextCollections = removePathCollections({
       localState,
@@ -2099,38 +2178,30 @@ function App() {
       targetPath: documentPath,
     })
 
-    setHiddenPaths(nextCollections.profile.navigation.hiddenPaths)
-    setFavoritePaths(nextCollections.profile.navigation.favoritePaths)
-    setManualNodeOrderByParent(nextCollections.profile.navigation.manualNodeOrderByParent)
+    if (activeProjectIdRef.current === projectId && activeProfileIdRef.current === profileId) {
+      setHiddenPaths(nextCollections.profile.navigation.hiddenPaths)
+      setFavoritePaths(nextCollections.profile.navigation.favoritePaths)
+      setManualNodeOrderByParent(nextCollections.profile.navigation.manualNodeOrderByParent)
+    }
 
     await Promise.all([
-      localStateStore.saveState(projectId, activeProfileIdRef.current, {
-        ...nextCollections.localState,
-        activeMode: sessionRef.current.mode,
-        regularViewState: sessionRef.current.regularViewState,
-      }),
-      persistActiveProfile(projectId, nextCollections.profile),
+      localStateStore.updateState(projectId, profileId, (current) =>
+        removePathCollections({ localState: current, profile, targetPath: documentPath }).localState),
+      updateProfile(projectId, profileId, source, (current) =>
+        removePathCollections({ localState, profile: current, targetPath: documentPath }).profile),
     ])
   }
 
   async function handleModeChange(nextMode: WorkspaceMode) {
-    setSession((current) => ({ ...current, mode: nextMode }))
+    const nextSession = { ...sessionRef.current, mode: nextMode }
+    sessionRef.current = nextSession
+    setSession(nextSession)
 
     if (!activeProjectId) {
       return
     }
 
-    await localStateStore.saveState(activeProjectId, activeProfileIdRef.current, {
-      ...normalizeLocalStateSnapshot(
-        (await localStateStore.getState(activeProjectId, activeProfileIdRef.current)) as Awaited<
-          ReturnType<typeof localStateStore.getState>
-        > & { activeMode: 'regular' | 'split' | 'read' | 'edit'; lastKnownScrollTop?: number },
-      ),
-      openDocumentPaths: session.tabs.map((tab) => tab.documentPath),
-      activeDocumentPath: currentDocumentPath,
-      activeMode: nextMode,
-      regularViewState: session.regularViewState,
-    })
+    await persistCurrentSession(activeProjectId, activeProfileIdRef.current)
   }
 
   async function handleCreateDocument(preferredDirectoryPath?: string) {
@@ -2204,8 +2275,8 @@ function App() {
       )
 
       if (action.kind === 'document') {
-        await handleDocumentSelect(targetPath)
-        publishActionFeedback(`已新建文档：${targetPath}`)
+        const opened = await handleDocumentSelect(targetPath)
+        publishActionFeedback(opened ? `已新建文档：${targetPath}` : `文档已创建，但未能打开：${targetPath}`, opened ? 'info' : 'error')
       } else {
         publishActionFeedback(`已新建文件夹：${targetPath}`)
       }
@@ -2253,75 +2324,12 @@ function App() {
   }
 
   async function handleDocumentLinkNavigate(documentPath: string, headingId: string | null) {
-    const requestId = navigationRequestRef.current + 1
-    navigationRequestRef.current = requestId
-    const projectId = activeProjectIdRef.current
-    const profileId = activeProfileIdRef.current
-    const project = projects.find((entry) => entry.id === projectId)
     const sourceDocumentPath = currentDocumentPathRef.current
-    if (!project || !projectId) {
-      publishActionFeedback('当前项目不可用，无法打开链接', 'error')
-      return
-    }
-
-    if (sourceDocumentPath && !(await flushDocumentDraftIfNeeded(sourceDocumentPath))) {
-      return
-    }
-
-    try {
-      const document = await getDocumentContentFromBridge(project.id, profileId, documentPath)
-      if (navigationRequestRef.current !== requestId) return
-
-      const currentSession = sessionRef.current
-      const existingTab = getTabByDocumentPath(currentSession, document.path)
-      const nextTab: WorkspaceTab = {
-        ...(existingTab ?? createWorkspaceTab(document.path)),
-        documentPath: document.path,
-        persistedContent: document.content,
-        draftContent: document.content,
-        mtimeMs: document.mtimeMs,
-        saveState: 'clean',
-        saveErrorMessage: null,
-      }
-      const nextSession: WorkspaceSession = {
-        ...currentSession,
-        tabs:
-          existingTab == null
-            ? [...currentSession.tabs, nextTab]
-            : currentSession.tabs.map((tab) => (tab.id === nextTab.id ? nextTab : tab)),
-        activeTabId: nextTab.id,
-      }
-      sessionRef.current = nextSession
-      setSession(nextSession)
-      setPendingHeadingId(headingId)
-
-      const persistNavigation = navigationPersistenceRef.current.enqueue(requestId, () => navigationRequestRef.current, async () => {
-        const localState = normalizeLocalStateSnapshot(
-          (await localStateStore.getState(project.id, profileId)) as Awaited<
-            ReturnType<typeof localStateStore.getState>
-          > & { activeMode: 'regular' | 'split' | 'read' | 'edit'; lastKnownScrollTop?: number },
-        )
-        if (navigationRequestRef.current !== requestId || activeProjectIdRef.current !== project.id || activeProfileIdRef.current !== profileId) return
-        await localStateStore.saveState(project.id, profileId, {
-          ...localState,
-          openDocumentPaths: Array.from(new Set([...localState.openDocumentPaths, document.path])),
-          activeDocumentPath: document.path,
-          activeMode: nextSession.mode,
-          regularViewState: nextSession.regularViewState,
-          readingProgressByDocument: {
-            ...localState.readingProgressByDocument,
-            [document.path]: localState.readingProgressByDocument[document.path] ?? 0,
-          },
-        })
-      })
-      if (!(await persistNavigation)) return
-      if (activeProjectIdRef.current !== project.id || activeProfileIdRef.current !== profileId) return
-      window.history.replaceState(null, '', getDocumentLinkHref(document.path, headingId))
-      setStatusMessage(`当前项目：${project.name}`)
-    } catch (error) {
-      if (navigationRequestRef.current !== requestId) return
-      publishActionFeedback(error instanceof Error ? `读取文档失败：${error.message}` : '读取文档失败', 'error')
-    }
+    if (sourceDocumentPath && !(await flushDocumentDraftIfNeeded(sourceDocumentPath))) return
+    const opened = await openDocument(documentPath, false)
+    if (!opened) return
+    setPendingHeadingId(headingId)
+    window.history.replaceState(null, '', getDocumentLinkHref(documentPath, headingId))
   }
 
   async function handleCopyDirectoryPath(directoryPath: string) {
@@ -2357,8 +2365,8 @@ function App() {
       await persistManualNodeOrder(nextManualNodeOrderByParent, {
         refreshPaths: nextMarkdownPaths,
       })
-      await handleDocumentSelect(targetPath)
-      publishActionFeedback(`已创建副本：${targetPath}`)
+      const opened = await handleDocumentSelect(targetPath)
+      publishActionFeedback(opened ? `已创建副本：${targetPath}` : `副本已创建，但未能打开：${targetPath}`, opened ? 'info' : 'error')
       return true
     } catch (error) {
       publishActionFeedback(
@@ -2388,8 +2396,9 @@ function App() {
       }
 
       const result = await renameDocumentNodeInBridge(projectId, profileId, documentPath, trimmedNextName)
-      await rewriteDocumentPathState(documentPath, result.path)
+      await rewriteDocumentPathState(documentPath, result.path, undefined, { projectId, profileId })
       const nextMarkdownPaths = await getMarkdownPathsFromSnapshot(projectId, profileId)
+      if (activeProjectIdRef.current !== projectId || activeProfileIdRef.current !== profileId) return true
       setFileTree(
         buildOrderedFileTree(
           nextMarkdownPaths,
@@ -2440,12 +2449,13 @@ function App() {
       const tab = sessionRef.current.tabs.find((entry) => entry.documentPath === action.documentPath) ?? null
       await deleteDocumentNodeInBridge(projectId, profileId, action.documentPath)
 
-      if (tab) {
+      if (tab && activeProjectIdRef.current === projectId && activeProfileIdRef.current === profileId) {
         await closeTabInternal(tab.id)
       }
 
-      await removeDocumentPathState(action.documentPath)
+      await removeDocumentPathState(action.documentPath, { projectId, profileId })
       const nextMarkdownPaths = await getMarkdownPathsFromSnapshot(projectId, profileId)
+      if (activeProjectIdRef.current !== projectId || activeProfileIdRef.current !== profileId) return
       setFileTree(
         buildOrderedFileTree(
           nextMarkdownPaths,
@@ -2487,8 +2497,9 @@ function App() {
         sourcePath,
         result.path,
       )
-      await rewriteDocumentPathState(sourcePath, result.path, nextManualNodeOrderByParent)
+      await rewriteDocumentPathState(sourcePath, result.path, nextManualNodeOrderByParent, { projectId, profileId })
       const nextMarkdownPaths = await getMarkdownPathsFromSnapshot(projectId, profileId)
+      if (activeProjectIdRef.current !== projectId || activeProfileIdRef.current !== profileId) return
       setFileTree(
         buildOrderedFileTree(
           nextMarkdownPaths,
@@ -2539,51 +2550,82 @@ function App() {
     }
   }
 
-  async function handleDocumentSelect(path: string) {
-    if (!activeProjectId) {
-      return
-    }
-
-    await flushDocumentScrollPosition()
-
-    const existingTab = getTabByDocumentPath(session, path)
-    const project = projects.find((entry) => entry.id === activeProjectId)
-    if (project) {
-      ensureTabExists(path)
-      if (existingTab?.persistedContent == null) {
-        await loadDocumentContent(project, path, activeProfileId)
+  async function openDocument(path: string, regularMode: boolean): Promise<boolean> {
+    const projectId = activeProjectIdRef.current
+    const profileId = activeProfileIdRef.current
+    const project = projects.find((entry) => entry.id === projectId)
+    if (!project || !projectId) return false
+    const requestId = ++navigationRequestRef.current
+    documentLoadingRevisionRef.current += 1
+    setIsDocumentLoading(false)
+    const valid = () => navigationRequestRef.current === requestId &&
+      activeProjectIdRef.current === projectId && activeProfileIdRef.current === profileId
+    if (!(await flushDocumentScrollPosition())) return false
+    if (!valid()) return false
+    let existing = getTabByDocumentPath(sessionRef.current, path)
+    if (existing) {
+      const next = { ...sessionRef.current, activeTabId: existing.id,
+        mode: regularMode ? 'regular' as const : sessionRef.current.mode }
+      sessionRef.current = next
+      setSession(next)
+      await persistCurrentSession(projectId, profileId)
+      if (existing.persistedContent == null) {
+        const loaded = await loadDocumentContent(project, path, profileId, valid)
+        if (loaded !== 'loaded' || !valid()) return false
       }
+      setDocumentScrollRestoreId((current) => current + 1)
+      return valid()
     }
 
-    setDocumentScrollRestoreId((current) => current + 1)
+    const loadingRevision = ++documentLoadingRevisionRef.current
+    setIsDocumentLoading(true)
+    try {
+      const document = await getDocumentContentFromBridge(projectId, profileId, path)
+      if (!valid()) return false
+      existing = getTabByDocumentPath(sessionRef.current, document.path)
+      if (existing) {
+        const next = { ...sessionRef.current, activeTabId: existing.id,
+          mode: regularMode ? 'regular' as const : sessionRef.current.mode }
+        sessionRef.current = next
+        setSession(next)
+        await persistCurrentSession(projectId, profileId)
+        return valid()
+      }
+      const current = sessionRef.current
+      const composingTabId = isComposingRef.current ? current.activeTabId : null
+      const savingTabIds = new Set(current.tabs.filter((item) => item.instanceId && pendingTabSavesRef.current.has(item.instanceId)).map((item) => item.id))
+      const evict = selectTabsForOpening(current, maxUnpinnedTabsRef.current, composingTabId, savingTabIds)
+      if (evict == null) {
+        publishActionFeedback('标签页数量已达上限，请先保存、关闭或固定标签页后重试', 'error')
+        return false
+      }
+      const tab: WorkspaceTab = { ...createWorkspaceTab(document.path), persistedContent: document.content,
+        draftContent: document.content, mtimeMs: document.mtimeMs }
+      const metadata = sessionTabMetadata(current)
+      const removed = new Set(evict)
+      const removedPaths = new Set(current.tabs.filter((item) => removed.has(item.id)).map((item) => item.documentPath))
+      const next: WorkspaceSession = { ...current,
+        tabs: [...current.tabs.filter((item) => !removed.has(item.id)), tab],
+        tabOpenOrder: [...metadata.tabOpenOrder.filter((item) => !removedPaths.has(item)), document.path],
+        pinnedDocumentPaths: metadata.pinnedDocumentPaths,
+        activeTabId: tab.id, mode: regularMode ? 'regular' : current.mode }
+      sessionRef.current = next
+      setSession(next)
+      setDocumentScrollRestoreId((value) => value + 1)
+      const persisted = await persistCurrentSession(projectId, profileId)
+      if (!valid()) return false
+      if (persisted) setStatusMessage(`当前项目：${project.name}`)
+      return true
+    } catch (error) {
+      if (valid()) publishActionFeedback(error instanceof Error ? `读取文档失败：${error.message}` : '读取文档失败', 'error')
+      return false
+    } finally {
+      if (documentLoadingRevisionRef.current === loadingRevision) setIsDocumentLoading(false)
+    }
+  }
 
-    setSession((current) => ({
-      ...current,
-      mode: 'regular',
-      activeTabId: createTabId(path),
-      tabs:
-        getTabByDocumentPath(current, path) == null
-          ? [...current.tabs, createWorkspaceTab(path)]
-          : current.tabs,
-    }))
-
-    const localState = normalizeLocalStateSnapshot(
-      (await localStateStore.getState(activeProjectId, activeProfileIdRef.current)) as Awaited<
-        ReturnType<typeof localStateStore.getState>
-      > & { activeMode: 'regular' | 'split' | 'read' | 'edit'; lastKnownScrollTop?: number },
-    )
-
-    await localStateStore.saveState(activeProjectId, activeProfileIdRef.current, {
-      ...localState,
-      openDocumentPaths: Array.from(new Set([...localState.openDocumentPaths, path])),
-      activeMode: 'regular',
-      regularViewState: session.regularViewState,
-      activeDocumentPath: path,
-      readingProgressByDocument: {
-        ...localState.readingProgressByDocument,
-        [path]: localState.readingProgressByDocument[path] ?? 0,
-      },
-    })
+  async function handleDocumentSelect(path: string) {
+    return openDocument(path, true)
   }
 
   async function handleRefreshDocument() {
@@ -2618,42 +2660,9 @@ function App() {
   }
 
   async function handleTabSelect(tabId: string) {
-    if (!activeProjectId) {
-      return
-    }
-
-    const nextTab = session.tabs.find((tab) => tab.id === tabId)
-
-    if (!nextTab || nextTab.id === session.activeTabId) {
-      return
-    }
-
-    await flushDocumentScrollPosition()
-
-    setSession((current) => ({
-      ...current,
-      activeTabId: tabId,
-    }))
-
-    const project = projects.find((entry) => entry.id === activeProjectId)
-    if (project && nextTab.persistedContent == null) {
-      await loadDocumentContent(project, nextTab.documentPath, activeProfileId)
-    }
-
-    setDocumentScrollRestoreId((current) => current + 1)
-
-    const localState = normalizeLocalStateSnapshot(
-      (await localStateStore.getState(activeProjectId, activeProfileIdRef.current)) as Awaited<
-        ReturnType<typeof localStateStore.getState>
-      > & { activeMode: 'regular' | 'split' | 'read' | 'edit'; lastKnownScrollTop?: number },
-    )
-    await localStateStore.saveState(activeProjectId, activeProfileIdRef.current, {
-      ...localState,
-      openDocumentPaths: session.tabs.map((tab) => tab.documentPath),
-      activeDocumentPath: nextTab.documentPath,
-      activeMode: session.mode,
-      regularViewState: session.regularViewState,
-    })
+    const tab = sessionRef.current.tabs.find((item) => item.id === tabId)
+    if (!tab) return
+    await openDocument(tab.documentPath, false)
   }
 
   async function handleTabReorder(nextOrderedTabIds: string[]) {
@@ -2667,21 +2676,25 @@ function App() {
       return
     }
 
+    sessionRef.current = nextSession
     setSession(nextSession)
+    await persistCurrentSession(projectId, activeProfileIdRef.current)
+  }
 
-    const localState = normalizeLocalStateSnapshot(
-      (await localStateStore.getState(projectId, activeProfileIdRef.current)) as Awaited<
-        ReturnType<typeof localStateStore.getState>
-      > & { activeMode: 'regular' | 'split' | 'read' | 'edit'; lastKnownScrollTop?: number },
-    )
-
-    await localStateStore.saveState(projectId, activeProfileIdRef.current, {
-      ...localState,
-      openDocumentPaths: nextSession.tabs.map((tab) => tab.documentPath),
-      activeDocumentPath: getActiveTab(nextSession)?.documentPath ?? null,
-      activeMode: nextSession.mode,
-      regularViewState: nextSession.regularViewState,
-    })
+  async function handleTabPin(tabId: string) {
+    const projectId = activeProjectIdRef.current
+    const profileId = activeProfileIdRef.current
+    const current = sessionRef.current
+    const tab = current.tabs.find((item) => item.id === tabId)
+    if (!projectId || !tab) return
+    const metadata = sessionTabMetadata(current)
+    const pins = metadata.pinnedDocumentPaths.includes(tab.documentPath)
+      ? metadata.pinnedDocumentPaths.filter((path) => path !== tab.documentPath)
+      : [...metadata.pinnedDocumentPaths, tab.documentPath]
+    const next = { ...current, ...metadata, pinnedDocumentPaths: pins }
+    sessionRef.current = next
+    setSession(next)
+    await persistCurrentSession(projectId, profileId)
   }
 
   async function handleTabClose(tabId: string) {
@@ -2714,45 +2727,34 @@ function App() {
     profileId: string,
     shouldApply: () => boolean = () => true,
   ) {
+    const target = getTabByDocumentPath(sessionRef.current, documentPath)
+    if (!target) return 'stale' as const
+    const workspaceRevision = workspaceLoadRevisionRef.current
+    const isCurrent = () => shouldApply() && workspaceLoadRevisionRef.current === workspaceRevision &&
+      activeProjectIdRef.current === project.id && activeProfileIdRef.current === profileId
+    const valid = () => isCurrent() && getTabByDocumentPath(sessionRef.current, documentPath) === target
+    const loadingRevision = ++documentLoadingRevisionRef.current
     setIsDocumentLoading(true)
-
     try {
       const document = await getDocumentContentFromBridge(project.id, profileId, documentPath)
-      if (!shouldApply()) return false
-      applyLoadedDocument(document.path, document.content, document.mtimeMs, `当前项目：${project.name}`)
-      return true
+      if (!valid()) return 'stale' as const
+      const loaded: WorkspaceTab = { ...target, persistedContent: document.content,
+        draftContent: document.content, mtimeMs: document.mtimeMs, saveState: 'clean', saveErrorMessage: null }
+      const next = replaceTab(sessionRef.current, loaded)
+      sessionRef.current = next
+      setSession(next)
+      setStatusMessage(`当前项目：${project.name}`)
+      return 'loaded' as const
     } catch (error) {
-      if (!shouldApply()) return false
+      if (!valid()) return 'stale' as const
       if (isMissingDocumentLoadError(error)) {
-        await purgeMissingDocumentPath(project, profileId, documentPath)
-        return false
+        if (!(await purgeMissingDocumentPath(project, profileId, documentPath, isCurrent))) return 'stale' as const
+      } else {
+        setStatusMessage(error instanceof Error ? `读取文档失败：${error.message}` : '读取文档失败')
       }
-
-      setSession((current) => {
-        const existingTab = getTabByDocumentPath(current, documentPath) ?? createWorkspaceTab(documentPath)
-        const nextTab: WorkspaceTab = {
-          ...existingTab,
-          saveState: 'save_failed_retryable',
-          saveErrorMessage: error instanceof Error ? error.message : '读取文档失败',
-        }
-
-        return getTabByDocumentPath(current, documentPath) == null
-          ? {
-              ...current,
-              tabs: [...current.tabs, nextTab],
-              activeTabId: nextTab.id,
-            }
-          : {
-              ...replaceTab(current, nextTab),
-              activeTabId: nextTab.id,
-            }
-      })
-      setStatusMessage(error instanceof Error ? `读取文档失败：${error.message}` : '读取文档失败')
-      return false
+      return 'failed' as const
     } finally {
-      if (shouldApply()) {
-        setIsDocumentLoading(false)
-      }
+      if (documentLoadingRevisionRef.current === loadingRevision) setIsDocumentLoading(false)
     }
   }
 
@@ -2804,30 +2806,35 @@ function App() {
     setSession((current) => ({ ...current, regularViewState: 'locked' }))
   }
 
+  async function updateProfile(projectId: string, profileId: string, source: WorkspaceSource,
+    update: (profile: WorkspaceProfile) => WorkspaceProfile) {
+    // The service stores all profiles of a project in one file, so writes for
+    // different profiles of the same project must share the same queue too.
+    const key = profileWriteKey(projectId, profileId, source)
+    const pendingProfileWrites = pendingProfileWritesRef.current
+    const previous = pendingProfileWrites.get(key) ?? Promise.resolve()
+    const write = previous.catch(() => {}).then(async () => {
+      const profile = source === 'local-service'
+        ? await getProfileFromBridge(projectId, profileId, profileId)
+        : await profileStore.getProfile(projectId, profileId)
+      const next = update(profile)
+      if (source === 'local-service') await saveProfileToBridge(projectId, next, profileId)
+      else await profileStore.saveProfile(projectId, next)
+    })
+    const settled = write.then(() => {}, () => {})
+    pendingProfileWrites.set(key, settled)
+    void settled.then(() => { if (pendingProfileWrites.get(key) === settled) pendingProfileWrites.delete(key) })
+    await write
+  }
+
+  async function updateActiveProfile(update: (profile: WorkspaceProfile) => WorkspaceProfile) {
+    const projectId = activeProjectIdRef.current
+    if (!projectId) return
+    await updateProfile(projectId, activeProfileIdRef.current, workspaceSource, update)
+  }
+
   async function saveActiveProfileLayout(nextLayout: { sidebarWidth?: number; outlineWidth?: number }) {
-    if (!activeProjectId) {
-      return
-    }
-
-    const profile =
-      workspaceSource === 'local-service'
-        ? await getProfileFromBridge(activeProjectId, activeProfileId, activeProfileIdRef.current)
-        : await profileStore.getProfile(activeProjectId, activeProfileId)
-
-    const nextProfile = {
-      ...profile,
-      layout: {
-        ...profile.layout,
-        ...nextLayout,
-      },
-    }
-
-    if (workspaceSource === 'local-service') {
-      await saveProfileToBridge(activeProjectId, nextProfile, activeProfileIdRef.current)
-      return
-    }
-
-    await profileStore.saveProfile(activeProjectId, nextProfile)
+    await updateActiveProfile((profile) => ({ ...profile, layout: { ...profile.layout, ...nextLayout } }))
   }
 
   async function saveActiveProfileNavigation(nextNavigation: {
@@ -2837,29 +2844,7 @@ function App() {
     favoritePaths?: string[]
     manualNodeOrderByParent?: ManualNodeOrderByParent
   }) {
-    if (!activeProjectId) {
-      return
-    }
-
-    const profile =
-      workspaceSource === 'local-service'
-        ? await getProfileFromBridge(activeProjectId, activeProfileId, activeProfileIdRef.current)
-        : await profileStore.getProfile(activeProjectId, activeProfileId)
-
-    const nextProfile = {
-      ...profile,
-      navigation: {
-        ...profile.navigation,
-        ...nextNavigation,
-      },
-    }
-
-    if (workspaceSource === 'local-service') {
-      await saveProfileToBridge(activeProjectId, nextProfile, activeProfileIdRef.current)
-      return
-    }
-
-    await profileStore.saveProfile(activeProjectId, nextProfile)
+    await updateActiveProfile((profile) => ({ ...profile, navigation: { ...profile.navigation, ...nextNavigation } }))
   }
 
   async function saveActiveProfileAppearance(nextAppearance: {
@@ -2867,37 +2852,9 @@ function App() {
     pageWidth?: PageWidthMode
     lineHeight?: DocumentLineHeight
     hideFileTitleDate?: boolean
+    maxUnpinnedTabs?: number
   }) {
-    if (!activeProjectId) {
-      return
-    }
-
-    const profile =
-      workspaceSource === 'local-service'
-        ? await getProfileFromBridge(activeProjectId, activeProfileId, activeProfileIdRef.current)
-        : await profileStore.getProfile(activeProjectId, activeProfileId)
-    const currentAppearance = profile.appearance ?? {
-      theme: 'system',
-      fontSize: 16,
-      pageWidth: 'narrow' as PageWidthMode,
-      lineHeight: 1.6 as DocumentLineHeight,
-      hideFileTitleDate: false,
-    }
-
-    const nextProfile = {
-      ...profile,
-      appearance: {
-        ...currentAppearance,
-        ...nextAppearance,
-      },
-    }
-
-    if (workspaceSource === 'local-service') {
-      await saveProfileToBridge(activeProjectId, nextProfile, activeProfileIdRef.current)
-      return
-    }
-
-    await profileStore.saveProfile(activeProjectId, nextProfile)
+    await updateActiveProfile((profile) => ({ ...profile, appearance: { ...profile.appearance, ...nextAppearance } }))
   }
 
   function handleSidebarWidthChange(nextWidth: number) {
@@ -2921,6 +2878,25 @@ function App() {
   async function handleDocumentFontSizeChange(nextFontSize: number) {
     setDocumentFontSize(nextFontSize)
     await saveActiveProfileAppearance({ fontSize: nextFontSize })
+  }
+
+  async function handleMaxUnpinnedTabsChange(value: number) {
+    const next = normalizeMaxUnpinnedTabs(value)
+    const projectId = activeProjectIdRef.current
+    const profileId = activeProfileIdRef.current
+    const revision = ++maxTabsRevisionRef.current
+    maxUnpinnedTabsRef.current = next
+    setMaxUnpinnedTabs(next)
+    try {
+      await saveActiveProfileAppearance({ maxUnpinnedTabs: next })
+      if (activeProjectIdRef.current === projectId && activeProfileIdRef.current === profileId) persistedMaxUnpinnedTabsRef.current = next
+    } catch (error) {
+      if (activeProjectIdRef.current === projectId && activeProfileIdRef.current === profileId && maxTabsRevisionRef.current === revision) {
+        maxUnpinnedTabsRef.current = persistedMaxUnpinnedTabsRef.current
+        setMaxUnpinnedTabs(maxUnpinnedTabsRef.current)
+        setStatusMessage(error instanceof Error ? `标签上限保存失败：${error.message}` : '标签上限保存失败')
+      }
+    }
   }
 
   async function handleDocumentPageWidthChange(nextPageWidth: PageWidthMode) {
@@ -3031,6 +3007,7 @@ function App() {
   }
 
   async function handleRestartService() {
+    if (projectOperationBusyRef.current || pendingRegistryRef.current) return
     if (workspaceSource !== 'local-service' || isServiceActionPending) {
       return
     }
@@ -3044,6 +3021,7 @@ function App() {
   }
 
   async function handleReconnectService() {
+    if (projectOperationBusyRef.current || pendingRegistryRef.current) return
     if (workspaceSource === 'local-service' || isServiceActionPending) {
       return
     }
@@ -3057,6 +3035,7 @@ function App() {
   }
 
   async function handleStopService() {
+    if (projectOperationBusyRef.current || pendingRegistryRef.current) return
     if (workspaceSource !== 'local-service' || isServiceActionPending) {
       return
     }
@@ -3149,6 +3128,7 @@ function App() {
           title: formatTabTitle(tab.documentPath),
           saveState: tab.saveState,
           saveErrorMessage: tab.saveErrorMessage,
+          isPinned: session.pinnedDocumentPaths?.includes(tab.documentPath) ?? false,
         }))}
         activeTabId={session.activeTabId}
         canManageService={workspaceSource === 'local-service'}
@@ -3177,6 +3157,7 @@ function App() {
         isDocumentLoading={isDocumentLoading}
         isFileTreeRefreshing={isFileTreeRefreshing}
         isProjectSwitching={pendingProjectId != null}
+        isWorkspaceInputBlocked={workspaceInputBlocked}
         pendingProjectName={projects.find((project) => project.id === pendingProjectId)?.name ?? null}
         statusMessage={statusMessage}
         actionToast={actionToast}
@@ -3185,11 +3166,14 @@ function App() {
         expandedFileNodes={expandedFileNodes}
         hasPersistedExpandedFileNodes={hasPersistedExpandedFileNodes}
         documentFontSize={documentFontSize}
+        maxUnpinnedTabs={maxUnpinnedTabs}
+        onMaxUnpinnedTabsChange={handleMaxUnpinnedTabsChange}
         documentPageWidth={documentPageWidth}
         documentLineHeight={documentLineHeight}
         hideFileTitleDate={hideFileTitleDate}
         isWorkspaceBootstrapping={isWorkspaceBootstrapping}
         onConnectProject={handleConnectProject}
+        onManageProjects={() => setIsProjectManagerOpen(true)}
         onProjectChange={handleProjectChange}
         onProfileChange={handleProfileChange}
         onRefreshDocument={handleRefreshDocument}
@@ -3205,6 +3189,7 @@ function App() {
         onUnhidePath={handleUnhidePath}
         onTabSelect={handleTabSelect}
         onTabClose={handleTabClose}
+        onTabPin={handleTabPin}
         onTabReorder={handleTabReorder}
         onRestartService={handleRestartService}
         onReconnectService={handleReconnectService}
@@ -3244,6 +3229,14 @@ function App() {
         onSidebarWidthCommit={handleSidebarWidthCommit}
         onOutlineWidthChange={handleOutlineWidthChange}
         onOutlineWidthCommit={handleOutlineWidthCommit}
+      />
+      <ProjectManager
+        open={isProjectManagerOpen && !pendingWorkspaceAction} inputOpen={isProjectInputOpen}
+        projects={projects} activeProjectId={activeProjectId}
+        busy={projectOperationBusy} uncertain={Boolean(pendingRegistry)} status={statusMessage}
+        onClose={() => setIsProjectManagerOpen(false)} onOpenInput={handleConnectProject}
+        onCloseInput={() => setIsProjectInputOpen(false)} onRegister={handleRegisterProject}
+        onRemove={handleRemoveProject} onReorder={handleProjectReorder} onReconcile={handleReconcileRegistry}
       />
       {pendingWorkspaceAction ? (
         <ActionDialog

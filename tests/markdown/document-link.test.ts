@@ -78,7 +78,7 @@ describe('resolveDocumentLink', () => {
 
   it('reuses a precomputed document-path index without iterating the full path collection', () => {
     const unusedDocumentPaths = {
-      *[Symbol.iterator](): Iterator<string> {
+      [Symbol.iterator](): Iterator<string> {
         throw new Error('document paths should not be rebuilt per link')
       },
     }

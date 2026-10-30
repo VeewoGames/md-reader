@@ -1,0 +1,15 @@
+.project-manager { width: min(760px, calc(100vw - 32px)); max-height: calc(100dvh - 40px); overflow-y: auto; }
+.project-manager h2 { margin-top: 0; }
+.project-manager__list { list-style: none; padding: 0; max-height: 52vh; overflow-y: auto; overscroll-behavior: contain; }
+.project-manager__row { display: flex; align-items: center; gap: 8px; padding: 10px 0; border-bottom: 1px solid #8883; }
+.project-manager__row button, .project-manager__confirm button, .project-manager__recovery button { border: 1px solid #8885; border-radius: 8px; padding: 6px 9px; background: transparent; color: inherit; cursor: pointer; }
+.project-manager__row button:disabled { opacity: .35; cursor: default; }
+.project-manager__handle { cursor: grab !important; font-size: 22px; }
+.project-manager__identity { flex: 1; min-width: 0; }
+.project-manager__identity span { margin-left: 8px; font-size: 12px; opacity: .65; }
+.project-manager__identity small { display: block; overflow-wrap: anywhere; opacity: .7; font-size: 12px; }
+.project-manager__confirm { padding: 12px; border: 1px solid #d85a; border-radius: 10px; }
+.project-manager__confirm button { margin-right: 8px; }
+.project-manager__status { overflow-wrap: anywhere; font-size: 13px; }
+.project-manager__recovery { position: fixed; z-index: 100; right: 16px; bottom: 16px; max-width: min(520px, calc(100vw - 32px)); padding: 12px; border: 1px solid #d85; border-radius: 10px; background: var(--surface, #fffaf4); color: #352a20; }
+@media (max-width: 520px) { .project-manager__row { flex-wrap: wrap; } .project-manager__identity { flex-basis: calc(100% - 52px); } }

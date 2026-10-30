@@ -295,8 +295,7 @@ describe('project tree cache', () => {
 
   it('invalidates persisted data when a mutation occurs before an old snapshot can be renamed', async () => {
     const runtimeHome = await createRuntimeHome()
-    let cache: ReturnType<typeof createProjectTreeCache>
-    cache = createProjectTreeCache({
+    const cache = createProjectTreeCache({
       runtimeHome,
       scan: async () => ['old.md'],
       beforePersistRename: async () => {

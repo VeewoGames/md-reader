@@ -1,33 +1,15 @@
+import { cachedEditorComponent, loadVisualMarkdownEditorModule, setCachedVisualMarkdownEditor } from './visual-markdown-editor-loader'
 import { useEffect, useRef, useState, type ComponentType } from 'react'
 
 import { applyMarkdownTransforms } from '../markdown/markdown-transform'
 import { splitLeadingHtmlComments } from '../markdown/split-leading-html-comments'
 
-interface VisualMarkdownEditorProps {
+export interface VisualMarkdownEditorProps {
   value: string
   readonly?: boolean
   onChange: (nextValue: string) => void
   onCompositionStart?: () => void
   onCompositionEnd?: () => void
-}
-
-type VisualMarkdownEditorModule = {
-  VisualMarkdownEditorImpl: ComponentType<VisualMarkdownEditorProps>
-}
-
-let cachedEditorComponent: ComponentType<VisualMarkdownEditorProps> | null = null
-let editorModulePromise: Promise<VisualMarkdownEditorModule> | null = null
-
-function loadVisualMarkdownEditorModule() {
-  if (!editorModulePromise) {
-    editorModulePromise = import('./visual-markdown-editor-impl')
-  }
-
-  return editorModulePromise
-}
-
-export function preloadVisualMarkdownEditor() {
-  void loadVisualMarkdownEditorModule()
 }
 
 export function VisualMarkdownEditor(props: VisualMarkdownEditorProps) {
@@ -40,11 +22,6 @@ export function VisualMarkdownEditor(props: VisualMarkdownEditorProps) {
   const renderedEditorValue = applyMarkdownTransforms(editorValue)
 
   useEffect(() => {
-    if (cachedEditorComponent) {
-      setLoadedEditor(() => cachedEditorComponent)
-      return
-    }
-
     const generation = generationRef.current + 1
     generationRef.current = generation
     let isDisposed = false
@@ -55,7 +32,7 @@ export function VisualMarkdownEditor(props: VisualMarkdownEditorProps) {
           return
         }
 
-        cachedEditorComponent = module.VisualMarkdownEditorImpl
+        setCachedVisualMarkdownEditor(module.VisualMarkdownEditorImpl)
         setLoadedEditor(() => module.VisualMarkdownEditorImpl)
       })
       .catch((error: unknown) => {

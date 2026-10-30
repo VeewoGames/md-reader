@@ -1,4 +1,5 @@
-import { render, screen } from '@testing-library/react'
+vi.mock('../../src/editor/visual-markdown-editor-loader', () => ({ preloadVisualMarkdownEditor: vi.fn() }))
+import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -34,6 +35,8 @@ describe('TopBar reading preferences', () => {
     const onPageWidthChange = vi.fn()
     const onLineHeightChange = vi.fn()
     const onHideFileTitleDateChange = vi.fn()
+    const onMaxUnpinnedTabsChange = vi.fn()
+    const onTabPin = vi.fn()
 
     render(
       <AppShell
@@ -71,10 +74,12 @@ describe('TopBar reading preferences', () => {
         onToggleRegularLock={() => {}}
         onTabSelect={() => {}}
         onTabClose={() => {}}
+        onTabPin={onTabPin}
         onRestartService={() => {}}
         onStopService={() => {}}
         onDocumentSelect={() => {}}
         onDocumentFontSizeChange={onFontSizeChange}
+        onMaxUnpinnedTabsChange={onMaxUnpinnedTabsChange}
         onDocumentPageWidthChange={onPageWidthChange}
         onDocumentLineHeightChange={onLineHeightChange}
         onHideFileTitleDateChange={onHideFileTitleDateChange}
@@ -95,6 +100,11 @@ describe('TopBar reading preferences', () => {
     expect(screen.getByRole('button', { name: '2.0' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '全屏' })).toBeInTheDocument()
     expect(screen.getByRole('checkbox', { name: '隐藏标题日期' })).not.toBeChecked()
+    const slider = screen.getByRole('slider', { name: /未固定标签上限/ })
+    expect(slider).toHaveAttribute('min', '1')
+    expect(slider).toHaveAttribute('max', '30')
+    fireEvent.change(slider, { target: { value: '12' } })
+    expect(onMaxUnpinnedTabsChange).toHaveBeenCalledWith(12)
 
     await user.click(screen.getByRole('button', { name: '17 px' }))
     await user.click(screen.getByRole('button', { name: '全屏' }))
@@ -105,5 +115,14 @@ describe('TopBar reading preferences', () => {
     expect(onPageWidthChange).toHaveBeenCalledWith('full')
     expect(onLineHeightChange).toHaveBeenCalledWith(1.8)
     expect(onHideFileTitleDateChange).toHaveBeenCalledWith(true)
+
+    const pin = screen.getByRole('button', { name: '固定标签：README.md' })
+    const wrapper = pin.parentElement!
+    fireEvent.mouseEnter(wrapper)
+    expect(wrapper).toHaveAttribute('data-pin-visible', 'true')
+    fireEvent.click(pin)
+    expect(onTabPin).toHaveBeenCalledWith('docs/README.md')
+    fireEvent.mouseLeave(wrapper)
+    expect(wrapper).not.toHaveAttribute('data-pin-visible')
   })
 })

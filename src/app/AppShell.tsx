@@ -14,6 +14,7 @@ interface AppShellTab {
   title: string
   saveState: TabSaveState
   saveErrorMessage: string | null
+  isPinned?: boolean
 }
 
 interface AppShellProps {
@@ -40,6 +41,7 @@ interface AppShellProps {
   isDocumentLoading?: boolean
   isFileTreeRefreshing?: boolean
   isProjectSwitching?: boolean
+  isWorkspaceInputBlocked?: boolean
   pendingProjectName?: string | null
   statusMessage: string | null
   actionToast?: WorkspaceActionToast | null
@@ -48,10 +50,13 @@ interface AppShellProps {
   expandedFileNodes?: string[]
   hasPersistedExpandedFileNodes?: boolean
   documentFontSize?: number
+  maxUnpinnedTabs?: number
+  onMaxUnpinnedTabsChange?: (value: number) => void
   documentPageWidth?: PageWidthMode
   documentLineHeight?: DocumentLineHeight
   hideFileTitleDate?: boolean
   onConnectProject: () => void
+  onManageProjects?: () => void
   onProjectChange: (projectId: string) => void
   onProfileChange: (profileId: string) => void
   onModeChange: (mode: WorkspaceMode) => void
@@ -72,6 +77,7 @@ interface AppShellProps {
   onUnhidePath?: (path: string) => void
   onTabSelect: (tabId: string) => void
   onTabClose: (tabId: string) => void
+  onTabPin?: (tabId: string) => void
   onTabReorder: (nextOrderedTabIds: string[]) => void
   onRestartService?: () => void
   onReconnectService?: () => void
@@ -154,6 +160,7 @@ export function AppShell(props: AppShellProps) {
         isDocumentLoading={props.isDocumentLoading}
         isFileTreeRefreshing={props.isFileTreeRefreshing}
         onConnectProject={props.onConnectProject}
+        onManageProjects={props.onManageProjects}
         onProjectChange={props.onProjectChange}
         onProfileChange={props.onProfileChange}
         onModeChange={props.onModeChange}
@@ -162,11 +169,14 @@ export function AppShell(props: AppShellProps) {
         onToggleShowHiddenItems={props.onToggleShowHiddenItems}
         onTabSelect={props.onTabSelect}
         onTabClose={props.onTabClose}
+        onTabPin={props.onTabPin}
         onTabReorder={props.onTabReorder}
         onRestartService={props.onRestartService}
         onReconnectService={props.onReconnectService}
         onStopService={props.onStopService}
         documentFontSize={documentFontSize}
+        maxUnpinnedTabs={props.maxUnpinnedTabs}
+        onMaxUnpinnedTabsChange={props.onMaxUnpinnedTabsChange}
         documentPageWidth={documentPageWidth}
         documentLineHeight={documentLineHeight}
         hideFileTitleDate={props.hideFileTitleDate}
@@ -189,6 +199,7 @@ export function AppShell(props: AppShellProps) {
         editingDocumentContent={props.editingDocumentContent}
         isDocumentLoading={props.isDocumentLoading}
         isProjectSwitching={props.isProjectSwitching}
+        isWorkspaceInputBlocked={props.isWorkspaceInputBlocked}
         pendingProjectName={props.pendingProjectName}
         statusMessage={props.statusMessage}
         actionToast={props.actionToast}

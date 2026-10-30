@@ -1,3 +1,4 @@
+vi.mock('../../src/editor/visual-markdown-editor-loader', () => ({ preloadVisualMarkdownEditor: vi.fn() }))
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -53,7 +54,8 @@ vi.mock('../../src/shared/key-value-store', () => ({
   }),
 }))
 
-vi.mock('../../src/workspace/profile-store', () => ({
+vi.mock('../../src/workspace/profile-store', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../../src/workspace/profile-store')>(),
   createProfileStore: () => ({
     getProfile: vi.fn(async () => ({
       layout: {
@@ -69,6 +71,7 @@ vi.mock('../../src/workspace/local-state', () => ({
   createLocalStateStore: () => ({
     getState: vi.fn(async () => localState),
     saveState: bridgeMocks.saveState,
+    updateState: async (projectId: string, profileId: string, update: (state: typeof localState) => typeof localState) => bridgeMocks.saveState(projectId, profileId, update(localState)),
   }),
 }))
 

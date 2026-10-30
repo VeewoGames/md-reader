@@ -1,5 +1,7 @@
+vi.mock('../../src/editor/visual-markdown-editor-loader', () => ({ preloadVisualMarkdownEditor: vi.fn() }))
+import { getFileTreeEdgeScrollDelta } from '../../src/app/workspace-file-tree-utils'
 import { StrictMode, useEffect, useState } from 'react'
-import { createEvent, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, createEvent, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { EDITOR_STRUCTURE_UPDATED_EVENT } from '../../src/editor/editor-structure-events'
@@ -68,7 +70,6 @@ vi.mock('../../src/document-renderer/readonly-markdown-renderer', () => ({
 }))
 
 import {
-  getFileTreeEdgeScrollDelta,
   WorkspaceLayout,
   WorkspaceSidebarPane,
 } from '../../src/app/WorkspaceLayout'
@@ -677,6 +678,12 @@ describe('WorkspaceLayout outline navigation', () => {
 
     canvasPanel?.dispatchEvent(new Event('scroll'))
 
+    // Finish initial heading discovery and the scroll frame before measuring
+    // whether a later plain paragraph schedules any additional geometry work.
+    await act(async () => {
+      await new Promise<void>(resolve => window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve())))
+    })
+
     await waitFor(() => {
       expect(screen.getByRole('button', { name: '总览' })).toHaveAttribute('aria-current', 'location')
     })
@@ -1164,7 +1171,7 @@ describe('WorkspaceLayout outline navigation', () => {
     const disconnect = vi.fn()
 
     class MockMutationObserver {
-      constructor(_callback: MutationCallback) {}
+      constructor() {}
 
       observe = observe
       disconnect = disconnect

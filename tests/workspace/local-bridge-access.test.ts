@@ -16,6 +16,9 @@ import {
   renameDocumentNodeInBridge,
   restartLocalBridgeService,
   registerProjectWithBridge,
+  reorderProjectsWithBridge,
+  setActiveProjectWithBridge,
+  reconcileProjectsWithBridge,
   saveDocumentContentToBridge,
   saveProfileToBridge,
   stopLocalBridgeService,
@@ -134,60 +137,34 @@ describe('local bridge access', () => {
     })
   })
 
-  it('registers a project through the local bridge', async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        project: {
-          id: 'nocturnel-1234abcd',
-          name: 'Nocturnel',
-          rootPath: 'C:\\Code\\Nocturnel',
-          contentRoots: ['.'],
-          permissionState: 'granted',
-        },
-      }),
-    })
-
-    const project = await registerProjectWithBridge('default', 'C:\\Code\\Nocturnel', {
-      fetchImpl: fetchMock,
-    })
-
-    expect(fetchMock).toHaveBeenCalledWith(
-      'http://127.0.0.1:8797/api/profiles/default/projects/register',
-      expect.objectContaining({
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify({
-          rootPath: 'C:\\Code\\Nocturnel',
-        }),
-      }),
-    )
-    expect(project.name).toBe('Nocturnel')
+  it('registers a project with a version and returns its saved snapshot', async () => {
+    const project = { id: 'notes', name: 'Notes', rootPath: '/notes', contentRoots: ['.'], permissionState: 'granted' }
+    const snapshot = { initialized: true, revision: 1, activeProjectId: 'notes', projects: [project] }
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ project, snapshot }) })
+    const result = await registerProjectWithBridge('default', '/notes', 0, { fetchImpl: fetchMock })
+    expect(result.snapshot).toEqual(snapshot)
+    expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:8797/api/profiles/default/projects/register', expect.objectContaining({ body: JSON.stringify({ rootPath: '/notes', expectedRevision: 0 }) }))
   })
 
-  it('loads project list from the local bridge', async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        projects: [
-          {
-            id: 'nocturnel-1234abcd',
-            name: 'Nocturnel',
-            rootPath: 'C:\\Code\\Nocturnel',
-            contentRoots: ['.'],
-            permissionState: 'granted',
-          },
-        ],
-        activeProjectId: 'nocturnel-1234abcd',
-      }),
-    })
+  it('loads versioned project lists from the bridge', async () => {
+    const snapshot = { initialized: true, revision: 1, activeProjectId: 'notes', projects: [{ id: 'notes', name: 'Notes', rootPath: '/notes', contentRoots: ['.'], permissionState: 'granted' }] }
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => snapshot })
+    expect(await listProjectsFromBridge('default', { fetchImpl: fetchMock })).toEqual(snapshot)
+  })
 
-    const snapshot = await listProjectsFromBridge('default', { fetchImpl: fetchMock })
+  it('distinguishes structured rejection from unknown transport or unreadable success', async () => {
+    const rejected = vi.fn().mockResolvedValue({ ok: false, status: 409, json: async () => ({ code: 'REGISTRY_CONFLICT', error: 'newer list' }) })
+    await expect(reorderProjectsWithBridge('default', [], 2, { fetchImpl: rejected })).rejects.toMatchObject({ code: 'REGISTRY_CONFLICT', outcomeUnknown: false })
+    const unreadable = vi.fn().mockResolvedValue({ ok: true, json: async () => { throw new Error('bad json') } })
+    await expect(setActiveProjectWithBridge('default', 'a', 2, { fetchImpl: unreadable })).rejects.toMatchObject({ outcomeUnknown: true })
+    const offline = vi.fn().mockRejectedValue(new Error('network lost'))
+    await expect(reconcileProjectsWithBridge('default', 2, { fetchImpl: offline })).rejects.toMatchObject({ outcomeUnknown: true })
+  })
 
-    expect(snapshot.activeProjectId).toBe('nocturnel-1234abcd')
-    expect(snapshot.projects).toHaveLength(1)
+  it('keeps a committed snapshot successful when cleanup reports a warning', async () => {
+    const snapshot = { initialized: true, revision: 2, projects: [], activeProjectId: null, lockCleanupWarning: 'cleanup needs maintenance' }
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => snapshot })
+    expect(await reconcileProjectsWithBridge('default', 1, { fetchImpl: fetchMock })).toEqual(snapshot)
   })
 
   it('loads repo-tracked profile ids from the local bridge', async () => {

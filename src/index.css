@@ -395,6 +395,34 @@ select {
   color: var(--text-strong);
 }
 
+.topbar__tab-pin {
+  position: absolute;
+  z-index: 1;
+  top: 50%;
+  left: 5px;
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-strong);
+  transform: translateY(-50%);
+  opacity: 0;
+  pointer-events: none;
+  cursor: pointer;
+}
+.topbar__tab-pin svg { width: 14px; height: 14px; }
+.topbar__tab-pin[aria-pressed='true'] { color: #376394; }
+.topbar__tab[data-pin-visible='true'] .topbar__tab-pin,
+.topbar__tab:has(:focus-visible) .topbar__tab-pin { opacity: 1; pointer-events: auto; }
+.topbar__tab-pin:hover { background: rgba(111, 93, 74, 0.16); }
+@media (hover: none), (pointer: coarse) {
+  .topbar__tab-pin { opacity: 1; pointer-events: auto; }
+}
+
 .topbar__tab-button {
   position: relative;
   display: block;
@@ -450,6 +478,11 @@ select {
   text-align: center;
   font-size: 0.83rem;
   transform: translateY(-50%);
+}
+.topbar__tab[data-pin-visible='true'] .topbar__tab-label,
+.topbar__tab:has(:focus-visible) .topbar__tab-label { left: 34px; }
+@media (hover: none), (pointer: coarse) {
+  .topbar__tab-label { left: 34px; }
 }
 
 .topbar__tab-tooltip {
@@ -690,12 +723,8 @@ select {
   left: 0;
   z-index: 120;
   min-width: 100%;
-}
-
-.topbar__select-listbox {
   display: flex;
   flex-direction: column;
-  gap: 2px;
   padding: 6px;
   border: 1px solid rgba(127, 105, 82, 0.18);
   border-radius: 14px;
@@ -704,6 +733,18 @@ select {
     0 14px 28px rgba(87, 63, 39, 0.12),
     inset 0 1px 0 rgba(255, 255, 255, 0.75);
   backdrop-filter: blur(18px);
+}
+
+.topbar__select-listbox {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.topbar__select-popover > .topbar__select-option {
+  margin-top: 4px;
+  border-top: 1px solid rgba(127, 105, 82, 0.18);
+  border-radius: 0 0 10px 10px;
 }
 
 .topbar__select-option {
@@ -2866,4 +2907,22 @@ select {
     min-width: 0;
     max-width: none;
   }
+}
+
+@media (max-width: 700px) {
+  .topbar {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+  .topbar__group--start { grid-row: 1; }
+  .topbar__group--end {
+    grid-row: 2;
+    justify-self: stretch;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+  }
+  .topbar__actions-fixed { min-width: 0; flex-wrap: wrap; }
+  .topbar__center { grid-row: 3; }
+  .topbar__tabstrip { overflow-x: auto; }
+  .topbar__tab { flex: 0 0 120px; }
 }

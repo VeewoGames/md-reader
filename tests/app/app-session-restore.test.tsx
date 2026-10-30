@@ -1,4 +1,5 @@
-import { render, screen, waitFor } from '@testing-library/react'
+vi.mock('../../src/editor/visual-markdown-editor-loader', () => ({ preloadVisualMarkdownEditor: vi.fn() }))
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -7,6 +8,8 @@ const localState = {
   activeDocumentPath: 'docs/next.md',
   activeMode: 'split' as const,
   regularViewState: 'editable' as const,
+  tabOpenOrder: ['docs/guide.md', 'docs/next.md'],
+  pinnedDocumentPaths: [] as string[],
   tabStateByDocument: {
     'docs/guide.md': { lastKnownScrollTop: 128 },
     'docs/next.md': { lastKnownScrollTop: 512 },
@@ -47,6 +50,7 @@ const bridgeMocks = vi.hoisted(() => ({
   listProjectProfilesFromBridge: vi.fn(),
   saveProfileToBridge: vi.fn(),
   saveState: vi.fn(),
+  updateState: vi.fn(),
 }))
 
 vi.mock('../../src/shared/key-value-store', () => ({
@@ -56,7 +60,8 @@ vi.mock('../../src/shared/key-value-store', () => ({
   }),
 }))
 
-vi.mock('../../src/workspace/profile-store', () => ({
+vi.mock('../../src/workspace/profile-store', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../../src/workspace/profile-store')>(),
   createProfileStore: () => ({
     getProfile: vi.fn(async () => ({
       layout: {
@@ -72,6 +77,7 @@ vi.mock('../../src/workspace/local-state', () => ({
   createLocalStateStore: () => ({
     getState: vi.fn(async () => localState),
     saveState: bridgeMocks.saveState,
+    updateState: bridgeMocks.updateState,
   }),
 }))
 
@@ -98,7 +104,7 @@ vi.mock('../../src/workspace/local-bridge-access', () => ({
   getDocumentContentFromBridge: bridgeMocks.getDocumentContentFromBridge,
   saveDocumentContentToBridge: vi.fn(),
   registerProjectWithBridge: vi.fn(),
-  setActiveProjectWithBridge: vi.fn(),
+  setActiveProjectWithBridge: vi.fn(async (profileId: string, projectId: string, revision: number) => ({ ...(await bridgeMocks.listProjectsFromBridge(profileId)), activeProjectId: projectId, revision: revision + 1 })),
   restartLocalBridgeService: vi.fn(),
   stopLocalBridgeService: vi.fn(),
 }))
@@ -132,6 +138,8 @@ describe('App session restore', () => {
     localState.activeDocumentPath = 'docs/next.md'
     localState.activeMode = 'split'
     localState.regularViewState = 'editable'
+    localState.tabOpenOrder = ['docs/guide.md', 'docs/next.md']
+    localState.pinnedDocumentPaths = []
     localState.tabStateByDocument = {
       'docs/guide.md': { lastKnownScrollTop: 128 },
       'docs/next.md': { lastKnownScrollTop: 512 },
@@ -149,11 +157,14 @@ describe('App session restore', () => {
     bridgeMocks.listProjectProfilesFromBridge.mockReset()
     bridgeMocks.saveProfileToBridge.mockReset()
     bridgeMocks.saveState.mockReset()
+    bridgeMocks.updateState.mockReset()
+    bridgeMocks.updateState.mockImplementation(async (projectId: string, profileId: string, update: (state: typeof localState) => typeof localState) => bridgeMocks.saveState(projectId, profileId, update(localState)))
 
     bridgeMocks.listProjectProfilesFromBridge.mockResolvedValue({
       profileIds: ['default', 'Lans'],
     })
     bridgeMocks.listProjectsFromBridge.mockResolvedValue({
+      initialized: true, revision: 1,
       activeProjectId: 'notes',
       projects: [
         {
@@ -203,6 +214,194 @@ describe('App session restore', () => {
     )
   })
 
+  it('restores a pin and evicts the oldest eligible unpinned tab when opening a new document', async () => {
+    const user = userEvent.setup()
+    const profile = await bridgeMocks.getProfileFromBridge()
+    bridgeMocks.getProfileFromBridge.mockResolvedValue({ ...profile, appearance: { ...profile.appearance, maxUnpinnedTabs: 1 } })
+    bridgeMocks.getFileTreePathsFromBridge.mockResolvedValue(['docs/guide.md', 'docs/next.md', 'docs/new.md'])
+    documents.set('docs/new.md', { path: 'docs/new.md', content: '# New', mtimeMs: 300, size: 5 })
+    render(<App />)
+    await screen.findByRole('tab', { name: 'next' })
+    await user.click(screen.getByRole('button', { name: '固定标签：guide' }))
+    await user.click(screen.getByRole('button', { name: 'new.md' }))
+    await screen.findByRole('tab', { name: 'new' })
+    expect(screen.getByRole('tab', { name: 'guide' })).toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: 'next' })).not.toBeInTheDocument()
+    expect(bridgeMocks.saveState).toHaveBeenLastCalledWith('notes', 'default', expect.objectContaining({
+      pinnedDocumentPaths: ['docs/guide.md'], tabOpenOrder: ['docs/guide.md', 'docs/new.md'],
+    }))
+    documents.delete('docs/new.md')
+  })
+
+  it('restores a pinned tab and clears its pin after a manual close and reopen', async () => {
+    const user = userEvent.setup()
+    localState.pinnedDocumentPaths = ['docs/guide.md']
+    render(<App />)
+    expect(await screen.findByRole('button', { name: '取消固定标签：guide' })).toHaveAttribute('aria-pressed', 'true')
+    await user.click(screen.getByRole('button', { name: '关闭标签：guide' }))
+    await user.click(await screen.findByRole('button', { name: 'guide.md' }))
+    expect(await screen.findByRole('button', { name: '固定标签：guide' })).toHaveAttribute('aria-pressed', 'false')
+  })
+
+  it('keeps existing tabs when a new document cannot be read', async () => {
+    const user = userEvent.setup()
+    const profile = await bridgeMocks.getProfileFromBridge()
+    bridgeMocks.getProfileFromBridge.mockResolvedValue({ ...profile, appearance: { ...profile.appearance, maxUnpinnedTabs: 1 } })
+    bridgeMocks.getFileTreePathsFromBridge.mockResolvedValue(['docs/guide.md', 'docs/next.md', 'docs/broken.md'])
+    render(<App />)
+    await screen.findByRole('tab', { name: 'next' })
+    await user.click(await screen.findByRole('button', { name: 'broken.md' }))
+    expect((await screen.findAllByText(/读取文档失败/)).length).toBeGreaterThan(0)
+    expect(screen.getByRole('tab', { name: 'guide' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'next' })).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('keeps the open tab and reports a session persistence failure', async () => {
+    const user = userEvent.setup()
+    bridgeMocks.getFileTreePathsFromBridge.mockResolvedValue(['docs/guide.md', 'docs/next.md', 'docs/new.md'])
+    documents.set('docs/new.md', { path: 'docs/new.md', content: '# New', mtimeMs: 300, size: 5 })
+    render(<App />)
+    await screen.findByRole('tab', { name: 'next' })
+    const newFile = await screen.findByRole('button', { name: 'new.md' })
+    bridgeMocks.saveState.mockRejectedValueOnce(new Error('storage full'))
+    await user.click(newFile)
+    expect(await screen.findByRole('tab', { name: 'new' })).toBeInTheDocument()
+    expect((await screen.findAllByText(/会话保存失败/)).length).toBeGreaterThan(0)
+    documents.delete('docs/new.md')
+  })
+
+  it('refuses an open when every unpinned candidate has an unsaved draft', async () => {
+    const user = userEvent.setup()
+    const profile = await bridgeMocks.getProfileFromBridge()
+    bridgeMocks.getProfileFromBridge.mockResolvedValue({ ...profile, appearance: { ...profile.appearance, maxUnpinnedTabs: 1 } })
+    bridgeMocks.getFileTreePathsFromBridge.mockResolvedValue(['docs/guide.md', 'docs/next.md', 'docs/new.md'])
+    documents.set('docs/new.md', { path: 'docs/new.md', content: '# New', mtimeMs: 300, size: 5 })
+    render(<App />)
+    await screen.findByRole('tab', { name: 'next' })
+    const editor = await screen.findByRole('textbox', { name: 'Markdown 编辑器' })
+    await waitFor(() => expect(editor).toHaveValue('# Next\n\nNext body'))
+    await user.click(screen.getByRole('button', { name: '固定标签：guide' }))
+    fireEvent.change(editor, { target: { value: '# Unsaved' } })
+    await user.click(await screen.findByRole('button', { name: 'new.md' }))
+    expect((await screen.findAllByText(/标签页数量已达上限/)).length).toBeGreaterThan(0)
+    expect(screen.queryByRole('tab', { name: 'new' })).not.toBeInTheDocument()
+    expect(editor).toHaveValue('# Unsaved')
+    documents.delete('docs/new.md')
+  })
+
+  it('defers trimming after lowering the limit until a new tab is opened', async () => {
+    const user = userEvent.setup()
+    bridgeMocks.getFileTreePathsFromBridge.mockResolvedValue(['docs/guide.md', 'docs/next.md', 'docs/new.md'])
+    documents.set('docs/new.md', { path: 'docs/new.md', content: '# New', mtimeMs: 300, size: 5 })
+    render(<App />)
+    await screen.findByRole('tab', { name: 'next' })
+    await user.click(screen.getByRole('button', { name: '阅读选项' }))
+    fireEvent.change(screen.getByRole('slider', { name: /未固定标签上限/ }), { target: { value: '1' } })
+    expect(screen.getByRole('tab', { name: 'guide' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'next' })).toBeInTheDocument()
+    await user.click(await screen.findByRole('button', { name: 'new.md' }))
+    await screen.findByRole('tab', { name: 'new' })
+    expect(screen.queryByRole('tab', { name: 'guide' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: 'next' })).not.toBeInTheDocument()
+    documents.delete('docs/new.md')
+  })
+
+  it('does not let an older pending open override a later tab selection', async () => {
+    const user = userEvent.setup()
+    bridgeMocks.getFileTreePathsFromBridge.mockResolvedValue(['docs/guide.md', 'docs/next.md', 'docs/slow.md'])
+    let finish!: (value: { path: string; content: string; mtimeMs: number; size: number }) => void
+    const slow = new Promise<{ path: string; content: string; mtimeMs: number; size: number }>((resolve) => { finish = resolve })
+    bridgeMocks.getDocumentContentFromBridge.mockImplementation(async (_project: string, _profile: string, path: string) => {
+      if (path === 'docs/slow.md') return slow
+      return documents.get(path)
+    })
+    render(<App />)
+    await screen.findByRole('tab', { name: 'next' })
+    await user.click(await screen.findByRole('button', { name: 'slow.md' }))
+    await user.click(screen.getByRole('tab', { name: 'guide' }))
+    await act(async () => { finish({ path: 'docs/slow.md', content: '# Slow', mtimeMs: 1, size: 6 }); await slow })
+    expect(screen.queryByRole('tab', { name: 'slow' })).not.toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'guide' })).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('does not recreate a restored tab closed while its document is still loading', async () => {
+    const user = userEvent.setup()
+    let finish!: (value: { path: string; content: string; mtimeMs: number; size: number }) => void
+    const delayed = new Promise<{ path: string; content: string; mtimeMs: number; size: number }>((resolve) => { finish = resolve })
+    bridgeMocks.getDocumentContentFromBridge.mockImplementation(async (_project: string, _profile: string, path: string) => {
+      if (path === 'docs/next.md') return delayed
+      return documents.get(path)
+    })
+    render(<App />)
+    await screen.findByRole('tab', { name: 'next' })
+    await user.click(screen.getByRole('button', { name: '关闭标签：next' }))
+    await screen.findByRole('tab', { name: 'guide' })
+    await act(async () => { finish(documents.get('docs/next.md')!); await delayed })
+    expect(screen.queryByRole('tab', { name: 'next' })).not.toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'guide' })).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('does not clear a new session when a deep-link restore finishes late', async () => {
+    const user = userEvent.setup()
+    window.history.replaceState(null, '', 'http://localhost:3000/?project=notes&profile=default&path=docs%2Fnext.md')
+    let finish!: (value: { path: string; content: string; mtimeMs: number; size: number }) => void
+    const delayed = new Promise<{ path: string; content: string; mtimeMs: number; size: number }>((resolve) => { finish = resolve })
+    bridgeMocks.getDocumentContentFromBridge.mockImplementation(async (_project: string, _profile: string, path: string) => {
+      if (path === 'docs/next.md') return delayed
+      return documents.get(path)
+    })
+    render(<App />)
+    await screen.findByRole('tab', { name: 'next' })
+    await user.click(screen.getByRole('button', { name: '关闭标签：next' }))
+    await user.click(await screen.findByRole('button', { name: 'guide.md' }))
+    await screen.findByRole('tab', { name: 'guide' })
+    await act(async () => { finish(documents.get('docs/next.md')!); await delayed })
+    expect(screen.getByRole('tab', { name: 'guide' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.queryByText(/分享链接中的文档不存在/)).not.toBeInTheDocument()
+  })
+
+  it('does not apply stale missing-document cleanup after switching profile', async () => {
+    const user = userEvent.setup()
+    window.history.replaceState(null, '', 'http://localhost:3000/?project=notes&profile=default&path=docs%2Fnext.md')
+    let release!: () => void
+    const delayed = new Promise<void>((resolve) => { release = resolve })
+    bridgeMocks.getDocumentContentFromBridge.mockImplementation(async (_project: string, profile: string, path: string) => {
+      if (profile === 'default' && path === 'docs/next.md') throw new Error('missing document: docs/next.md')
+      return documents.get(path)
+    })
+    bridgeMocks.updateState.mockImplementationOnce(async (projectId: string, profileId: string, update: (state: typeof localState) => typeof localState) => {
+      await delayed
+      return bridgeMocks.saveState(projectId, profileId, update(localState))
+    })
+    render(<App />)
+    await waitFor(() => expect(bridgeMocks.updateState).toHaveBeenCalled())
+    await user.click(screen.getByRole('combobox', { name: 'Profile 切换' }))
+    await user.click(await screen.findByRole('option', { name: 'Lans' }))
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Profile 切换' })).toHaveTextContent('Lans'))
+    await screen.findByRole('tab', { name: 'next' })
+    await act(async () => { release(); await delayed })
+    expect(screen.getByRole('tab', { name: 'next' })).toBeInTheDocument()
+    expect(screen.queryByText(/分享链接中的文档不存在/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/已移除失效文档/)).not.toBeInTheDocument()
+  })
+
+  it('preserves an existing tab draft when a document link selects it', async () => {
+    const user = userEvent.setup()
+    const original = documents.get('docs/next.md')!
+    documents.set('docs/next.md', { ...original, content: '# Next\n\n[返回 Guide](guide.md)' })
+    render(<App />)
+    await screen.findByRole('tab', { name: 'next' })
+    await user.click(screen.getByRole('tab', { name: 'guide' }))
+    const editor = await screen.findByRole('textbox', { name: 'Markdown 编辑器' })
+    await waitFor(() => expect(editor).toHaveValue('# Guide\n\nGuide body'))
+    fireEvent.change(editor, { target: { value: '# 未保存草稿' } })
+    await user.click(screen.getByRole('tab', { name: 'next' }))
+    await user.click(await screen.findByRole('link', { name: '返回 Guide' }))
+    await waitFor(() => expect(screen.getByRole('tab', { name: 'guide' })).toHaveAttribute('aria-selected', 'true'))
+    expect(screen.getByRole('textbox', { name: 'Markdown 编辑器' })).toHaveValue('# 未保存草稿')
+    documents.set('docs/next.md', original)
+  })
+
   it('restores the previous tab set and returns to the last active tab', async () => {
     const user = userEvent.setup()
 
@@ -240,6 +439,7 @@ describe('App session restore', () => {
   it('restores the project selected by a pathless workspace locator instead of the shared registry default', async () => {
     window.history.replaceState(null, '', 'http://localhost:3000/?project=manual&profile=default')
     bridgeMocks.listProjectsFromBridge.mockResolvedValue({
+      initialized: true, revision: 1,
       activeProjectId: 'notes',
       projects: [
         { id: 'notes', name: 'Notes', rootHandleKey: 'handle:notes', contentRoots: ['docs'], permissionState: 'granted' },
@@ -282,6 +482,7 @@ describe('App session restore', () => {
     })
 
     bridgeMocks.listProjectsFromBridge.mockResolvedValue({
+      initialized: true, revision: 1,
       activeProjectId: 'notes',
       projects: [
         {
@@ -333,6 +534,7 @@ describe('App session restore', () => {
     })
 
     bridgeMocks.listProjectsFromBridge.mockResolvedValue({
+      initialized: true, revision: 1,
       activeProjectId: 'notes',
       projects: [
         {
@@ -371,7 +573,7 @@ describe('App session restore', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'manual.md' })).toBeInTheDocument())
   })
 
-  it('clears a superseded project-switch pending state when the profile changes', async () => {
+  it('defers profile changes while a project operation is pending', async () => {
     const user = userEvent.setup()
     let resolveManualTree: ((paths: string[]) => void) | null = null
     const manualTree = new Promise<string[]>((resolve) => {
@@ -379,6 +581,7 @@ describe('App session restore', () => {
     })
 
     bridgeMocks.listProjectsFromBridge.mockResolvedValue({
+      initialized: true, revision: 1,
       activeProjectId: 'notes',
       projects: [
         {
@@ -411,10 +614,12 @@ describe('App session restore', () => {
     await user.click(screen.getByRole('combobox', { name: 'Profile 切换' }))
     await user.click(screen.getByRole('option', { name: 'Lans' }))
 
-    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Profile 切换' })).toHaveTextContent('Lans'))
-    expect(screen.queryByText('正在准备文件树和文档状态')).not.toBeInTheDocument()
-
+    expect(screen.getByRole('combobox', { name: 'Profile 切换' })).toHaveTextContent('default')
     resolveManualTree?.(['docs/manual.md'])
+    await waitFor(() => expect(screen.queryByText('正在准备文件树和文档状态')).not.toBeInTheDocument())
+    await user.click(screen.getByRole('combobox', { name: 'Profile 切换' }))
+    await user.click(screen.getByRole('option', { name: 'Lans' }))
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Profile 切换' })).toHaveTextContent('Lans'))
   })
 
   it('reuses loaded tab content when selecting documents from the file tree', async () => {
@@ -456,7 +661,7 @@ describe('App session restore', () => {
   })
 
   it('restores a previously collapsed root directory from the saved profile navigation state', async () => {
-    bridgeMocks.getProfileFromBridge.mockResolvedValueOnce({
+    bridgeMocks.getProfileFromBridge.mockResolvedValue({
       id: 'default',
       appearance: {
         theme: 'system',
@@ -483,10 +688,9 @@ describe('App session restore', () => {
 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: 'docs' })).toHaveAttribute('aria-expanded', 'false')
+      expect(screen.queryByRole('button', { name: 'guide.md' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'next.md' })).not.toBeInTheDocument()
     })
-
-    expect(screen.queryByRole('button', { name: 'guide.md' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'next.md' })).not.toBeInTheDocument()
   })
 
   it('applies the saved manual root order when rebuilding the file tree', async () => {

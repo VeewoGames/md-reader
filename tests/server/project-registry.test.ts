@@ -1,5 +1,5 @@
 import path from 'node:path'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
 import os from 'node:os'
 
 import { afterEach, describe, expect, it } from 'vitest'
@@ -30,10 +30,13 @@ describe('project registry', () => {
     const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'md-reader-registry-'))
     tempDirs.push(runtimeHome)
 
-    const project = await registerProject({
+    const projectRoot = path.join(runtimeHome, 'Nocturnel')
+    await mkdir(projectRoot)
+    const { project } = await registerProject({
       runtimeHome,
       profileId: 'default',
-      rootPath: 'C:\\Code\\Nocturnel',
+      rootPath: projectRoot,
+      expectedRevision: 0,
     })
 
     const registry = await loadProjectRegistry(runtimeHome)
@@ -46,13 +49,16 @@ describe('project registry', () => {
     const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'md-reader-registry-'))
     tempDirs.push(runtimeHome)
 
-    const project = await registerProject({
+    const projectRoot = path.join(runtimeHome, 'Nocturnel')
+    await mkdir(projectRoot)
+    const { project } = await registerProject({
       runtimeHome,
       profileId: 'default',
-      rootPath: 'C:\\Code\\Nocturnel',
+      rootPath: projectRoot,
+      expectedRevision: 0,
     })
 
-    await setActiveProjectId(runtimeHome, 'default', project.id)
+    await setActiveProjectId(runtimeHome, 'default', project.id, 1)
 
     const registry = JSON.parse(await readFile(path.join(runtimeHome, 'projects.json'), 'utf8')) as {
       profiles: Record<string, { activeProjectId: string | null }>

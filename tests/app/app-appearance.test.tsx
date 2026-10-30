@@ -1,4 +1,5 @@
-import { render, screen, waitFor } from '@testing-library/react'
+vi.mock('../../src/editor/visual-markdown-editor-loader', () => ({ preloadVisualMarkdownEditor: vi.fn() }))
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -15,7 +16,8 @@ vi.mock('../../src/shared/key-value-store', () => ({
   }),
 }))
 
-vi.mock('../../src/workspace/profile-store', () => ({
+vi.mock('../../src/workspace/profile-store', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../../src/workspace/profile-store')>(),
   createProfileStore: () => ({
     getProfile: vi.fn(async () => null),
     saveProfile: vi.fn(async () => undefined),
@@ -33,6 +35,7 @@ vi.mock('../../src/workspace/local-state', () => ({
       },
     })),
     saveState: vi.fn(async () => undefined),
+    updateState: async () => undefined,
   }),
 }))
 
@@ -119,6 +122,43 @@ describe('App appearance preferences', () => {
     bridgeMocks.listProjectProfilesFromBridge.mockResolvedValue({
       profileIds: ['default', 'Lans'],
     })
+  })
+
+  it('preserves a slider change while an earlier profile update is still saving', async () => {
+    const user = userEvent.setup()
+    let stored = await bridgeMocks.getProfileFromBridge()
+    let release!: () => void
+    const blocked = new Promise<void>((resolve) => { release = resolve })
+    let calls = 0
+    bridgeMocks.getProfileFromBridge.mockImplementation(async () => structuredClone(stored))
+    bridgeMocks.saveProfileToBridge.mockImplementation(async (_projectId, profile) => {
+      calls += 1
+      if (calls === 1) await blocked
+      stored = structuredClone(profile)
+      return profile
+    })
+    render(<App />)
+    await screen.findByRole('tab', { name: 'guide' })
+    await user.click(screen.getByRole('button', { name: '阅读选项' }))
+    await user.click(screen.getByRole('button', { name: '17 px' }))
+    fireEvent.change(screen.getByRole('slider', { name: /未固定标签上限/ }), { target: { value: '6' } })
+    await waitFor(() => expect(calls).toBe(1))
+    release()
+    await waitFor(() => expect(calls).toBe(2))
+    expect(stored.appearance.fontSize).toBe(17)
+    expect(stored.appearance.maxUnpinnedTabs).toBe(6)
+  })
+
+  it('reports a failed tab limit save and restores the prior value', async () => {
+    const user = userEvent.setup()
+    bridgeMocks.saveProfileToBridge.mockRejectedValue(new Error('磁盘不可用'))
+    render(<App />)
+    await screen.findByRole('tab', { name: 'guide' })
+    await user.click(screen.getByRole('button', { name: '阅读选项' }))
+    const slider = screen.getByRole('slider', { name: /未固定标签上限/ })
+    fireEvent.change(slider, { target: { value: '6' } })
+    await waitFor(() => expect(slider).toHaveValue('10'))
+    expect((await screen.findAllByText(/标签上限保存失败/)).length).toBeGreaterThan(0)
   })
 
   it('hydrates document appearance from profile and persists changes from the topbar', async () => {

@@ -14,6 +14,8 @@ export function rewriteSessionDocumentPath(
   return {
     ...session,
     activeTabId: session.activeTabId === sourcePath ? targetPath : session.activeTabId,
+    tabOpenOrder: rewritePathArray(session.tabOpenOrder, sourcePath, targetPath),
+    pinnedDocumentPaths: rewritePathArray(session.pinnedDocumentPaths, sourcePath, targetPath),
     tabs: session.tabs.map((tab) =>
       tab.documentPath === sourcePath
         ? {
@@ -41,6 +43,8 @@ export function rewritePathCollections({
     localState: {
       ...localState,
       openDocumentPaths: rewritePathArray(localState.openDocumentPaths, sourcePath, targetPath),
+      tabOpenOrder: rewritePathArray(localState.tabOpenOrder, sourcePath, targetPath),
+      pinnedDocumentPaths: rewritePathArray(localState.pinnedDocumentPaths, sourcePath, targetPath),
       activeDocumentPath:
         localState.activeDocumentPath === sourcePath ? targetPath : localState.activeDocumentPath,
       tabStateByDocument: rewritePathRecord(localState.tabStateByDocument, sourcePath, targetPath),
@@ -75,14 +79,15 @@ export function removePathCollections({
   profile: WorkspaceProfile
   targetPath: string
 }) {
-  const { [targetPath]: _removedTabState, ...nextTabStateByDocument } = localState.tabStateByDocument
-  const { [targetPath]: _removedReadingProgress, ...nextReadingProgressByDocument } =
-    localState.readingProgressByDocument
+  const nextTabStateByDocument = Object.fromEntries(Object.entries(localState.tabStateByDocument).filter(([path]) => path !== targetPath))
+  const nextReadingProgressByDocument = Object.fromEntries(Object.entries(localState.readingProgressByDocument).filter(([path]) => path !== targetPath))
 
   return {
     localState: {
       ...localState,
       openDocumentPaths: localState.openDocumentPaths.filter((path) => path !== targetPath),
+      tabOpenOrder: (localState.tabOpenOrder ?? []).filter((path) => path !== targetPath),
+      pinnedDocumentPaths: (localState.pinnedDocumentPaths ?? []).filter((path) => path !== targetPath),
       activeDocumentPath:
         localState.activeDocumentPath === targetPath ? null : localState.activeDocumentPath,
       tabStateByDocument: nextTabStateByDocument,

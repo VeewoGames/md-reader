@@ -9,6 +9,9 @@ import {
   getProjectsSnapshot,
   registerProject,
   setActiveProjectId,
+  reorderProjects,
+  unregisterProject,
+  reconcileProjects,
 } from "./project-registry.mjs";
 import { getProjectProfile, listProjectProfiles, saveProjectProfile } from "./project-profiles.mjs";
 import {
@@ -80,8 +83,10 @@ export async function startBridgeServer({
         path: request.url ?? "/",
         error: error instanceof Error ? (error.stack ?? error.message) : String(error),
       });
-      sendJson(response, 500, {
+      sendJson(response, error.status ?? 500, {
         error: error instanceof Error ? error.message : String(error),
+        code: error.code,
+        lockCleanupWarning: error.lockCleanupWarning,
       });
     }
   });
@@ -178,12 +183,13 @@ async function handleRequest(request, response, { runtimeHome, port, stateFile, 
   if (request.method === "POST" && registerMatch) {
     const profileId = decodeURIComponent(registerMatch[1]);
     const body = await readJsonBody(request);
-    const project = await registerProject({
+    const payload = await registerProject({
       runtimeHome,
       profileId,
       rootPath: body.rootPath,
+      expectedRevision: body.expectedRevision,
     });
-    sendJson(response, 200, { project });
+    sendJson(response, 200, payload);
     return;
   }
 
@@ -191,8 +197,17 @@ async function handleRequest(request, response, { runtimeHome, port, stateFile, 
   if (request.method === "POST" && activeMatch) {
     const profileId = decodeURIComponent(activeMatch[1]);
     const body = await readJsonBody(request);
-    await setActiveProjectId(runtimeHome, profileId, body.projectId);
-    sendJson(response, 200, { ok: true });
+    const snapshot = await setActiveProjectId(runtimeHome, profileId, body.projectId, body.expectedRevision);
+    sendJson(response, 200, snapshot);
+    return;
+  }
+
+  const registryAction = url.pathname.match(/^\/api\/profiles\/([^/]+)\/projects\/(reorder|unregister|reconcile)$/);
+  if (request.method === 'POST' && registryAction) {
+    const body = await readJsonBody(request);
+    const actions = { reorder: reorderProjects, unregister: unregisterProject, reconcile: reconcileProjects };
+    const snapshot = await actions[registryAction[2]]({ ...body, runtimeHome, profileId: decodeURIComponent(registryAction[1]) });
+    sendJson(response, 200, snapshot);
     return;
   }
 

@@ -3,6 +3,7 @@ import {
   useDeferredValue,
   useEffect,
   useEffectEvent,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
@@ -26,6 +27,7 @@ import {
   X,
 } from 'lucide-react'
 
+import { getFileTreeEdgeScrollDelta, createInitialExpandedDirectories, formatFileTreeDisplayName } from './workspace-file-tree-utils'
 import { findActiveHeadingId, type HeadingTarget } from './outline-active-heading'
 import { VisualMarkdownEditor } from '../editor/visual-markdown-editor'
 import { EDITOR_STRUCTURE_UPDATED_EVENT } from '../editor/editor-structure-events'
@@ -58,67 +60,6 @@ function isOutlinePerfEnabled(): boolean {
 }
 
 const OUTLINE_PERF_ENABLED = isOutlinePerfEnabled()
-const FILE_TREE_EDGE_SCROLL_ZONE_PX = 48
-const FILE_TREE_EDGE_SCROLL_MAX_DELTA_PX = 18
-
-export function getFileTreeEdgeScrollDelta(
-  rect: Pick<DOMRect, 'top' | 'bottom'>,
-  clientY: number,
-  zonePx = FILE_TREE_EDGE_SCROLL_ZONE_PX,
-  maxDeltaPx = FILE_TREE_EDGE_SCROLL_MAX_DELTA_PX,
-) {
-  if (!Number.isFinite(clientY) || zonePx <= 0) {
-    return 0
-  }
-
-  if (clientY < rect.top + zonePx) {
-    return -Math.ceil(((rect.top + zonePx - clientY) / zonePx) * maxDeltaPx)
-  }
-  if (clientY > rect.bottom - zonePx) {
-    return Math.ceil(((clientY - (rect.bottom - zonePx)) / zonePx) * maxDeltaPx)
-  }
-  return 0
-}
-
-export function createDefaultExpandedDirectories(
-  availableDirectoryPaths: string[],
-  currentDocumentPath: string | null,
-): Set<string> {
-  const next = new Set<string>()
-
-  for (const path of availableDirectoryPaths) {
-    if (!path.includes('/')) {
-      next.add(path)
-    }
-  }
-
-  if (!currentDocumentPath) {
-    return next
-  }
-
-  const segments = currentDocumentPath.split('/').filter(Boolean)
-
-  for (let index = 0; index < segments.length - 1; index += 1) {
-    next.add(segments.slice(0, index + 1).join('/'))
-  }
-
-  return next
-}
-
-export function createInitialExpandedDirectories(
-  availableDirectoryPaths: string[],
-  currentDocumentPath: string | null,
-  persistedExpandedDirectories: string[],
-  hasPersistedExpandedDirectories: boolean,
-): Set<string> {
-  const sourceDirectories = hasPersistedExpandedDirectories
-    ? persistedExpandedDirectories
-    : [...createDefaultExpandedDirectories(availableDirectoryPaths, currentDocumentPath)]
-
-  const availableDirectories = new Set(availableDirectoryPaths)
-  return new Set(sourceDirectories.filter((path) => availableDirectories.has(path)))
-}
-
 function collectDirectoryPaths(nodes: VisibleFileTreeNode[]): string[] {
   const directoryPaths: string[] = []
 
@@ -190,6 +131,7 @@ interface WorkspaceLayoutProps {
   editingDocumentContent?: string | null
   isDocumentLoading?: boolean
   isProjectSwitching?: boolean
+  isWorkspaceInputBlocked?: boolean
   pendingProjectName?: string | null
   statusMessage: string | null
   actionToast?: WorkspaceActionToast | null
@@ -284,10 +226,6 @@ const CONTEXT_MENU_GAP = 8
 const EMPTY_PATHS: string[] = []
 const DOCUMENT_DRAG_MIME = 'application/x-md-reader-document-path'
 const TREE_NODE_DRAG_MIME = 'application/x-md-reader-tree-node-path'
-
-export function formatFileTreeDisplayName(fileName: string, hideFileTitleDate: boolean) {
-  return hideFileTitleDate ? fileName.replace(/^\d{4}-\d{2}-\d{2}[-_\s]+/, '') : fileName
-}
 
 type FileTreeReorderDropTarget = {
   targetPath: string | null
@@ -437,7 +375,18 @@ export const WorkspaceSidebarPane = memo(function WorkspaceSidebarPane({
   onRender,
 }: WorkspaceSidebarPaneProps) {
   onRender?.()
-  const [expandedDirectories, setExpandedDirectories] = useState<Set<string>>(new Set())
+  const [expandedDirectories, setExpandedDirectories] = useState<Set<string>>(() => createInitialExpandedDirectories(
+    availableDirectoryPaths.length > 0 ? availableDirectoryPaths : collectDirectoryPaths(fileTree),
+    currentDocumentPath, persistedExpandedDirectories, hasPersistedExpandedDirectories,
+  ))
+  const [expansionInputs, setExpansionInputs] = useState(() => ({ availableDirectoryPaths, currentDocumentPath, fileTree, hasPersistedExpandedDirectories, persistedExpandedDirectories }))
+  if (expansionInputs.availableDirectoryPaths !== availableDirectoryPaths || expansionInputs.currentDocumentPath !== currentDocumentPath ||
+    expansionInputs.fileTree !== fileTree || expansionInputs.hasPersistedExpandedDirectories !== hasPersistedExpandedDirectories ||
+    expansionInputs.persistedExpandedDirectories !== persistedExpandedDirectories) {
+    setExpansionInputs({ availableDirectoryPaths, currentDocumentPath, fileTree, hasPersistedExpandedDirectories, persistedExpandedDirectories })
+    const paths = availableDirectoryPaths.length > 0 ? availableDirectoryPaths : collectDirectoryPaths(fileTree)
+    setExpandedDirectories(createInitialExpandedDirectories(paths, currentDocumentPath, persistedExpandedDirectories, hasPersistedExpandedDirectories))
+  }
   const [fileSearchQuery, setFileSearchQuery] = useState('')
   const [contextMenuState, setContextMenuState] = useState<FileTreeContextMenuState | null>(null)
   const [nameActionState, setNameActionState] = useState<FileTreeNameActionState | null>(null)
@@ -594,20 +543,6 @@ export const WorkspaceSidebarPane = memo(function WorkspaceSidebarPane({
   }, [])
 
   useEffect(() => {
-    const nextAvailableDirectoryPaths =
-      availableDirectoryPaths.length > 0 ? availableDirectoryPaths : collectDirectoryPaths(fileTree)
-
-    setExpandedDirectories(
-      createInitialExpandedDirectories(
-        nextAvailableDirectoryPaths,
-        currentDocumentPath,
-        persistedExpandedDirectories,
-        hasPersistedExpandedDirectories,
-      ),
-    )
-  }, [availableDirectoryPaths, currentDocumentPath, fileTree, hasPersistedExpandedDirectories, persistedExpandedDirectories])
-
-  useEffect(() => {
     if (!contextMenuState) {
       return
     }
@@ -630,8 +565,10 @@ export const WorkspaceSidebarPane = memo(function WorkspaceSidebarPane({
     }
   }, [contextMenuState])
 
+  const renamePath = nameActionState?.path
+  const renameSourceName = nameActionState?.sourceName
   useEffect(() => {
-    if (!nameActionState) {
+    if (!renamePath || renameSourceName == null) {
       return
     }
 
@@ -640,24 +577,17 @@ export const WorkspaceSidebarPane = memo(function WorkspaceSidebarPane({
 
     // Keep the suffix intact for the common "rename the title" flow while
     // still letting users replace the whole name with a single shortcut.
-    const suffixStart = nameActionState.sourceName.lastIndexOf('.')
-    const selectionEnd = suffixStart > 0 ? suffixStart : nameActionState.sourceName.length
+    const suffixStart = renameSourceName.lastIndexOf('.')
+    const selectionEnd = suffixStart > 0 ? suffixStart : renameSourceName.length
     input?.setSelectionRange(0, selectionEnd)
-  }, [nameActionState?.path])
+  }, [renamePath, renameSourceName])
 
   function handleToggleDirectory(path: string) {
-    setExpandedDirectories((previous) => {
-      const next = new Set(previous)
-
-      if (next.has(path)) {
-        next.delete(path)
-      } else {
-        next.add(path)
-      }
-
-      void onExpandedDirectoriesChange?.([...next].sort())
-      return next
-    })
+    const next = new Set(expandedDirectories)
+    if (next.has(path)) next.delete(path)
+    else next.add(path)
+    setExpandedDirectories(next)
+    void onExpandedDirectoriesChange?.([...next].sort())
   }
 
   function handleOpenContextMenu(state: FileTreeContextMenuState) {
@@ -1703,6 +1633,7 @@ export function WorkspaceLayout({
   editingDocumentContent,
   isDocumentLoading,
   isProjectSwitching = false,
+  isWorkspaceInputBlocked = false,
   pendingProjectName = null,
   statusMessage,
   actionToast,
@@ -1759,8 +1690,13 @@ export function WorkspaceLayout({
   const documentTitle = currentDocumentPath?.split('/').at(-1) ?? null
   const activeDocumentContent =
     mode === 'split' ? (editingDocumentContent ?? currentDocumentContent) : currentDocumentContent
-  const [documentHeadings, setDocumentHeadings] = useState<MarkdownHeading[]>([])
-  const [activeHeadingId, setActiveHeadingId] = useState<string | null>(null)
+  const documentHeadings = useMemo(() => activeDocumentContent ? extractMarkdownHeadings(activeDocumentContent) : [], [activeDocumentContent])
+  const [activeHeadingId, setActiveHeadingId] = useState<string | null>(() => documentHeadings[0]?.id ?? null)
+  const [headingContent, setHeadingContent] = useState(activeDocumentContent)
+  if (headingContent !== activeDocumentContent) {
+    setHeadingContent(activeDocumentContent)
+    setActiveHeadingId(documentHeadings[0]?.id ?? null)
+  }
   const documentRef = useRef<HTMLElement | null>(null)
   const canvasRef = useRef<HTMLDivElement | null>(null)
   const restoredScrollRequestRef = useRef(-1)
@@ -1967,16 +1903,8 @@ export function WorkspaceLayout({
 
   useEffect(() => {
     if (!activeDocumentContent) {
-      setDocumentHeadings([])
-      setActiveHeadingId(null)
       headingTargetsRef.current = []
-      refreshOutlinePerfSnapshot()
-      return
     }
-
-    const nextHeadings = extractMarkdownHeadings(activeDocumentContent)
-    setDocumentHeadings(nextHeadings)
-    setActiveHeadingId(nextHeadings[0]?.id ?? null)
     refreshOutlinePerfSnapshot()
   }, [activeDocumentContent])
 
@@ -2277,6 +2205,20 @@ export function WorkspaceLayout({
     })
   }
 
+  const resolvePendingHeading = useEffectEvent((headingId: string, root: HTMLElement) => {
+    const target = getHeadingTargets().find((entry) => entry.id === headingId)
+    if (target) {
+      handleHeadingSelect(headingId)
+      onPendingHeadingHandled?.(true)
+      return true
+    }
+    if (root.querySelector('[aria-label="只读 Markdown 渲染器"]')) {
+      onPendingHeadingHandled?.(false)
+      return true
+    }
+    return false
+  })
+
   useEffect(() => {
     if (!pendingHeadingId) return
     const root = documentRef.current
@@ -2284,17 +2226,7 @@ export function WorkspaceLayout({
     let isHandled = false
     const locateHeading = () => {
       if (isHandled) return
-      const target = getHeadingTargets().find((entry) => entry.id === pendingHeadingId)
-      if (target) {
-        isHandled = true
-        handleHeadingSelect(pendingHeadingId)
-        onPendingHeadingHandled?.(true)
-        return
-      }
-      if (root.querySelector('[aria-label="只读 Markdown 渲染器"]')) {
-        isHandled = true
-        onPendingHeadingHandled?.(false)
-      }
+      isHandled = resolvePendingHeading(pendingHeadingId, root)
     }
     const observer = new MutationObserver(locateHeading)
     observer.observe(root, { childList: true, subtree: true })
@@ -2435,6 +2367,7 @@ export function WorkspaceLayout({
           >
             <VisualMarkdownEditor
               value={editingDocumentContent ?? currentDocumentContent ?? ''}
+              readonly={isWorkspaceInputBlocked}
               onChange={(content) => onEditingDocumentContentChange?.(content)}
               onCompositionStart={onEditingCompositionStart}
               onCompositionEnd={onEditingCompositionEnd}
@@ -2451,6 +2384,7 @@ export function WorkspaceLayout({
             <div className="workspace__split-pane workspace__editor-pane">
               <textarea
                 className="markdown-editor markdown-editor--split"
+                readOnly={isWorkspaceInputBlocked}
                 aria-label="Markdown 编辑器"
                 value={editingDocumentContent ?? currentDocumentContent ?? ''}
                 onChange={(event) => onEditingDocumentContentChange?.(event.target.value)}
@@ -2559,7 +2493,7 @@ export function WorkspaceLayout({
         onPointerDown={beginSidebarResize}
       />
 
-      <section className="workspace__center" aria-hidden={isProjectSwitching || undefined}>
+      <section className="workspace__center" inert={isWorkspaceInputBlocked || undefined} aria-hidden={isProjectSwitching || undefined}>
         <div className="panel panel--canvas">
           <div ref={canvasRef} className="panel__content panel__content--canvas">
             {currentDocumentPath ? (

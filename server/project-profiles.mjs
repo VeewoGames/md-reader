@@ -3,6 +3,17 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 
 const PROFILE_DIR = ".md-reader";
 const PROFILE_FILE = "profiles.json";
+const pendingByProject = new Map();
+
+function withProjectLock(projectRoot, operation) {
+  const key = path.resolve(projectRoot);
+  const previous = pendingByProject.get(key) ?? Promise.resolve();
+  const result = previous.catch(() => {}).then(operation);
+  const settled = result.then(() => {}, () => {});
+  pendingByProject.set(key, settled);
+  void settled.then(() => { if (pendingByProject.get(key) === settled) pendingByProject.delete(key); });
+  return result;
+}
 
 function createDefaultProfile(profileId = "default") {
   return {
@@ -13,6 +24,7 @@ function createDefaultProfile(profileId = "default") {
       pageWidth: "narrow",
       lineHeight: 1.6,
       hideFileTitleDate: false,
+      maxUnpinnedTabs: 10,
     },
     layout: {
       sidebarWidth: 280,
@@ -42,6 +54,9 @@ function normalizeProfile(profileId, profile = {}) {
     appearance: {
       ...fallback.appearance,
       ...(profile.appearance ?? {}),
+      maxUnpinnedTabs: Number.isFinite(profile.appearance?.maxUnpinnedTabs)
+        ? Math.min(30, Math.max(1, Math.round(profile.appearance.maxUnpinnedTabs)))
+        : 10,
     },
     layout: {
       ...fallback.layout,
@@ -111,19 +126,25 @@ async function loadProfilesDocument(projectRoot) {
 }
 
 export async function listProjectProfiles(projectRoot) {
-  const payload = await loadProfilesDocument(projectRoot);
-  return sortProfileIds(Object.keys(payload.profiles));
+  return withProjectLock(projectRoot, async () => {
+    const payload = await loadProfilesDocument(projectRoot);
+    return sortProfileIds(Object.keys(payload.profiles));
+  });
 }
 
 export async function getProjectProfile(projectRoot, profileId) {
-  const payload = await loadProfilesDocument(projectRoot);
-  return normalizeProfile(profileId, payload.profiles[profileId]);
+  return withProjectLock(projectRoot, async () => {
+    const payload = await loadProfilesDocument(projectRoot);
+    return normalizeProfile(profileId, payload.profiles[profileId]);
+  });
 }
 
 export async function saveProjectProfile(projectRoot, profile) {
-  const payload = await loadProfilesDocument(projectRoot);
-  const normalizedProfile = normalizeProfile(profile?.id ?? "default", profile);
-  payload.profiles[normalizedProfile.id] = normalizedProfile;
-  await writeFile(profilesFilePath(projectRoot), JSON.stringify(normalizeProfilesDocument(payload), null, 2));
-  return normalizedProfile;
+  return withProjectLock(projectRoot, async () => {
+    const payload = await loadProfilesDocument(projectRoot);
+    const normalizedProfile = normalizeProfile(profile?.id ?? "default", profile);
+    payload.profiles[normalizedProfile.id] = normalizedProfile;
+    await writeFile(profilesFilePath(projectRoot), JSON.stringify(normalizeProfilesDocument(payload), null, 2));
+    return normalizedProfile;
+  });
 }

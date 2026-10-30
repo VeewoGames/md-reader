@@ -1,15 +1,16 @@
+import type { VisualMarkdownEditorProps } from '../../src/editor/visual-markdown-editor'
 import { act, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 function createDeferredModule() {
-  let resolve: ((value: { VisualMarkdownEditorImpl: React.ComponentType<any> }) => void) | null = null
-  const promise = new Promise<{ VisualMarkdownEditorImpl: React.ComponentType<any> }>((nextResolve) => {
+  let resolve: ((value: { VisualMarkdownEditorImpl: React.ComponentType<VisualMarkdownEditorProps> }) => void) | null = null
+  const promise = new Promise<{ VisualMarkdownEditorImpl: React.ComponentType<VisualMarkdownEditorProps> }>((nextResolve) => {
     resolve = nextResolve
   })
 
   return {
     promise,
-    resolve(value: { VisualMarkdownEditorImpl: React.ComponentType<any> }) {
+    resolve(value: { VisualMarkdownEditorImpl: React.ComponentType<VisualMarkdownEditorProps> }) {
       resolve?.(value)
     },
   }
@@ -46,7 +47,7 @@ describe('VisualMarkdownEditor lazy wrapper', () => {
 
     vi.doMock(
       '../../src/editor/visual-markdown-editor-impl',
-      () => deferredModule.promise as Promise<{ VisualMarkdownEditorImpl: React.ComponentType<any> }>,
+      () => deferredModule.promise as Promise<{ VisualMarkdownEditorImpl: React.ComponentType<VisualMarkdownEditorProps> }>,
     )
 
     const { VisualMarkdownEditor } = await import('../../src/editor/visual-markdown-editor')

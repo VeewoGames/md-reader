@@ -40,7 +40,7 @@ describe('bridge server node operations', () => {
     const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'md-reader-runtime-'))
     const projectRoot = await mkdtemp(path.join(os.tmpdir(), 'md-reader-project-'))
     tempDirs.push(runtimeHome)
-    const project = await registerProject({ runtimeHome, profileId: 'default', rootPath: projectRoot })
+    const { project } = await registerProject({ runtimeHome, profileId: 'default', rootPath: projectRoot, expectedRevision: 0 })
     await rm(projectRoot, { recursive: true, force: true })
     const server = await startBridgeServer({ port: 0, runtimeHome, webMode: 'none' })
     activeServers.push({ close: () => stopBridgeServer(server, { runtimeHome }) })
@@ -62,7 +62,7 @@ describe('bridge server node operations', () => {
     tempDirs.push(runtimeHome, projectRoot)
     await mkdir(path.join(projectRoot, 'docs'), { recursive: true })
     await (await import('node:fs/promises')).writeFile(path.join(projectRoot, 'docs', 'guide.md'), '# Guide')
-    const project = await registerProject({ runtimeHome, profileId: 'default', rootPath: projectRoot })
+    const { project } = await registerProject({ runtimeHome, profileId: 'default', rootPath: projectRoot, expectedRevision: 0 })
     const server = await startBridgeServer({ port: 0, runtimeHome, webMode: 'none' })
     activeServers.push({ close: () => stopBridgeServer(server, { runtimeHome }) })
     const { port } = server.address() as { port: number }
@@ -96,7 +96,7 @@ describe('bridge server node operations', () => {
     tempDirs.push(runtimeHome, projectRoot)
 
     await mkdir(path.join(projectRoot, 'docs'), { recursive: true })
-    const project = await registerProject({ runtimeHome, profileId: 'default', rootPath: projectRoot })
+    const { project } = await registerProject({ runtimeHome, profileId: 'default', rootPath: projectRoot, expectedRevision: 0 })
     const server = await startBridgeServer({ port: 0, runtimeHome, webMode: 'none' })
     activeServers.push({
       close: () => stopBridgeServer(server, { runtimeHome }),

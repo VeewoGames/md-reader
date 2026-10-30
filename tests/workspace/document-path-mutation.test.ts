@@ -25,6 +25,8 @@ describe('document path mutation', () => {
         },
       ],
       activeTabId: 'docs/guide.md',
+      tabOpenOrder: ['docs/guide.md'],
+      pinnedDocumentPaths: ['docs/guide.md'],
       mode: 'regular',
       regularViewState: 'locked',
     }
@@ -34,11 +36,15 @@ describe('document path mutation', () => {
     expect(nextSession.tabs[0]?.id).toBe('docs/archive/guide.md')
     expect(nextSession.tabs[0]?.documentPath).toBe('docs/archive/guide.md')
     expect(nextSession.activeTabId).toBe('docs/archive/guide.md')
+    expect(nextSession.tabOpenOrder).toEqual(['docs/archive/guide.md'])
+    expect(nextSession.pinnedDocumentPaths).toEqual(['docs/archive/guide.md'])
   })
 
   it('rewrites local and profile path collections without touching unrelated entries', () => {
     const localState: WorkspaceLocalState = {
       openDocumentPaths: ['docs/guide.md', 'docs/other.md'],
+      tabOpenOrder: ['docs/other.md', 'docs/guide.md'],
+      pinnedDocumentPaths: ['docs/guide.md'],
       activeDocumentPath: 'docs/guide.md',
       activeMode: 'regular',
       regularViewState: 'locked',
@@ -84,6 +90,8 @@ describe('document path mutation', () => {
     })
 
     expect(next.localState.openDocumentPaths).toEqual(['docs/archive/guide.md', 'docs/other.md'])
+    expect(next.localState.tabOpenOrder).toEqual(['docs/other.md', 'docs/archive/guide.md'])
+    expect(next.localState.pinnedDocumentPaths).toEqual(['docs/archive/guide.md'])
     expect(next.localState.activeDocumentPath).toBe('docs/archive/guide.md')
     expect(next.localState.tabStateByDocument).toEqual({
       'docs/archive/guide.md': { lastKnownScrollTop: 128 },
@@ -104,6 +112,8 @@ describe('document path mutation', () => {
   it('removes deleted document paths from local and profile collections', () => {
     const localState: WorkspaceLocalState = {
       openDocumentPaths: ['docs/guide.md', 'docs/other.md'],
+      tabOpenOrder: ['docs/other.md', 'docs/guide.md'],
+      pinnedDocumentPaths: ['docs/guide.md'],
       activeDocumentPath: 'docs/guide.md',
       activeMode: 'regular',
       regularViewState: 'locked',
@@ -148,6 +158,8 @@ describe('document path mutation', () => {
     })
 
     expect(next.localState.openDocumentPaths).toEqual(['docs/other.md'])
+    expect(next.localState.tabOpenOrder).toEqual(['docs/other.md'])
+    expect(next.localState.pinnedDocumentPaths).toEqual([])
     expect(next.localState.activeDocumentPath).toBeNull()
     expect(next.localState.tabStateByDocument).toEqual({
       'docs/other.md': { lastKnownScrollTop: 64 },

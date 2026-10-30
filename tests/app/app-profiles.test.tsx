@@ -1,3 +1,4 @@
+vi.mock('../../src/editor/visual-markdown-editor-loader', () => ({ preloadVisualMarkdownEditor: vi.fn() }))
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -22,7 +23,8 @@ vi.mock('../../src/shared/key-value-store', () => ({
   }),
 }))
 
-vi.mock('../../src/workspace/profile-store', () => ({
+vi.mock('../../src/workspace/profile-store', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../../src/workspace/profile-store')>(),
   createProfileStore: () => ({
     getProfile: vi.fn(async () => null),
     saveProfile: vi.fn(async () => undefined),
@@ -40,6 +42,7 @@ vi.mock('../../src/workspace/local-state', () => ({
       },
     })),
     saveState: vi.fn(async () => undefined),
+    updateState: async () => undefined,
   }),
 }))
 
@@ -98,12 +101,14 @@ describe('App repo-tracked profiles', () => {
     bridgeMocks.listProjectsFromBridge.mockImplementation(async (profileId: string) => {
       if (profileId === 'Lans' && !lansHasProject) {
         return {
+          initialized: false, revision: 0,
           activeProjectId: null,
           projects: [],
         }
       }
 
       return {
+        initialized: true, revision: 1,
         activeProjectId: 'notes',
         projects: [
           {
@@ -137,15 +142,10 @@ describe('App repo-tracked profiles', () => {
         expandedHeadingNodes: {},
       },
     }))
-    bridgeMocks.registerProjectWithBridge.mockImplementation(async () => {
+    bridgeMocks.registerProjectWithBridge.mockImplementation(async (_profile: string, _root: string, revision: number) => {
       lansHasProject = true
-      return {
-        id: 'notes',
-        name: 'Notes',
-        rootPath: 'C:\\Code\\Notes',
-        contentRoots: ['docs'],
-        permissionState: 'granted',
-      }
+      const project = { id: 'notes', name: 'Notes', rootPath: 'C:\\Code\\Notes', contentRoots: ['docs'], permissionState: 'granted' }
+      return { project, snapshot: { initialized: true, revision: revision + 1, activeProjectId: project.id, projects: [project] } }
     })
     bridgeMocks.getDocumentContentFromBridge.mockResolvedValue({
       path: 'docs/guide.md',
@@ -168,7 +168,7 @@ describe('App repo-tracked profiles', () => {
     await user.click(screen.getByRole('option', { name: 'Lans' }))
 
     await waitFor(() => {
-      expect(bridgeMocks.registerProjectWithBridge).toHaveBeenCalledWith('Lans', 'C:\\Code\\Notes')
+      expect(bridgeMocks.registerProjectWithBridge).toHaveBeenCalledWith('Lans', 'C:\\Code\\Notes', 0)
     })
     await waitFor(() => {
       expect(screen.getByRole('combobox', { name: 'Profile 切换' })).toHaveTextContent('Lans')
