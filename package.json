@@ -14,6 +14,7 @@
     "service:install": "node service-scheduler.mjs install",
     "service:status": "node service-scheduler.mjs status",
     "service:uninstall": "node service-scheduler.mjs uninstall",
+    "console-trace": "node console-trace.mjs",
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",

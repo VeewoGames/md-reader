@@ -84,6 +84,11 @@ export async function queryServiceTask() {
 }
 
 export async function uninstallServiceTask(runtimeHome = defaultRuntimeHome()) {
+  const traceStopped = await requestServiceHost(runtimeHome, { command: "console-trace-stop" }, { timeoutMs: 10000 }).catch((error) => {
+    throw new Error(`Could not stop the console trace before uninstall: ${error instanceof Error ? error.message : String(error)}`);
+  });
+  if (traceStopped.consoleTrace?.status !== "stopped") throw new Error("Console trace did not confirm stopped before uninstall.");
+  await requestServiceHost(runtimeHome, { command: "console-trace-purge" }, { timeoutMs: 10000 });
   const stopped = await stopService(runtimeHome);
   if (!stopped.ok) throw new Error(stopped.message);
   try {

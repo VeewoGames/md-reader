@@ -16,6 +16,8 @@ const READY_TIMEOUT_MS = 8000;
 const STOP_TIMEOUT_MS = 5000;
 const MAX_RESTARTS = 3;
 const MAX_CAPTURE_BYTES = 16 * 1024;
+const MAX_TRACE_RECORDS = 256;
+const TRACE_RETENTION_MS = 72 * 60 * 60 * 1000;
 const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.dirname(moduleDir);
 
@@ -26,6 +28,7 @@ export function getServiceHostPaths(runtimeHome = defaultRuntimeHome()) {
     stateFile: path.join(runtimeDir, "service-state.json"),
     lockFile: path.join(runtimeDir, "service-host.lock.json"),
     lifecycleLog: path.join(runtimeDir, "service-lifecycle.log.jsonl"),
+    consoleTraceLog: path.join(runtimeDir, "console-process-attribution.jsonl"),
     pipeName: getServiceHostPipeName(runtimeHome),
   };
 }
@@ -36,10 +39,12 @@ export async function runServiceHost({ runtimeHome = defaultRuntimeHome(), port 
   const hostId = crypto.randomUUID();
   const releaseLock = await acquireHostLock(paths, hostId);
   let record = normalizeRecord(await readJson(paths.stateFile), { hostId, port });
+  record.consoleTrace.logFile = paths.consoleTraceLog;
   let childToken = null;
   let restartTimer = null;
   let commandQueue = Promise.resolve();
   let hostFailurePromise = null;
+  let consoleTraceToken = null;
   const controlSockets = new Set();
 
   const enqueue = (operation) => {
@@ -86,6 +91,11 @@ export async function runServiceHost({ runtimeHome = defaultRuntimeHome(), port 
 
   const shutdownHost = async (exitCode = 0, { preserveHostFailure = false } = {}) => {
     if (restartTimer) clearTimeout(restartTimer);
+    try {
+      await stopConsoleTrace();
+    } catch (error) {
+      await appendEvent("host_shutdown_step_failed", { step: "stop_console_trace", error: error instanceof Error ? error.message : String(error) });
+    }
     try {
       await stopBridge({ preserveDesiredState: !record.intentionalStop });
     } catch (error) {
@@ -173,6 +183,19 @@ export async function runServiceHost({ runtimeHome = defaultRuntimeHome(), port 
         record.desiredState = "stopped";
         await persistRecord();
         setTimeout(() => void shutdownHost(0), 0);
+        return record;
+      case "console-trace-start":
+        return startConsoleTrace();
+      case "console-trace-status":
+        return record;
+      case "console-trace-stop":
+        await stopConsoleTrace();
+        return record;
+      case "console-trace-purge":
+        if (consoleTraceToken?.child.exitCode === null) throw new Error("Stop console trace before purging its records.");
+        await rm(paths.consoleTraceLog, { force: true });
+        record.consoleTrace = { ...record.consoleTrace, recordCount: 0, lastRecordAt: null };
+        await persistRecord();
         return record;
       case "simulate-host-failure":
         if (process.env.NODE_ENV !== "test") throw new Error("Unsupported ServiceHost command: simulate-host-failure");
@@ -367,6 +390,105 @@ export async function runServiceHost({ runtimeHome = defaultRuntimeHome(), port 
     }, delayMs);
   }
 
+  async function startConsoleTrace() {
+    if (process.platform !== "win32") throw new Error("Console process trace is only supported on Windows.");
+    if (consoleTraceToken?.child.exitCode === null) return record;
+    const runId = crypto.randomUUID();
+    const helperPath = path.join(moduleDir, "console-process-attribution.ps1");
+    const child = spawn("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-File", helperPath, "-RunId", runId, "-ParentPid", String(process.pid)], {
+      cwd: projectRoot,
+      detached: false,
+      shell: false,
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+    });
+    const token = { child, runId, stdout: "", stderr: "", ready: null, failure: null, lineBuffer: "" };
+    consoleTraceToken = token;
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      token.stdout = `${token.stdout}${chunk}`.slice(-MAX_CAPTURE_BYTES);
+      token.lineBuffer += String(chunk);
+      const lines = token.lineBuffer.split(/\r?\n/);
+      token.lineBuffer = lines.pop() ?? "";
+      for (const line of lines) {
+        if (line.includes('"type":"ready"') || line.includes('"type":"failure"')) void consumeConsoleTraceLine(token, line);
+        else void enqueue(() => consumeConsoleTraceLine(token, line)).catch(() => {});
+      }
+    });
+    captureStream(child.stderr, token, "stderr");
+    child.once("exit", (code) => {
+      if (consoleTraceToken !== token) return;
+      consoleTraceToken = null;
+      record.consoleTrace = { ...record.consoleTrace, status: "stopped", helperPid: null, lastError: code === 0 ? null : (record.consoleTrace.lastError ?? token.stderr.slice(-1024) ?? `helper exited ${code}`) };
+      void persistRecord();
+    });
+    await waitFor(() => {
+      if (token.ready) return token.ready;
+      if (token.failure) throw new Error(`Console trace helper failed: ${token.failure}`);
+      if (child.exitCode !== null) throw new Error(`Console trace helper exited before ready: ${token.stderr.slice(-1024) || child.exitCode}`);
+      return null;
+    }, 5000, "Console trace helper did not become ready.");
+    record.consoleTrace = { ...record.consoleTrace, status: "running", runId, helperPid: child.pid ?? null, sessionId: token.ready.sessionId, startedAt: new Date().toISOString(), lastError: null };
+    await persistRecord();
+    await appendEvent("console_trace_started", { runId, helperPid: child.pid ?? null, sessionId: token.ready.sessionId });
+    return record;
+  }
+
+  async function consumeConsoleTraceLine(token, line) {
+    if (!line.trim()) return;
+    let frame;
+    try { frame = JSON.parse(line); } catch { return; }
+    if (frame.runId !== token.runId) return;
+    if (frame.type === "ready") { token.ready = frame; return; }
+    if (frame.type === "failure") {
+      token.failure = frame.message ?? "unknown failure";
+      record.consoleTrace = { ...record.consoleTrace, lastError: token.failure };
+      await persistRecord();
+      return;
+    }
+    if (frame.type === "error") {
+      record.consoleTrace = { ...record.consoleTrace, lastError: frame.message ?? "console trace record error" };
+      await persistRecord();
+      return;
+    }
+    if (frame.type !== "record" || !frame.process?.pid || !frame.process?.name) return;
+    const payload = JSON.stringify(frame);
+    if (Buffer.byteLength(payload, "utf8") > MAX_CAPTURE_BYTES) return;
+    await pruneConsoleTraceLog();
+    await writeFile(paths.consoleTraceLog, `${payload}\n`, { encoding: "utf8", flag: "a" });
+    record.consoleTrace = { ...record.consoleTrace, recordCount: Number(record.consoleTrace.recordCount ?? 0) + 1, lastRecordAt: frame.at ?? new Date().toISOString() };
+    await persistRecord();
+  }
+
+  async function stopConsoleTrace() {
+    const token = consoleTraceToken;
+    if (!token?.child || token.child.exitCode !== null) {
+      record.consoleTrace = { ...record.consoleTrace, status: "stopped", helperPid: null };
+      await persistRecord();
+      return;
+    }
+    token.child.kill();
+    const stopped = await waitForExit(token.child, 5000);
+    if (!stopped) throw new Error("Timed out stopping console trace helper.");
+    consoleTraceToken = null;
+    record.consoleTrace = { ...record.consoleTrace, status: "stopped", helperPid: null };
+    await persistRecord();
+    await appendEvent("console_trace_stopped", { runId: token.runId });
+  }
+
+  async function pruneConsoleTraceLog() {
+    try {
+      const lines = (await readFile(paths.consoleTraceLog, "utf8")).trim().split(/\r?\n/).filter(Boolean);
+      const cutoff = Date.now() - TRACE_RETENTION_MS;
+      const retained = lines.slice(-MAX_TRACE_RECORDS + 1).filter((line) => {
+        try { return Date.parse(JSON.parse(line).at) >= cutoff; } catch { return false; }
+      });
+      if (retained.length !== lines.length) await writeFile(paths.consoleTraceLog, retained.length ? `${retained.join("\n")}\n` : "", "utf8");
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+  }
+
   async function persistRecord() {
     record.updatedAt = new Date().toISOString();
     await writeJsonAtomic(paths.stateFile, record);
@@ -407,6 +529,17 @@ function normalizeRecord(value, { hostId, port }) {
     hostRecoveryBlocked,
     readyAt: value?.readyAt ?? null,
     lastError: null,
+    consoleTrace: {
+      status: "stopped",
+      runId: value?.consoleTrace?.runId ?? null,
+      helperPid: null,
+      sessionId: value?.consoleTrace?.sessionId ?? null,
+      startedAt: value?.consoleTrace?.startedAt ?? null,
+      recordCount: Number(value?.consoleTrace?.recordCount ?? 0),
+      lastRecordAt: value?.consoleTrace?.lastRecordAt ?? null,
+      logFile: value?.consoleTrace?.logFile ?? path.join(defaultRuntimeHome(), "runtime", "console-process-attribution.jsonl"),
+      lastError: null,
+    },
   };
 }
 
@@ -527,6 +660,16 @@ async function waitForExit(child, timeoutMs) {
       resolve(true);
     });
   });
+}
+
+async function waitFor(probe, timeoutMs, failureMessage) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const value = probe();
+    if (value) return value;
+    await delay(50);
+  }
+  throw new Error(failureMessage);
 }
 
 async function waitForPortRelease(port, timeoutMs) {

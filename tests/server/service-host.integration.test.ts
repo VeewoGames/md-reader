@@ -244,6 +244,36 @@ describe('ServiceHost integration', () => {
     })
     await expect(readServiceHealth(port)).resolves.toMatchObject({ serviceId: 'md-reader-bridge' })
   }, 35_000)
+
+  it.runIf(process.platform === 'win32')('records a controlled Node start without displaying a console window', async () => {
+    const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'md-reader-console-trace-'))
+    runtimeHomes.push(runtimeHome)
+    const port = await getAvailablePort()
+    await ensureServiceRunning({ runtimeHome, port })
+
+    const started = await requestServiceHost(runtimeHome, { command: 'console-trace-start' }, { timeoutMs: 5000 })
+    expect(started.consoleTrace).toMatchObject({ status: 'running' })
+
+    const probe = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 3000)'], {
+      windowsHide: true,
+      stdio: 'ignore',
+    })
+    await new Promise<void>((resolve, reject) => probe.once('exit', (code) => code === 0 ? resolve() : reject(new Error(`probe exited ${code}`))))
+
+    const trace = await waitFor(async () => {
+      const status = await requestServiceHost(runtimeHome, { command: 'console-trace-status' }, { timeoutMs: 1000 })
+      if (status.consoleTrace?.lastError) throw new Error(status.consoleTrace.lastError)
+      return status.consoleTrace?.recordCount ? status : null
+    }, 8000)
+    expect(trace.consoleTrace).toMatchObject({ status: 'running', recordCount: 1 })
+    expect(JSON.parse(await readFile(trace.consoleTrace.logFile, 'utf8'))).toMatchObject({
+      process: { pid: probe.pid, name: 'node.exe' },
+    })
+
+    await expect(requestServiceHost(runtimeHome, { command: 'console-trace-stop' }, { timeoutMs: 5000 })).resolves.toMatchObject({
+      consoleTrace: { status: 'stopped' },
+    })
+  }, 20_000)
 })
 
 function startHostProcess(runtimeHome: string, port: number) {
